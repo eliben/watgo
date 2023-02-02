@@ -104,7 +104,10 @@ func (lex *lexer) peekNext() rune {
 
 func (lex *lexer) nextToken() token {
 	// Skip non-tokens like whitespace and check for EOF.
-	lex.skipNontokens()
+	if err := lex.skipNontokens(); err != nil {
+		return lex.errorToken(err.Error())
+	}
+
 	if lex.r < 0 {
 		return token{EOF, "", lex.lineNum}
 	}
@@ -115,10 +118,14 @@ func (lex *lexer) nextToken() token {
 		return lex.scanKeyword()
 	}
 
-	return token{ERROR, "", lex.lineNum}
+	return lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
 }
 
-func (lex *lexer) skipNontokens() {
+func (lex *lexer) errorToken(msg string) token {
+	return token{ERROR, msg, lex.lineNum}
+}
+
+func (lex *lexer) skipNontokens() error {
 	for {
 		switch lex.r {
 		case ' ', '\t', '\r':
@@ -130,8 +137,14 @@ func (lex *lexer) skipNontokens() {
 			if lex.peekNext() == ';' {
 				lex.skipLineComment()
 			}
+		case '(':
+			if lex.peekNext() == ';' {
+				if err := lex.skipBlockComment(); err != nil {
+					return err
+				}
+			}
 		default:
-			return
+			return nil
 		}
 	}
 }
@@ -140,6 +153,34 @@ func (lex *lexer) skipLineComment() {
 	for lex.r != '\n' && lex.r > 0 {
 		lex.next()
 	}
+}
+
+func (lex *lexer) skipBlockComment() error {
+	startLine := lex.lineNum
+	// lex.r now points at the opening '(' with a ';' following it, so we'll start
+	// by skipping both.
+	lex.next()
+	lex.next()
+
+	// skip until we find ";)"
+	for lex.r > 0 {
+		if lex.r == ';' && lex.peekNext() == ')' {
+			lex.next()
+			lex.next()
+			return nil
+		}
+
+		// if we see another '(;', it's a nested comment - skip it recursively
+		if lex.r == '(' && lex.peekNext() == ';' {
+			lex.skipBlockComment()
+		} else if lex.r == '\n' {
+			lex.lineNum++
+		}
+
+		lex.next()
+	}
+
+	return fmt.Errorf("unterminated block comment starting at line %v", startLine)
 }
 
 func (lex *lexer) scanId() token {

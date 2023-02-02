@@ -27,11 +27,30 @@ func TestLexer(t *testing.T) {
 		wantTokens []token
 	}{
 		{"basic keyword and id",
-			`k$% $hi`, []token{token{KEYWORD, "k$%", 1}, token{ID, "$hi", 1}}},
+			`k$% $hi`,
+			[]token{token{KEYWORD, "k$%", 1}, token{ID, "$hi", 1}}},
+
 		{"skipping line comments",
 			`kwa ;;comment
 ;; another comment
-koi ;;;yet another comment`, []token{token{KEYWORD, "kwa", 1}, token{KEYWORD, "koi", 3}}},
+koi ;;;yet another comment`,
+			[]token{token{KEYWORD, "kwa", 1}, token{KEYWORD, "koi", 3}}},
+
+		{"block comment",
+			`tok (;
+		x
+		y
+		;) tok2`,
+			[]token{token{KEYWORD, "tok", 1}, token{KEYWORD, "tok2", 4}}},
+
+		{"nested block comment",
+			`;; line comment
+			aa (; outer block comment (; inner block comment
+			;) more text
+			;) bb`,
+			[]token{token{KEYWORD, "aa", 2}, token{KEYWORD, "bb", 4}}},
+
+		// TODO: test errors too
 	}
 
 	for _, tt := range tests {
