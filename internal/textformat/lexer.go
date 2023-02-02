@@ -213,7 +213,7 @@ func (lex *lexer) scanNumber() token {
 		return lex.scanHexNumber(startpos)
 	} else {
 		// decimal number
-		for isDigit(lex.r) {
+		for isDigit(lex.r) || lex.r == '_' {
 			lex.next()
 		}
 		return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
@@ -228,7 +228,7 @@ func (lex *lexer) scanHexNumber(startpos int) token {
 	// lex.r is now pointing at the starting "0x"; consume both.
 	lex.next()
 	lex.next()
-	for isHexDigit(lex.r) {
+	for isHexDigit(lex.r) || lex.r == '_' {
 		lex.next()
 	}
 	return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
