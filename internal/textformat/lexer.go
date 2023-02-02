@@ -94,7 +94,7 @@ func (lex *lexer) next() {
 	}
 }
 
-func (lex *lexer) peekNextByte() rune {
+func (lex *lexer) peekNext() rune {
 	if lex.nextpos < len(lex.buf) {
 		return rune(lex.buf[lex.nextpos])
 	} else {
@@ -127,7 +127,7 @@ func (lex *lexer) skipNontokens() {
 			lex.lineNum++
 			lex.next()
 		case ';':
-			if lex.peekNextByte() == ';' {
+			if lex.peekNext() == ';' {
 				lex.skipLineComment()
 			}
 		default:
