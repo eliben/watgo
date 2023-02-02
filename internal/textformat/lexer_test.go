@@ -30,6 +30,18 @@ func TestLexer(t *testing.T) {
 			`k$% $hi`,
 			[]token{token{KEYWORD, "k$%", 1}, token{ID, "$hi", 1}}},
 
+		{"decimal integers",
+			`20 +441 -882 0123`,
+			[]token{
+				token{NUMBER, "20", 1}, token{NUMBER, "+441", 1},
+				token{NUMBER, "-882", 1}, token{NUMBER, "0123", 1}}},
+
+		{"hex integers",
+			`0xaBc -0x03f +0x1`,
+			[]token{
+				token{NUMBER, "0xaBc", 1}, token{NUMBER, "-0x03f", 1}, token{NUMBER, "+0x1", 1},
+			}},
+
 		{"skipping line comments",
 			`kwa ;;comment
 ;; another comment

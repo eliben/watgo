@@ -24,6 +24,7 @@ const (
 	DOLLAR
 	ID
 	KEYWORD
+	NUMBER
 )
 
 var tokenNames = [...]string{
@@ -35,6 +36,7 @@ var tokenNames = [...]string{
 	DOLLAR:  "DOLLAR",
 	ID:      "ID",
 	KEYWORD: "KEYWORD",
+	NUMBER:  "NUMBER",
 }
 
 func (tok token) String() string {
@@ -116,6 +118,8 @@ func (lex *lexer) nextToken() token {
 		return lex.scanId()
 	} else if isLetter(lex.r) {
 		return lex.scanKeyword()
+	} else if isDigit(lex.r) || isSign(lex.r) {
+		return lex.scanNumber()
 	}
 
 	return lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
@@ -199,12 +203,43 @@ func (lex *lexer) scanKeyword() token {
 	return token{KEYWORD, lex.buf[startpos:lex.rpos], lex.lineNum}
 }
 
+func (lex *lexer) scanNumber() token {
+	startpos := lex.rpos
+	if isSign(lex.r) {
+		lex.next()
+	}
+
+	if lex.r == '0' && lex.peekNext() == 'x' {
+		return lex.scanHexNumber(startpos)
+	} else {
+		// decimal number
+		for isDigit(lex.r) {
+			lex.next()
+		}
+		return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
+	}
+
+	return lex.errorToken("invalid number")
+}
+
+// scanHexNumber scans a hexadecimal number; startpos points to where the
+// number started (it could have a preceding + or - that has to be included).
+func (lex *lexer) scanHexNumber(startpos int) token {
+	// lex.r is now pointing at the starting "0x"; consume both.
+	lex.next()
+	lex.next()
+	for isHexDigit(lex.r) {
+		lex.next()
+	}
+	return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
+}
+
 // isIdChar checks whether r is in the idchar group defined by the wasm
 // spec at https://webassembly.github.io/spec/core/text/values.html
 //
 // Note: this can probably be sped up using a lookup table
 func isIdChar(r rune) bool {
-	if r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+	if '0' <= r && r <= '9' || 'A' <= r && r <= 'Z' || 'a' <= r && r <= 'z' {
 		return true
 	}
 	switch r {
@@ -219,4 +254,16 @@ func isIdChar(r rune) bool {
 
 func isLetter(r rune) bool {
 	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z'
+}
+
+func isDigit(r rune) bool {
+	return '0' <= r && r <= '9'
+}
+
+func isHexDigit(r rune) bool {
+	return '0' <= r && r <= '9' || 'A' <= r && r <= 'F' || 'a' <= r && r <= 'f'
+}
+
+func isSign(r rune) bool {
+	return r == '+' || r == '-'
 }
