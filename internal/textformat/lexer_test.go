@@ -80,12 +80,21 @@ func TestLexer(t *testing.T) {
 
 		{"decimal floats",
 			`0.1 199.34 25.
-			+2.12 -17.
-			2.e-9 0.e+8 2.99e+111  100.008e-012`,
+			+2.12 -17. +2_4.5_6
+			4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012`,
 			[]token{
 				token{FLOAT, "0.1", 1}, token{FLOAT, "199.34", 1}, token{FLOAT, "25.", 1},
-				token{FLOAT, "+2.12", 2}, token{FLOAT, "-17.", 2},
-				token{FLOAT, "2.e-9", 3}, token{FLOAT, "0.e+8", 3}, token{FLOAT, "2.99e+111", 3}, token{FLOAT, "100.008e-012", 3},
+				token{FLOAT, "+2.12", 2}, token{FLOAT, "-17.", 2}, token{FLOAT, "+2_4.5_6", 2},
+				token{FLOAT, "4.4e4", 3}, token{FLOAT, "2.e-9", 3}, token{FLOAT, "0.e+8", 3}, token{FLOAT, "2.99e+111", 3}, token{FLOAT, "100.008e-012", 3},
+			}},
+
+		{"hex floats",
+			`0xfa.3fe 0x13.
+			-0xD1.p+21 +0x01EEF.20FEEP-100
+			`,
+			[]token{
+				token{FLOAT, "0xfa.3fe", 1}, token{FLOAT, "0x13.", 1},
+				token{FLOAT, "-0xD1.p+21", 2}, token{FLOAT, "+0x01EEF.20FEEP-100", 2},
 			}},
 
 		{"skipping line comments",

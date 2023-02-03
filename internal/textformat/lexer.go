@@ -250,13 +250,15 @@ func (lex *lexer) scanNumber() token {
 			}
 		}
 
-		if lex.r == 'e' || lex.r == 'E' {
+		// The exponent is preceded by [e|E] for decimal floats and for [p|P] for
+		// hex floats.
+		if (hex && (lex.r == 'p' || lex.r == 'P')) || (lex.r == 'e' || lex.r == 'E') {
 			lex.next()
 			if isSign(lex.r) {
 				lex.next()
-				for isDigit(lex.r) {
-					lex.next()
-				}
+			}
+			for isDigit(lex.r) {
+				lex.next()
 			}
 		}
 
