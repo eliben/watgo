@@ -24,7 +24,8 @@ const (
 	DOLLAR
 	ID
 	KEYWORD
-	NUMBER
+	INT
+	FLOAT
 )
 
 var tokenNames = [...]string{
@@ -36,7 +37,8 @@ var tokenNames = [...]string{
 	DOLLAR:  "DOLLAR",
 	ID:      "ID",
 	KEYWORD: "KEYWORD",
-	NUMBER:  "NUMBER",
+	INT:     "INT",
+	FLOAT:   "FLOAT",
 }
 
 func (tok token) String() string {
@@ -211,23 +213,57 @@ func (lex *lexer) scanNumber() token {
 		lex.next()
 	}
 
+	hex := false
+
 	if lex.r == '0' && lex.peekNext() == 'x' {
 		// lex.r is now pointing at the starting "0x"; consume both.
+		hex = true
 		lex.next()
 		lex.next()
 		for isHexDigit(lex.r) || lex.r == '_' {
 			lex.next()
 		}
-		return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
 	} else {
 		// decimal number
 		for isDigit(lex.r) || lex.r == '_' {
 			lex.next()
 		}
-		return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
 	}
 
-	return lex.errorToken("invalid number")
+	// Finished parsing a number; this could either be the end of it, or a float
+	// if the next rune is a decimal dot.
+
+	if lex.r == '.' {
+		lex.next()
+
+		// Either a fractional part maybe followed by +/- exponent, or directly
+		// the latter without a fractional part.
+		if !isSign(lex.r) {
+			if hex {
+				for isHexDigit(lex.r) || lex.r == '_' {
+					lex.next()
+				}
+			} else {
+				for isDigit(lex.r) || lex.r == '_' {
+					lex.next()
+				}
+			}
+		}
+
+		if isSign(lex.r) {
+			lex.next()
+			for isDigit(lex.r) {
+				lex.next()
+			}
+		}
+
+		return token{FLOAT, lex.buf[startpos:lex.rpos], lex.lineNum}
+	} else {
+		if lex.rpos-startpos == 1 {
+			return lex.errorToken("lonely sign")
+		}
+		return token{INT, lex.buf[startpos:lex.rpos], lex.lineNum}
+	}
 }
 
 // isIdChar checks whether r is in the idchar group defined by the wasm

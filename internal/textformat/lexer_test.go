@@ -12,7 +12,7 @@ func tokenizeAll(input string) []token {
 	lex := newLexer(input)
 	for {
 		tok := lex.nextToken()
-		if tok.name == EOF {
+		if tok.name == EOF || tok.name == ERROR {
 			break
 		}
 		toks = append(toks, tok)
@@ -33,16 +33,22 @@ func TestLexer(t *testing.T) {
 		{"decimal integers",
 			`20 +441 -882 0123 1_000_000`,
 			[]token{
-				token{NUMBER, "20", 1}, token{NUMBER, "+441", 1},
-				token{NUMBER, "-882", 1}, token{NUMBER, "0123", 1},
-				token{NUMBER, "1_000_000", 1},
+				token{INT, "20", 1}, token{INT, "+441", 1},
+				token{INT, "-882", 1}, token{INT, "0123", 1},
+				token{INT, "1_000_000", 1},
 			}},
 
 		{"hex integers",
 			`0xaBc -0x03f +0x1 0xfF_aB`,
 			[]token{
-				token{NUMBER, "0xaBc", 1}, token{NUMBER, "-0x03f", 1},
-				token{NUMBER, "+0x1", 1}, token{NUMBER, "0xfF_aB", 1},
+				token{INT, "0xaBc", 1}, token{INT, "-0x03f", 1},
+				token{INT, "+0x1", 1}, token{INT, "0xfF_aB", 1},
+			}},
+
+		{"decimal floats",
+			`0.1 199.34 25.`,
+			[]token{
+				token{FLOAT, "0.1", 1}, token{FLOAT, "199.34", 1}, token{FLOAT, "25.", 1},
 			}},
 
 		{"skipping line comments",
