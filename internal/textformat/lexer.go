@@ -250,10 +250,13 @@ func (lex *lexer) scanNumber() token {
 			}
 		}
 
-		if isSign(lex.r) {
+		if lex.r == 'e' || lex.r == 'E' {
 			lex.next()
-			for isDigit(lex.r) {
+			if isSign(lex.r) {
 				lex.next()
+				for isDigit(lex.r) {
+					lex.next()
+				}
 			}
 		}
 

@@ -1,9 +1,11 @@
 package textformat
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
-	"github.com/eliben/watgo/internal/slices"
+	"github.com/eliben/watgo/internal/utils"
 )
 
 func tokenizeAll(input string) []token {
@@ -18,6 +20,37 @@ func tokenizeAll(input string) []token {
 		toks = append(toks, tok)
 	}
 	return toks
+}
+
+func displaySliceDiff[T any](got []T, want []T) string {
+	maxLen := 0
+	for _, g := range got {
+		gs := fmt.Sprintf("%v", g)
+		maxLen = utils.Max(maxLen+1, len(gs))
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%-*v      %v\n", maxLen, "got", "want")
+
+	for i := 0; i < utils.Max(len(got), len(want)); i++ {
+		var sgot string
+		if i < len(got) {
+			sgot = fmt.Sprintf("%v", got[i])
+		}
+
+		var swant string
+		if i < len(want) {
+			swant = fmt.Sprintf("%v", want[i])
+		}
+
+		sign := "  "
+		if swant != sgot {
+			sign = "!="
+		}
+
+		fmt.Fprintf(&sb, "%-*v  %v  %v\n", maxLen, sgot, sign, swant)
+	}
+	return sb.String()
 }
 
 func TestLexer(t *testing.T) {
@@ -46,9 +79,13 @@ func TestLexer(t *testing.T) {
 			}},
 
 		{"decimal floats",
-			`0.1 199.34 25.`,
+			`0.1 199.34 25.
+			+2.12 -17.
+			2.e-9 0.e+8 2.99e+111  100.008e-012`,
 			[]token{
 				token{FLOAT, "0.1", 1}, token{FLOAT, "199.34", 1}, token{FLOAT, "25.", 1},
+				token{FLOAT, "+2.12", 2}, token{FLOAT, "-17.", 2},
+				token{FLOAT, "2.e-9", 3}, token{FLOAT, "0.e+8", 3}, token{FLOAT, "2.99e+111", 3}, token{FLOAT, "100.008e-012", 3},
 			}},
 
 		{"skipping line comments",
@@ -77,8 +114,8 @@ koi ;;;yet another comment`,
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
-			if !slices.Equal(gotTokens, tt.wantTokens) {
-				t.Errorf("got tokens=%v, want=%v", gotTokens, tt.wantTokens)
+			if !utils.SlicesEqual(gotTokens, tt.wantTokens) {
+				t.Errorf("mismatch between got and want:\n%v", displaySliceDiff(gotTokens, tt.wantTokens))
 			}
 		})
 	}
