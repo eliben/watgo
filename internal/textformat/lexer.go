@@ -204,13 +204,21 @@ func (lex *lexer) scanKeyword() token {
 }
 
 func (lex *lexer) scanNumber() token {
+	// TODO: should also handle float constants,
+	// including "nan", "inf" etc.
 	startpos := lex.rpos
 	if isSign(lex.r) {
 		lex.next()
 	}
 
 	if lex.r == '0' && lex.peekNext() == 'x' {
-		return lex.scanHexNumber(startpos)
+		// lex.r is now pointing at the starting "0x"; consume both.
+		lex.next()
+		lex.next()
+		for isHexDigit(lex.r) || lex.r == '_' {
+			lex.next()
+		}
+		return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
 	} else {
 		// decimal number
 		for isDigit(lex.r) || lex.r == '_' {
@@ -220,18 +228,6 @@ func (lex *lexer) scanNumber() token {
 	}
 
 	return lex.errorToken("invalid number")
-}
-
-// scanHexNumber scans a hexadecimal number; startpos points to where the
-// number started (it could have a preceding + or - that has to be included).
-func (lex *lexer) scanHexNumber(startpos int) token {
-	// lex.r is now pointing at the starting "0x"; consume both.
-	lex.next()
-	lex.next()
-	for isHexDigit(lex.r) || lex.r == '_' {
-		lex.next()
-	}
-	return token{NUMBER, lex.buf[startpos:lex.rpos], lex.lineNum}
 }
 
 // isIdChar checks whether r is in the idchar group defined by the wasm
