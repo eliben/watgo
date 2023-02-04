@@ -97,6 +97,16 @@ func TestLexer(t *testing.T) {
 				token{FLOAT, "-0xD1.p+21", 2}, token{FLOAT, "+0x01EEF.20FEEP-100", 2},
 			}},
 
+		{"inf/nan floats",
+			`+inf -inf +nan -nan
+			inf nan
+			nan:0xf0f0 -nan:0x12 +nan:0x4FFA`,
+			[]token{
+				token{FLOAT, "+inf", 1}, token{FLOAT, "-inf", 1}, token{FLOAT, "+nan", 1}, token{FLOAT, "-nan", 1},
+				token{FLOAT, "inf", 2}, token{FLOAT, "nan", 2},
+				token{FLOAT, "nan:0xf0f0", 3}, token{FLOAT, "-nan:0x12", 3}, token{FLOAT, "+nan:0x4FFA", 3},
+			}},
+
 		{"skipping line comments",
 			`kwa ;;comment
 ;; another comment

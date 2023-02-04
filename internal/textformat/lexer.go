@@ -2,7 +2,10 @@ package textformat
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
+
+	"github.com/eliben/watgo/internal/utils"
 )
 
 // tokenName is a type for describing tokens mnemonically.
@@ -106,6 +109,11 @@ func (lex *lexer) peekNext() rune {
 	}
 }
 
+func (lex *lexer) peekNextN(n int) string {
+	end := utils.Max(lex.nextpos+n, len(lex.buf))
+	return lex.buf[lex.nextpos:end]
+}
+
 func (lex *lexer) nextToken() token {
 	// Skip non-tokens like whitespace and check for EOF.
 	if err := lex.skipNontokens(); err != nil {
@@ -202,12 +210,16 @@ func (lex *lexer) scanKeyword() token {
 	for isIdChar(lex.r) {
 		lex.next()
 	}
-	return token{KEYWORD, lex.buf[startpos:lex.rpos], lex.lineNum}
+
+	word := lex.buf[startpos:lex.rpos]
+	if word == "inf" || word == "nan" || strings.HasPrefix(word, "nan:0x") {
+		return token{FLOAT, word, lex.lineNum}
+	} else {
+		return token{KEYWORD, word, lex.lineNum}
+	}
 }
 
 func (lex *lexer) scanNumber() token {
-	// TODO: should also handle float constants,
-	// including "nan", "inf" etc.
 	startpos := lex.rpos
 	if isSign(lex.r) {
 		lex.next()
@@ -222,6 +234,14 @@ func (lex *lexer) scanNumber() token {
 		lex.next()
 		for isHexDigit(lex.r) || lex.r == '_' {
 			lex.next()
+		}
+	} else if lex.r == 'i' || lex.r == 'n' {
+		tok := lex.scanKeyword()
+		if tok.name == FLOAT {
+			tok.val = string(lex.buf[startpos]) + tok.val
+			return tok
+		} else {
+			return lex.errorToken("invalid word after + or -")
 		}
 	} else {
 		// decimal number
