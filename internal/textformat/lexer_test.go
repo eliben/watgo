@@ -63,6 +63,14 @@ func TestLexer(t *testing.T) {
 			`k$% $hi`,
 			[]token{token{KEYWORD, "k$%", 1}, token{ID, "$hi", 1}}},
 
+		{"parens",
+			`() ( ( ) ) (hello)`,
+			[]token{
+				token{LPAREN, "(", 1}, token{RPAREN, ")", 1},
+				token{LPAREN, "(", 1}, token{LPAREN, "(", 1}, token{RPAREN, ")", 1}, token{RPAREN, ")", 1},
+				token{LPAREN, "(", 1}, token{KEYWORD, "hello", 1}, token{RPAREN, ")", 1},
+			}},
+
 		{"decimal integers",
 			`20 +441 -882 0123 1_000_000`,
 			[]token{

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/eliben/watgo/internal/utils"
 )
 
 // tokenName is a type for describing tokens mnemonically.
@@ -109,11 +107,6 @@ func (lex *lexer) peekNext() rune {
 	}
 }
 
-func (lex *lexer) peekNextN(n int) string {
-	end := utils.Max(lex.nextpos+n, len(lex.buf))
-	return lex.buf[lex.nextpos:end]
-}
-
 func (lex *lexer) nextToken() token {
 	// Skip non-tokens like whitespace and check for EOF.
 	if err := lex.skipNontokens(); err != nil {
@@ -130,6 +123,12 @@ func (lex *lexer) nextToken() token {
 		return lex.scanKeyword()
 	} else if isDigit(lex.r) || isSign(lex.r) {
 		return lex.scanNumber()
+	} else if lex.r == '(' {
+		lex.next()
+		return token{LPAREN, "(", lex.lineNum}
+	} else if lex.r == ')' {
+		lex.next()
+		return token{RPAREN, ")", lex.lineNum}
 	}
 
 	return lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
@@ -150,12 +149,16 @@ func (lex *lexer) skipNontokens() error {
 		case ';':
 			if lex.peekNext() == ';' {
 				lex.skipLineComment()
+			} else {
+				return nil
 			}
 		case '(':
 			if lex.peekNext() == ';' {
 				if err := lex.skipBlockComment(); err != nil {
 					return err
 				}
+			} else {
+				return nil
 			}
 		default:
 			return nil
