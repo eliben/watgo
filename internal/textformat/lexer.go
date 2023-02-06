@@ -27,6 +27,7 @@ const (
 	KEYWORD
 	INT
 	FLOAT
+	STRING
 )
 
 var tokenNames = [...]string{
@@ -40,6 +41,7 @@ var tokenNames = [...]string{
 	KEYWORD: "KEYWORD",
 	INT:     "INT",
 	FLOAT:   "FLOAT",
+	STRING:  "STRING",
 }
 
 func (tok token) String() string {
@@ -129,6 +131,8 @@ func (lex *lexer) nextToken() token {
 	} else if lex.r == ')' {
 		lex.next()
 		return token{RPAREN, ")", lex.lineNum}
+	} else if lex.r == '"' {
+		return lex.scanString()
 	}
 
 	return lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
@@ -219,6 +223,30 @@ func (lex *lexer) scanKeyword() token {
 		return token{FLOAT, word, lex.lineNum}
 	} else {
 		return token{KEYWORD, word, lex.lineNum}
+	}
+}
+
+func (lex *lexer) scanString() token {
+	startpos := lex.rpos
+	startLine := lex.lineNum
+
+	lex.next()
+
+	for lex.r > 0 && lex.r != '"' {
+		if lex.r == '\\' {
+			lex.next()
+		} else if lex.r == '\n' {
+			lex.lineNum++
+		}
+		lex.next()
+	}
+
+	if lex.r < 0 {
+		return lex.errorToken(fmt.Sprintf("unterminated string starting at line %v", startLine))
+	} else {
+		closeQuotePos := lex.nextpos
+		lex.next()
+		return token{STRING, lex.buf[startpos:closeQuotePos], startLine}
 	}
 }
 

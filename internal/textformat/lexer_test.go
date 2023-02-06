@@ -135,6 +135,30 @@ koi ;;;yet another comment`,
 			;) bb`,
 			[]token{token{KEYWORD, "aa", 2}, token{KEYWORD, "bb", 4}}},
 
+		{"strings",
+			`hi "name"
+			"str1"  "str2"
+			"str3""str4"
+			"escape \" still \\\" going \\" id
+			`,
+
+			[]token{
+				token{KEYWORD, "hi", 1}, token{STRING, `"name"`, 1},
+				token{STRING, `"str1"`, 2}, token{STRING, `"str2"`, 2},
+				token{STRING, `"str3"`, 3}, token{STRING, `"str4"`, 3},
+				token{STRING, `"escape \" still \\\" going \\"`, 4}, token{KEYWORD, "id", 4},
+			}},
+
+		{"string with newline",
+			`id "string starting
+and ending" id2`,
+			[]token{
+				token{KEYWORD, "id", 1},
+				token{STRING, `"string starting
+and ending"`, 1},
+				token{KEYWORD, "id2", 2},
+			}},
+
 		// TODO: test errors too
 	}
 
