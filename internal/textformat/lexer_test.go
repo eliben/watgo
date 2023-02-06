@@ -14,8 +14,6 @@ func tokenizeAll(input string) []token {
 	lex := newLexer(input)
 	for {
 		tok := lex.nextToken()
-		fmt.Println(tok)
-
 		if tok.name == EOF {
 			// on EOF, stop without adding it to toks
 			break
@@ -180,17 +178,19 @@ and ending"`, 1},
 
 func TestLexerErrors(t *testing.T) {
 	var tests = []struct {
-		name      string
 		input     string
 		wantError string
 	}{
-		{"unknown", "{", "unknown token"},
+		{"{", "unknown token"},
+		{`"hello`, "unterminated string starting at line 1"},
+		{`+nunu`, "invalid word after +"},
+		{`+ kk`, "lonely sign"},
+		{`id (;`, "unterminated block comment"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.wantError, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
-			fmt.Println(gotTokens)
 			errTok := gotTokens[len(gotTokens)-1]
 			if errTok.name != ERROR {
 				t.Errorf("got last tok %s, want ERROR", errTok)
