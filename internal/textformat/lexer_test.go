@@ -14,10 +14,18 @@ func tokenizeAll(input string) []token {
 	lex := newLexer(input)
 	for {
 		tok := lex.nextToken()
-		if tok.name == EOF || tok.name == ERROR {
+		fmt.Println(tok)
+
+		if tok.name == EOF {
+			// on EOF, stop without adding it to toks
 			break
 		}
 		toks = append(toks, tok)
+
+		if tok.name == ERROR {
+			// stop on first error (but after adding it to toks)
+			break
+		}
 	}
 	return toks
 }
@@ -158,8 +166,6 @@ and ending" id2`,
 and ending"`, 1},
 				token{KEYWORD, "id2", 2},
 			}},
-
-		// TODO: test errors too
 	}
 
 	for _, tt := range tests {
@@ -167,6 +173,30 @@ and ending"`, 1},
 			gotTokens := tokenizeAll(tt.input)
 			if !utils.SlicesEqual(gotTokens, tt.wantTokens) {
 				t.Errorf("mismatch between got and want:\n%v", displaySliceDiff(gotTokens, tt.wantTokens))
+			}
+		})
+	}
+}
+
+func TestLexerErrors(t *testing.T) {
+	var tests = []struct {
+		name      string
+		input     string
+		wantError string
+	}{
+		{"unknown", "{", "unknown token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTokens := tokenizeAll(tt.input)
+			fmt.Println(gotTokens)
+			errTok := gotTokens[len(gotTokens)-1]
+			if errTok.name != ERROR {
+				t.Errorf("got last tok %s, want ERROR", errTok)
+			}
+			if strings.Index(errTok.value, tt.wantError) < 0 {
+				t.Errorf("got error %q, wanted to find %q", errTok.value, tt.wantError)
 			}
 		})
 	}

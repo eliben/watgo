@@ -10,9 +10,9 @@ import (
 type tokenName int
 
 type token struct {
-	name tokenName
-	val  string
-	line int
+	name  tokenName
+	value string
+	line  int
 }
 
 const (
@@ -45,7 +45,7 @@ var tokenNames = [...]string{
 }
 
 func (tok token) String() string {
-	return fmt.Sprintf("token{%s, '%s', %v}", tokenNames[tok.name], tok.val, tok.line)
+	return fmt.Sprintf("token{%s, '%s', %v}", tokenNames[tok.name], tok.value, tok.line)
 }
 
 // lexer
@@ -269,7 +269,7 @@ func (lex *lexer) scanNumber() token {
 	} else if lex.r == 'i' || lex.r == 'n' {
 		tok := lex.scanKeyword()
 		if tok.name == FLOAT {
-			tok.val = string(lex.buf[startpos]) + tok.val
+			tok.value = string(lex.buf[startpos]) + tok.value
 			return tok
 		} else {
 			return lex.errorToken("invalid word after + or -")
