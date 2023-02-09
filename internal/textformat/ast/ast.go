@@ -30,6 +30,3 @@ type LocalDecl struct {
 	Id string
 	Ty Type
 }
-
-type Instruction struct {
-}

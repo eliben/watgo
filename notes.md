@@ -14,3 +14,6 @@ the text format and emit `wasm` modules.
 Realistic WAT code for testing:
 
 * Game of life: https://github.com/ColinEberhardt/wasm-game-of-life/blob/master/main.wat
+* Book samples:
+  https://github.com/battlelinegames/ArtOfWasm
+  https://github.com/bsletten/wasm_tdg
