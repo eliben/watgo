@@ -10,3 +10,7 @@ the text format with high fidelity.
 The `wasm` package is the base, an abstract representation of the WASM module
 with all its parts. `textformat` should depend on `wasm` because it will parse
 the text format and emit `wasm` modules.
+
+Realistic WAT code for testing:
+
+* Game of life: https://github.com/ColinEberhardt/wasm-game-of-life/blob/master/main.wat
