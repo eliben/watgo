@@ -7,19 +7,24 @@ import (
 )
 
 type parser struct {
-	tokens  []token
-	current int
-	errs    errorList
+	lex *lexer
+
+	// Current token (one token lookahead)
+	tok token
+
+	errs errorList
 }
 
-// TODO: when encountering an error, register it in errs and keep going, trying
-// to resync (maybe to the upcoming closing RPAREN?)
-func newParser(tokens []token) *parser {
-	return &parser{
-		tokens:  tokens,
-		current: 0,
-		errs:    nil,
+func newParser(buf string) *parser {
+	lex := newLexer(buf)
+
+	p := &parser{
+		lex:  lex,
+		errs: nil,
 	}
+
+	p.advance()
+	return p
 }
 
 func (p *parser) parse() (module *ast.Module, err error) {
@@ -32,28 +37,39 @@ func (p *parser) parse() (module *ast.Module, err error) {
 	}
 }
 
-// isAtEnd reports whether we're at the end of the input.
-func (p *parser) isAtEnd() bool {
-	return p.current >= len(p.tokens) || p.tokens[p.current].name == EOF
-}
-
-// advance consumes the current token and returns it.
+// advance returns the current token and consumes it (the next call to advance
+// will return the next token in the stream, etc.)
 func (p *parser) advance() token {
-	tok := p.tokens[p.current]
-	if !p.isAtEnd() {
-		p.current++
+	tok := p.tok
+	if tok.name != EOF {
+		p.tok = p.lex.nextToken()
 	}
 	return tok
 }
 
-// curTokIs checks if the current token matches one of the names passed in.
-func (p *parser) curTokIs(names ...tokenName) bool {
-	for _, n := range names {
-		if p.tokens[p.current].name == n {
-			return true
+// synchronize consumes tokens until if finds a place in the input where it's
+// probably safe to resume parsing. Specifically, it searches for the next
+// non-nested closing ')', and keeps track of nesting to skip (...)
+func (p *parser) synchronize() {
+	nestingDepth := 1
+
+	for {
+		switch p.tok.name {
+		case EOF:
+			return
+		case LPAREN:
+			nestingDepth++
+		case RPAREN:
+			nestingDepth--
+		default:
+			// keep going
+		}
+		p.advance()
+
+		if nestingDepth == 0 {
+			return
 		}
 	}
-	return false
 }
 
 func (p *parser) emitError(tok token, msg string) {
@@ -63,7 +79,7 @@ func (p *parser) emitError(tok token, msg string) {
 	} else {
 		tokMsg = fmt.Sprintf("token %v", tok.value)
 	}
-	self.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
+	p.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
 }
 
 // module ::= '(' 'module' id? (modulefield)* ')'
@@ -87,18 +103,20 @@ func (p *parser) parseModule() *ast.Module {
 		t = p.advance()
 	}
 
+	module := &ast.Module{Name: modName}
+
 	// TODO: parse modulefield here in a loop, until ')' is encountered, which
 	// terminates the module.
-	for !p.curTokIs(RPAREN) {
-		p.parseModuleField()
+	for p.tok.name != RPAREN {
+		p.parseModuleField(module)
 	}
 
-	return nil
+	return module
 }
 
 // modulefield ::= '(' field-keyword ... ')'
 // The contents of each field are parsed in field-specific methods.
-func (p *parser) parseModuleField() {
+func (p *parser) parseModuleField(module *ast.Module) {
 	// If the next token is not an LPAREN, report an error and bail.
 	if t := p.advance(); t.name != LPAREN {
 		p.emitError(t, "expecting opening '(' of a modulefield")
