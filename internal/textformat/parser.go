@@ -12,6 +12,8 @@ type parser struct {
 	errs    errorList
 }
 
+// TODO: when encountering an error, register it in errs and keep going, trying
+// to resync (maybe to the upcoming closing RPAREN?)
 func newParser(tokens []token) *parser {
 	return &parser{
 		tokens:  tokens,
@@ -21,7 +23,13 @@ func newParser(tokens []token) *parser {
 }
 
 func (p *parser) parse() (module *ast.Module, err error) {
-	return nil, nil
+	m := p.parseModule()
+
+	if len(p.errs) == 0 {
+		return m, nil
+	} else {
+		return nil, p.errs
+	}
 }
 
 // isAtEnd reports whether we're at the end of the input.
@@ -29,21 +37,45 @@ func (p *parser) isAtEnd() bool {
 	return p.current >= len(p.tokens) || p.tokens[p.current].name == EOF
 }
 
-// ErrorList represents multiple parse errors reported by the parser on a given
-// source. It's loosely modeled on scanner.ErrorList in the Go standard library.
-// ErrorList implements the error interface.
-type errorList []error
-
-func (el *errorList) Add(err error) {
-	*el = append(*el, err)
+// advance consumes the current token and returns it.
+func (p *parser) advance() token {
+	tok := p.tokens[p.current]
+	if !p.isAtEnd() {
+		p.current++
+	}
+	return tok
 }
 
-func (el errorList) Error() string {
-	if len(el) == 0 {
-		return "no errors"
-	} else if len(el) == 1 {
-		return el[0].Error()
-	} else {
-		return fmt.Sprintf("%s (and %d more errors)", el[0], len(el)-1)
+func (p *parser) match(name tokenName, errMsg string) token {
+	tok := p.advance()
+	if tok.name != name {
+		// TODO: report error here
 	}
+	return tok
+}
+
+func (p *parser) emitError(tok token, msg string) {
+	var tokMsg string
+	if tok.name == EOF {
+		tokMsg = "end of input"
+	} else {
+		tokMsg = fmt.Sprintf("token %v", tok.value)
+	}
+	self.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
+}
+
+// module ::= '(' 'module' id? (module-field)* ')'
+func (p *parser) parseModule() *ast.Module {
+	// If we can't even find a proper '(' 'module', just bail out immediately.
+	if t := p.advance(); t.name != LPAREN {
+		p.emitError(t, "expecting opening '(' of a module")
+		return nil
+	}
+
+	if t := p.advance(); t.name != KEYWORD || t.value != "module" {
+		p.emitError(t, "expecting 'module'")
+		return nil
+	}
+
+	return nil
 }
