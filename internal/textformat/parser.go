@@ -66,7 +66,7 @@ func (p *parser) emitError(tok token, msg string) {
 	self.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
 }
 
-// module ::= '(' 'module' id? (module-field)* ')'
+// module ::= '(' 'module' id? (modulefield)* ')'
 func (p *parser) parseModule() *ast.Module {
 	// If we can't even find a proper '(' 'module', just bail out immediately.
 	if t := p.advance(); t.name != LPAREN {
@@ -87,11 +87,23 @@ func (p *parser) parseModule() *ast.Module {
 		t = p.advance()
 	}
 
-	// TODO: parse module-field here in a loop, until ')' is encountered, which
+	// TODO: parse modulefield here in a loop, until ')' is encountered, which
 	// terminates the module.
-	for !p.curTokIs(LPAREN) {
-
+	for !p.curTokIs(RPAREN) {
+		p.parseModuleField()
 	}
 
 	return nil
+}
+
+// modulefield ::= '(' field-keyword ... ')'
+// The contents of each field are parsed in field-specific methods.
+func (p *parser) parseModuleField() {
+	// If the next token is not an LPAREN, report an error and bail.
+	if t := p.advance(); t.name != LPAREN {
+		p.emitError(t, "expecting opening '(' of a modulefield")
+		return
+	}
+
+	// if not keyword, sync to the ending ')' ?
 }
