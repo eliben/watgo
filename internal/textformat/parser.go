@@ -46,12 +46,14 @@ func (p *parser) advance() token {
 	return tok
 }
 
-func (p *parser) match(name tokenName, errMsg string) token {
-	tok := p.advance()
-	if tok.name != name {
-		// TODO: report error here
+// curTokIs checks if the current token matches one of the names passed in.
+func (p *parser) curTokIs(names ...tokenName) bool {
+	for _, n := range names {
+		if p.tokens[p.current].name == n {
+			return true
+		}
 	}
-	return tok
+	return false
 }
 
 func (p *parser) emitError(tok token, msg string) {
@@ -75,6 +77,20 @@ func (p *parser) parseModule() *ast.Module {
 	if t := p.advance(); t.name != KEYWORD || t.value != "module" {
 		p.emitError(t, "expecting 'module'")
 		return nil
+	}
+
+	t := p.advance()
+	var modName string
+
+	if t.name == ID {
+		modName = t.value
+		t = p.advance()
+	}
+
+	// TODO: parse module-field here in a loop, until ')' is encountered, which
+	// terminates the module.
+	for !p.curTokIs(LPAREN) {
+
 	}
 
 	return nil

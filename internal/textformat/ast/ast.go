@@ -6,6 +6,7 @@ package ast
 // TODO: in ASTs we don't deal with index spaces
 
 type Module struct {
+	Name  string
 	Funcs []Function
 }
 
