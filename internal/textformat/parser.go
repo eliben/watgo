@@ -29,12 +29,7 @@ func newParser(buf string) *parser {
 
 func (p *parser) parse() (module *ast.Module, err error) {
 	m := p.parseModule()
-
-	if len(p.errs) == 0 {
-		return m, nil
-	} else {
-		return nil, p.errs
-	}
+	return m, p.errs
 }
 
 // advance returns the current token and consumes it (the next call to advance
@@ -77,7 +72,7 @@ func (p *parser) emitError(tok token, msg string) {
 	if tok.name == EOF {
 		tokMsg = "end of input"
 	} else {
-		tokMsg = fmt.Sprintf("token %v", tok.value)
+		tokMsg = fmt.Sprintf("token %q", tok.value)
 	}
 	p.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
 }
@@ -95,12 +90,10 @@ func (p *parser) parseModule() *ast.Module {
 		return nil
 	}
 
-	t := p.advance()
 	var modName string
-
-	if t.name == ID {
-		modName = t.value
-		t = p.advance()
+	if p.tok.name == ID {
+		modName = p.tok.value
+		p.advance()
 	}
 
 	module := &ast.Module{Name: modName}
