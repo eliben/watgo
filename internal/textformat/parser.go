@@ -29,7 +29,11 @@ func newParser(buf string) *parser {
 
 func (p *parser) parse() (module *ast.Module, err error) {
 	m := p.parseModule()
-	return m, p.errs
+	if len(p.errs) > 0 {
+		return m, p.errs
+	} else {
+		return m, nil
+	}
 }
 
 // advance returns the current token and consumes it (the next call to advance
