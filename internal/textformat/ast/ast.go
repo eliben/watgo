@@ -11,11 +11,18 @@ type Module struct {
 }
 
 type Function struct {
+	Id     string
+	TyUse  TypeUse
+	Locals []LocalDecl
+	Instrs []Instruction
+}
+
+// TypeUse represents the typeuse clause: optional type index and optional
+// lists of param/result types.
+type TypeUse struct {
 	Id      string
 	Params  []ParamDecl
 	Results []ResultDecl
-	Locals  []LocalDecl
-	Instrs  []Instruction
 }
 
 type ParamDecl struct {

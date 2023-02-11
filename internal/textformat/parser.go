@@ -102,8 +102,6 @@ func (p *parser) parseModule() *ast.Module {
 
 	module := &ast.Module{Name: modName}
 
-	// TODO: parse modulefield here in a loop, until ')' is encountered, which
-	// terminates the module.
 	for p.tok.name != RPAREN {
 		p.parseModuleField(module)
 	}
@@ -120,5 +118,31 @@ func (p *parser) parseModuleField(module *ast.Module) {
 		return
 	}
 
-	// if not keyword, sync to the ending ')' ?
+	t := p.advance()
+	if t.name != KEYWORD {
+		p.emitError(t, "expecting keyword")
+		return
+	}
+
+	switch t.value {
+	case "func":
+		f := p.parseFunc()
+	default:
+		p.emitError(t, "unexpected keyword")
+		p.synchronize()
+	}
+}
+
+// func ::= '(' 'func' id? typeuse local* instr* ')
+func (p *parser) parseFunc() *ast.Function {
+	f := &ast.Function{}
+	if p.tok.name == ID {
+		f.Id = p.tok.name
+		p.advance()
+	}
+
+	// here parse type or naked param/result/local, or instructions
+	if p.tok.name == LPAREN {
+
+	}
 }
