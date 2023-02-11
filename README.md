@@ -1,5 +1,7 @@
 # watgo
 
+:snowflake: :snowflake: :snowflake: :snowflake: **Archiving for now, until I find new motivation** :snowflake: :snowflake: :snowflake: :snowflake:
+
 The idea of this project was a Wasm Toolkit for Go (watgo) to parse WASM (text
 and binary) into internal data structures, allowing conversions, etc.
 
@@ -43,5 +45,9 @@ But this is equivalent, using the non-folded form:
 
 In non-folded forms the instructions are delineated by tokens like `end`; this
 is an ugly mix.
+
+To tackle this, I need to maintain at least a 2-token lookahead that can detect
+sexprs like '(' 'if' etc.
+
 
 
