@@ -331,9 +331,9 @@ func isIdChar(r rune) bool {
 		return true
 	}
 	switch r {
-	case '!', '#', '$', '%', '&', '`', '*', '+', '-', '.', '/':
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '/':
 		return true
-	case ':', '<', '=', '>', '?', '@', '\\', '^', '_', '|', '~':
+	case ':', '<', '=', '>', '?', '@', '\\', '^', '_', '`', '|', '~':
 		return true
 	default:
 		return false

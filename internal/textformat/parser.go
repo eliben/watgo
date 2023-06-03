@@ -124,20 +124,21 @@ func (p *parser) parseModuleField(module *ast.Module) {
 		return
 	}
 
-	switch t.value {
-	case "func":
-		f := p.parseFunc()
-	default:
-		p.emitError(t, "unexpected keyword")
-		p.synchronize()
-	}
+	//switch t.value {
+	//case "func":
+	//f := p.parseFunc()
+	//default:
+	//p.emitError(t, "unexpected keyword")
+	//p.synchronize()
+	//}
 }
 
 // func ::= '(' 'func' id? typeuse local* instr* ')
 func (p *parser) parseFunc() *ast.Function {
 	f := &ast.Function{}
+	_ = f
 	if p.tok.name == ID {
-		f.Id = p.tok.name
+		//f.Id = p.tok.name
 		p.advance()
 	}
 
@@ -145,4 +146,5 @@ func (p *parser) parseFunc() *ast.Function {
 	if p.tok.name == LPAREN {
 
 	}
+	return nil
 }
