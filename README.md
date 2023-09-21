@@ -1,7 +1,5 @@
 # watgo
 
-:snowflake: :snowflake: :snowflake: :snowflake: **Archiving for now, until I find new motivation** :snowflake: :snowflake: :snowflake: :snowflake:
-
 The idea of this project was a Wasm Toolkit for Go (watgo) to parse WASM (text
 and binary) into internal data structures, allowing conversions, etc.
 
