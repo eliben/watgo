@@ -2,10 +2,9 @@ package textformat
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
-
-	"github.com/eliben/watgo/internal/utils"
 )
 
 func tokenizeAll(input string) []token {
@@ -32,13 +31,13 @@ func displaySliceDiff[T any](got []T, want []T) string {
 	maxLen := 0
 	for _, g := range got {
 		gs := fmt.Sprintf("%v", g)
-		maxLen = utils.Max(maxLen+1, len(gs))
+		maxLen = max(maxLen+1, len(gs))
 	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%-*v      %v\n", maxLen, "got", "want")
 
-	for i := 0; i < utils.Max(len(got), len(want)); i++ {
+	for i := 0; i < max(len(got), len(want)); i++ {
 		var sgot string
 		if i < len(got) {
 			sgot = fmt.Sprintf("%v", got[i])
@@ -169,7 +168,7 @@ and ending"`, 1},
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
-			if !utils.SlicesEqual(gotTokens, tt.wantTokens) {
+			if !slices.Equal(gotTokens, tt.wantTokens) {
 				t.Errorf("mismatch between got and want:\n%v", displaySliceDiff(gotTokens, tt.wantTokens))
 			}
 		})
