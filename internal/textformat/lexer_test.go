@@ -18,11 +18,6 @@ func tokenizeAll(input string) []token {
 			break
 		}
 		toks = append(toks, tok)
-
-		if tok.name == ERROR {
-			// stop on first error (but after adding it to toks)
-			break
-		}
 	}
 	return toks
 }
@@ -177,25 +172,26 @@ and ending"`, 1},
 
 func TestLexerErrors(t *testing.T) {
 	var tests = []struct {
-		input     string
-		wantError string
+		input         string
+		errorIndex    int
+		errorValue    string
+		errorLocation int
 	}{
-		{"{", "unknown token"},
-		{`"hello`, "unterminated string starting at line 1"},
-		{`+nunu`, "invalid word after +"},
-		{`+ kk`, "lonely sign"},
-		{`id (;`, "unterminated block comment"},
+		{"{", 0, "unknown token", 1},
+		{`"hello`, 0, "unterminated string starting at line 1", 1},
+		{`+nunu`, 0, "invalid word after", 1},
+		{`+ kk`, 0, "lonely sign", 1},
+		{`id (;`, 1, "unterminated block comment", 1},
+		{`hello
+		tok +isdf tok`, 2, "invalid word after", 2},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.wantError, func(t *testing.T) {
+		t.Run(tt.input, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
-			errTok := gotTokens[len(gotTokens)-1]
-			if errTok.name != ERROR {
-				t.Errorf("got last tok %s, want ERROR", errTok)
-			}
-			if strings.Index(errTok.value, tt.wantError) < 0 {
-				t.Errorf("got error %q, wanted to find %q", errTok.value, tt.wantError)
+			gotErrTok := gotTokens[tt.errorIndex]
+			if gotErrTok.name != ERROR || strings.Index(gotErrTok.value, tt.errorValue) < 0 || gotErrTok.line != tt.errorLocation {
+				t.Errorf("got error %v (line %v), want %v (line %v)", gotErrTok.value, gotErrTok.line, tt.errorValue, tt.errorLocation)
 			}
 		})
 	}

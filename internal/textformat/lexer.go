@@ -135,7 +135,9 @@ func (lex *lexer) nextToken() token {
 		return lex.scanString()
 	}
 
-	return lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
+	errtok := lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
+	lex.next()
+	return errtok
 }
 
 func (lex *lexer) errorToken(msg string) token {
