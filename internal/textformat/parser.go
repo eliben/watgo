@@ -78,7 +78,7 @@ func (p *parser) emitError(tok token, msg string) {
 	} else {
 		tokMsg = fmt.Sprintf("token %q", tok.value)
 	}
-	p.errs.Add(fmt.Errorf("line %d: %v: %s", tok.line, tokMsg, msg))
+	p.errs.Add(fmt.Errorf("at %s: %v: %s", tok.loc, tokMsg, msg))
 }
 
 // module ::= '(' 'module' id? (modulefield)* ')'

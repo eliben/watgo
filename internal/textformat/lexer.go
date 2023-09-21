@@ -12,7 +12,16 @@ type tokenName int
 type token struct {
 	name  tokenName
 	value string
-	line  int
+	loc   location
+}
+
+type location struct {
+	line   int
+	column int
+}
+
+func (loc location) String() string {
+	return fmt.Sprintf("%v:%v", loc.line, loc.column)
 }
 
 const (
@@ -45,7 +54,7 @@ var tokenNames = [...]string{
 }
 
 func (tok token) String() string {
-	return fmt.Sprintf("token{%s, '%s', %v}", tokenNames[tok.name], tok.value, tok.line)
+	return fmt.Sprintf("token{%s, '%s', %s}", tokenNames[tok.name], tok.value, tok.loc)
 }
 
 // lexer
@@ -65,7 +74,8 @@ type lexer struct {
 	// Offset of the next rune in buf.
 	nextpos int
 
-	lineNum int
+	// location of r
+	loc location
 }
 
 func newLexer(buf string) *lexer {
@@ -74,7 +84,10 @@ func newLexer(buf string) *lexer {
 		r:       -1,
 		rpos:    0,
 		nextpos: 0,
-		lineNum: 1,
+
+		// column starts at 0 since next() always increments it before we have
+		// the first rune in r.
+		loc: location{1, 0},
 	}
 
 	// Prime the lexer by calling .next
@@ -95,6 +108,7 @@ func (lex *lexer) next() {
 
 		lex.nextpos += w
 		lex.r = r
+		lex.loc.column += 1
 	} else {
 		lex.rpos = len(lex.buf)
 		lex.r = -1 // EOF
@@ -112,11 +126,12 @@ func (lex *lexer) peekNext() rune {
 func (lex *lexer) nextToken() token {
 	// Skip non-tokens like whitespace and check for EOF.
 	if err := lex.skipNontokens(); err != nil {
-		return lex.errorToken(err.Error())
+		return lex.errorToken(err.Error(), lex.loc)
 	}
+	rloc := lex.loc
 
 	if lex.r < 0 {
-		return token{EOF, "", lex.lineNum}
+		return token{EOF, "<end of input>", rloc}
 	}
 
 	if lex.r == '$' {
@@ -127,21 +142,21 @@ func (lex *lexer) nextToken() token {
 		return lex.scanNumber()
 	} else if lex.r == '(' {
 		lex.next()
-		return token{LPAREN, "(", lex.lineNum}
+		return token{LPAREN, "(", rloc}
 	} else if lex.r == ')' {
 		lex.next()
-		return token{RPAREN, ")", lex.lineNum}
+		return token{RPAREN, ")", rloc}
 	} else if lex.r == '"' {
 		return lex.scanString()
 	}
 
-	errtok := lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r))
+	errtok := lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r), rloc)
 	lex.next()
 	return errtok
 }
 
-func (lex *lexer) errorToken(msg string) token {
-	return token{ERROR, msg, lex.lineNum}
+func (lex *lexer) errorToken(msg string, loc location) token {
+	return token{ERROR, msg, loc}
 }
 
 func (lex *lexer) skipNontokens() error {
@@ -150,7 +165,8 @@ func (lex *lexer) skipNontokens() error {
 		case ' ', '\t', '\r':
 			lex.next()
 		case '\n':
-			lex.lineNum++
+			lex.loc.line++
+			lex.loc.column = 0
 			lex.next()
 		case ';':
 			if lex.peekNext() == ';' {
@@ -179,7 +195,7 @@ func (lex *lexer) skipLineComment() {
 }
 
 func (lex *lexer) skipBlockComment() error {
-	startLine := lex.lineNum
+	startloc := lex.loc
 	// lex.r now points at the opening '(' with a ';' following it, so we'll start
 	// by skipping both.
 	lex.next()
@@ -197,24 +213,27 @@ func (lex *lexer) skipBlockComment() error {
 		if lex.r == '(' && lex.peekNext() == ';' {
 			lex.skipBlockComment()
 		} else if lex.r == '\n' {
-			lex.lineNum++
+			lex.loc.line++
+			lex.loc.column = 0
 		}
 
 		lex.next()
 	}
 
-	return fmt.Errorf("unterminated block comment starting at line %v", startLine)
+	return fmt.Errorf("unterminated block comment starting at %v", startloc)
 }
 
 func (lex *lexer) scanId() token {
 	startpos := lex.rpos
+	startloc := lex.loc
 	for isIdChar(lex.r) {
 		lex.next()
 	}
-	return token{ID, lex.buf[startpos:lex.rpos], lex.lineNum}
+	return token{ID, lex.buf[startpos:lex.rpos], startloc}
 }
 
 func (lex *lexer) scanKeyword() token {
+	startloc := lex.loc
 	startpos := lex.rpos
 	for isIdChar(lex.r) {
 		lex.next()
@@ -222,15 +241,15 @@ func (lex *lexer) scanKeyword() token {
 
 	word := lex.buf[startpos:lex.rpos]
 	if word == "inf" || word == "nan" || strings.HasPrefix(word, "nan:0x") {
-		return token{FLOAT, word, lex.lineNum}
+		return token{FLOAT, word, startloc}
 	} else {
-		return token{KEYWORD, word, lex.lineNum}
+		return token{KEYWORD, word, startloc}
 	}
 }
 
 func (lex *lexer) scanString() token {
 	startpos := lex.rpos
-	startLine := lex.lineNum
+	startloc := lex.loc
 
 	lex.next()
 
@@ -238,22 +257,24 @@ func (lex *lexer) scanString() token {
 		if lex.r == '\\' {
 			lex.next()
 		} else if lex.r == '\n' {
-			lex.lineNum++
+			lex.loc.line++
+			lex.loc.column = 0
 		}
 		lex.next()
 	}
 
 	if lex.r < 0 {
-		return lex.errorToken(fmt.Sprintf("unterminated string starting at line %v", startLine))
+		return lex.errorToken(fmt.Sprintf("unterminated string starting at %v", startloc), lex.loc)
 	} else {
 		closeQuotePos := lex.nextpos
 		lex.next()
-		return token{STRING, lex.buf[startpos:closeQuotePos], startLine}
+		return token{STRING, lex.buf[startpos:closeQuotePos], startloc}
 	}
 }
 
 func (lex *lexer) scanNumber() token {
 	startpos := lex.rpos
+	startloc := lex.loc
 	if isSign(lex.r) {
 		lex.next()
 	}
@@ -269,12 +290,14 @@ func (lex *lexer) scanNumber() token {
 			lex.next()
 		}
 	} else if lex.r == 'i' || lex.r == 'n' {
+		// 'inf' and 'nan' are valid floating-point numbers
 		tok := lex.scanKeyword()
 		if tok.name == FLOAT {
 			tok.value = string(lex.buf[startpos]) + tok.value
+			tok.loc = startloc
 			return tok
 		} else {
-			return lex.errorToken("invalid word after + or -")
+			return lex.errorToken("invalid word after + or -", startloc)
 		}
 	} else {
 		// decimal number
@@ -315,12 +338,12 @@ func (lex *lexer) scanNumber() token {
 			}
 		}
 
-		return token{FLOAT, lex.buf[startpos:lex.rpos], lex.lineNum}
+		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
 	} else {
 		if lex.rpos-startpos == 1 {
-			return lex.errorToken("lonely sign")
+			return lex.errorToken("lonely sign", startloc)
 		}
-		return token{INT, lex.buf[startpos:lex.rpos], lex.lineNum}
+		return token{INT, lex.buf[startpos:lex.rpos], startloc}
 	}
 }
 

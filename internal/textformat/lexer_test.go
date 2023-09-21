@@ -61,102 +61,102 @@ func TestLexer(t *testing.T) {
 	}{
 		{"basic keyword and id",
 			`k$% $hi`,
-			[]token{token{KEYWORD, "k$%", 1}, token{ID, "$hi", 1}}},
+			[]token{token{KEYWORD, "k$%", location{1, 1}}, token{ID, "$hi", location{1, 5}}}},
 
 		{"parens",
 			`() ( ( ) ) (hello)`,
 			[]token{
-				token{LPAREN, "(", 1}, token{RPAREN, ")", 1},
-				token{LPAREN, "(", 1}, token{LPAREN, "(", 1}, token{RPAREN, ")", 1}, token{RPAREN, ")", 1},
-				token{LPAREN, "(", 1}, token{KEYWORD, "hello", 1}, token{RPAREN, ")", 1},
+				token{LPAREN, "(", location{1, 1}}, token{RPAREN, ")", location{1, 2}},
+				token{LPAREN, "(", location{1, 4}}, token{LPAREN, "(", location{1, 6}},
+				token{RPAREN, ")", location{1, 8}}, token{RPAREN, ")", location{1, 10}},
+				token{LPAREN, "(", location{1, 12}}, token{KEYWORD, "hello", location{1, 13}}, token{RPAREN, ")", location{1, 18}},
 			}},
 
 		{"decimal integers",
 			`20 +441 -882 0123 1_000_000`,
 			[]token{
-				token{INT, "20", 1}, token{INT, "+441", 1},
-				token{INT, "-882", 1}, token{INT, "0123", 1},
-				token{INT, "1_000_000", 1},
+				token{INT, "20", location{1, 1}}, token{INT, "+441", location{1, 4}},
+				token{INT, "-882", location{1, 9}}, token{INT, "0123", location{1, 14}},
+				token{INT, "1_000_000", location{1, 19}},
 			}},
 
 		{"hex integers",
 			`0xaBc -0x03f +0x1 0xfF_aB`,
 			[]token{
-				token{INT, "0xaBc", 1}, token{INT, "-0x03f", 1},
-				token{INT, "+0x1", 1}, token{INT, "0xfF_aB", 1},
+				token{INT, "0xaBc", location{1, 1}}, token{INT, "-0x03f", location{1, 7}},
+				token{INT, "+0x1", location{1, 14}}, token{INT, "0xfF_aB", location{1, 19}},
 			}},
 
 		{"decimal floats",
 			`0.1 199.34 25.
-			+2.12 -17. +2_4.5_6
-			4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012`,
+		+2.12 -17. +2_4.5_6
+		4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012`,
 			[]token{
-				token{FLOAT, "0.1", 1}, token{FLOAT, "199.34", 1}, token{FLOAT, "25.", 1},
-				token{FLOAT, "+2.12", 2}, token{FLOAT, "-17.", 2}, token{FLOAT, "+2_4.5_6", 2},
-				token{FLOAT, "4.4e4", 3}, token{FLOAT, "2.e-9", 3}, token{FLOAT, "0.e+8", 3}, token{FLOAT, "2.99e+111", 3}, token{FLOAT, "100.008e-012", 3},
+				token{FLOAT, "0.1", location{1, 1}}, token{FLOAT, "199.34", location{1, 5}}, token{FLOAT, "25.", location{1, 12}},
+				token{FLOAT, "+2.12", location{2, 3}}, token{FLOAT, "-17.", location{2, 9}}, token{FLOAT, "+2_4.5_6", location{2, 14}},
+				token{FLOAT, "4.4e4", location{3, 3}}, token{FLOAT, "2.e-9", location{3, 9}}, token{FLOAT, "0.e+8", location{3, 15}}, token{FLOAT, "2.99e+111", location{3, 21}}, token{FLOAT, "100.008e-012", location{3, 32}},
 			}},
 
 		{"hex floats",
 			`0xfa.3fe 0x13.
-			-0xD1.p+21 +0x01EEF.20FEEP-100
-			`,
+		-0xD1.p+21 +0x01EEF.20FEEP-100
+		`,
 			[]token{
-				token{FLOAT, "0xfa.3fe", 1}, token{FLOAT, "0x13.", 1},
-				token{FLOAT, "-0xD1.p+21", 2}, token{FLOAT, "+0x01EEF.20FEEP-100", 2},
+				token{FLOAT, "0xfa.3fe", location{1, 1}}, token{FLOAT, "0x13.", location{1, 10}},
+				token{FLOAT, "-0xD1.p+21", location{2, 3}}, token{FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}},
 			}},
 
 		{"inf/nan floats",
 			`+inf -inf +nan -nan
-			inf nan
-			nan:0xf0f0 -nan:0x12 +nan:0x4FFA`,
+		inf nan
+		nan:0xf0f0 -nan:0x12 +nan:0x4FFA`,
 			[]token{
-				token{FLOAT, "+inf", 1}, token{FLOAT, "-inf", 1}, token{FLOAT, "+nan", 1}, token{FLOAT, "-nan", 1},
-				token{FLOAT, "inf", 2}, token{FLOAT, "nan", 2},
-				token{FLOAT, "nan:0xf0f0", 3}, token{FLOAT, "-nan:0x12", 3}, token{FLOAT, "+nan:0x4FFA", 3},
+				token{FLOAT, "+inf", location{1, 1}}, token{FLOAT, "-inf", location{1, 6}}, token{FLOAT, "+nan", location{1, 11}}, token{FLOAT, "-nan", location{1, 16}},
+				token{FLOAT, "inf", location{2, 3}}, token{FLOAT, "nan", location{2, 7}},
+				token{FLOAT, "nan:0xf0f0", location{3, 3}}, token{FLOAT, "-nan:0x12", location{3, 14}}, token{FLOAT, "+nan:0x4FFA", location{3, 24}},
 			}},
 
 		{"skipping line comments",
 			`kwa ;;comment
-;; another comment
-koi ;;;yet another comment`,
-			[]token{token{KEYWORD, "kwa", 1}, token{KEYWORD, "koi", 3}}},
+		;; another comment
+		koi ;;;yet another comment`,
+			[]token{token{KEYWORD, "kwa", location{1, 1}}, token{KEYWORD, "koi", location{3, 3}}}},
 
 		{"block comment",
 			`tok (;
 		x
 		y
 		;) tok2`,
-			[]token{token{KEYWORD, "tok", 1}, token{KEYWORD, "tok2", 4}}},
+			[]token{token{KEYWORD, "tok", location{1, 1}}, token{KEYWORD, "tok2", location{4, 6}}}},
 
 		{"nested block comment",
 			`;; line comment
-			aa (; outer block comment (; inner block comment
-			;) more text
-			;) bb`,
-			[]token{token{KEYWORD, "aa", 2}, token{KEYWORD, "bb", 4}}},
+		aa (; outer block comment (; inner block comment
+		;) more text
+		;) bb`,
+			[]token{token{KEYWORD, "aa", location{2, 3}}, token{KEYWORD, "bb", location{4, 6}}}},
 
 		{"strings",
 			`hi "name"
-			"str1"  "str2"
-			"str3""str4"
-			"escape \" still \\\" going \\" id
-			`,
-
+		"str1"  "str2"
+		"str3""str4"
+		"escape \" still \\\" going \\" id
+		`,
 			[]token{
-				token{KEYWORD, "hi", 1}, token{STRING, `"name"`, 1},
-				token{STRING, `"str1"`, 2}, token{STRING, `"str2"`, 2},
-				token{STRING, `"str3"`, 3}, token{STRING, `"str4"`, 3},
-				token{STRING, `"escape \" still \\\" going \\"`, 4}, token{KEYWORD, "id", 4},
+				token{KEYWORD, "hi", location{1, 1}}, token{STRING, `"name"`, location{1, 4}},
+				token{STRING, `"str1"`, location{2, 3}}, token{STRING, `"str2"`, location{2, 11}},
+				token{STRING, `"str3"`, location{3, 3}}, token{STRING, `"str4"`, location{3, 9}},
+				token{STRING, `"escape \" still \\\" going \\"`, location{4, 3}}, token{KEYWORD, "id", location{4, 35}},
 			}},
 
 		{"string with newline",
 			`id "string starting
-and ending" id2`,
+		and ending" id2`,
 			[]token{
-				token{KEYWORD, "id", 1},
+				token{KEYWORD, "id", location{1, 1}},
 				token{STRING, `"string starting
-and ending"`, 1},
-				token{KEYWORD, "id2", 2},
+		and ending"`, location{1, 4}},
+				token{KEYWORD, "id2", location{2, 15}},
 			}},
 	}
 
@@ -175,23 +175,23 @@ func TestLexerErrors(t *testing.T) {
 		input         string
 		errorIndex    int
 		errorValue    string
-		errorLocation int
+		errorLocation location
 	}{
-		{"{", 0, "unknown token", 1},
-		{`"hello`, 0, "unterminated string starting at line 1", 1},
-		{`+nunu`, 0, "invalid word after", 1},
-		{`+ kk`, 0, "lonely sign", 1},
-		{`id (;`, 1, "unterminated block comment", 1},
+		{"{", 0, "unknown token", location{1, 1}},
+		{`"hello`, 0, "unterminated string starting at 1:1", location{1, 6}},
+		{`+nunu`, 0, "invalid word after", location{1, 1}},
+		{`+ kk`, 0, "lonely sign", location{1, 1}},
+		{`id (;`, 1, "unterminated block comment", location{1, 5}},
 		{`hello
-		tok +isdf tok`, 2, "invalid word after", 2},
+tok +isdf tok`, 2, "invalid word after", location{2, 5}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
 			gotErrTok := gotTokens[tt.errorIndex]
-			if gotErrTok.name != ERROR || strings.Index(gotErrTok.value, tt.errorValue) < 0 || gotErrTok.line != tt.errorLocation {
-				t.Errorf("got error %v (line %v), want %v (line %v)", gotErrTok.value, gotErrTok.line, tt.errorValue, tt.errorLocation)
+			if gotErrTok.name != ERROR || strings.Index(gotErrTok.value, tt.errorValue) < 0 || gotErrTok.loc != tt.errorLocation {
+				t.Errorf("got error %v (loc %v), want %v (loc %v)", gotErrTok.value, gotErrTok.loc, tt.errorValue, tt.errorLocation)
 			}
 		})
 	}
