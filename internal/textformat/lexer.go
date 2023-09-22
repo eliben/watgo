@@ -26,7 +26,10 @@ func (loc location) String() string {
 
 const (
 	// Special tokens
-	ERROR tokenName = iota
+
+	// EMPTY means "no token", it's the zero value of a token{}
+	EMPTY tokenName = iota
+	ERROR
 	EOF
 
 	LPAREN
@@ -40,6 +43,7 @@ const (
 )
 
 var tokenNames = [...]string{
+	EMPTY: "EMPTY",
 	ERROR: "ERROR",
 	EOF:   "EOF",
 
