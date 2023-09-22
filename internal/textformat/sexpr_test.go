@@ -1,6 +1,7 @@
 package textformat
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -23,5 +24,44 @@ func TestSexprSmoke(t *testing.T) {
 	elem1 := sx.list[1]
 	if !(elem1.IsToken() && elem1.tok.value == "bar") {
 		t.Errorf("got at 1: %v, want token 'bar'", sx.list[1])
+	}
+}
+
+func showForTest(sx *sexpr) string {
+	if len(sx.list) > 0 {
+		var parts []string
+		for _, sub := range sx.list {
+			parts = append(parts, showForTest(sub))
+		}
+		return "(" + strings.Join(parts, " ") + ")"
+	} else {
+		return tokenNames[sx.tok.name]
+	}
+}
+
+// TODO: add also for errors, detect unterminated (
+func TestSexprLists(t *testing.T) {
+	var tests = []struct {
+		input string
+		want  string
+	}{
+		{`(  foo )`, "(KEYWORD)"},
+		{`(  foo ($id "str")  )`, "(KEYWORD (ID STRING))"},
+		// TODO: add more tests here, also figure out empty list
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			lex := newLexer(tt.input)
+			sx, err := sexprifyTop(lex)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := showForTest(sx)
+			if got != tt.want {
+				t.Errorf("got %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
