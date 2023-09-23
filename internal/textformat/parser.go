@@ -6,6 +6,18 @@ import (
 	"github.com/eliben/watgo/internal/textformat/ast"
 )
 
+// TODO: from https://webassembly.github.io/spec/core/text/instructions.html#folded-instructions
+//
+//   The set of all phrases defined by the following abbreviations recursively
+//   forms the auxiliary syntactic class foldedinstr.
+//   Such a folded instruction can appear anywhere a regular instruction can.
+//
+// The last part is key for understanding where folded instructions are allowed.
+// Per https://webassembly.github.io/spec/core/text/modules.html#functions,
+// the last parenthesized part of a 'func' definition is a list of instr;
+// instr is either plaininstr, or blockinstr. Either of those can also be
+// replaced by an equivalent foldedinstr form.
+
 type parser struct {
 	lex *lexer
 
