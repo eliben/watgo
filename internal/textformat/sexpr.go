@@ -5,8 +5,11 @@ import (
 	"strings"
 )
 
-// TODO: if empty list - an atom, otherwise it's a list
-// empty list an tok.name == EMPTY ==> empty list
+// sexpr represents textformat source as an s-expression with tokens.
+// Each s-expression is either a single token (IsToken returns true) or a list
+// of s-expressions (IsList returns true).
+// For an empty list (), IsList will be false and IsToken will be true; the
+// token name will be EMPTY.
 type sexpr struct {
 	tok  token
 	list []*sexpr
@@ -54,8 +57,6 @@ func sexprify(lex *lexer) (*sexpr, error) {
 			}
 			sx.list = append(sx.list, list)
 		} else if tok.name == RPAREN {
-			if len(sx.list) == 0 {
-			}
 			return sx, nil
 		} else if tok.name == EOF {
 			// TODO: find some way to pass the opening paren here, for better

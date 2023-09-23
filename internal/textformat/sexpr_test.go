@@ -19,11 +19,26 @@ func TestSexprSmoke(t *testing.T) {
 	}
 	elem0 := sx.list[0]
 	if !(elem0.IsToken() && elem0.tok.value == "foo") {
-		t.Errorf("got at 0: %v, want token 'foo'", sx.list[0])
+		t.Errorf("got at 0: %v, want token 'foo'", elem0)
 	}
 	elem1 := sx.list[1]
 	if !(elem1.IsToken() && elem1.tok.value == "bar") {
-		t.Errorf("got at 1: %v, want token 'bar'", sx.list[1])
+		t.Errorf("got at 1: %v, want token 'bar'", elem1)
+	}
+}
+
+func TestEmptyList(t *testing.T) {
+	s := `(foo () bar)`
+	lex := newLexer(s)
+
+	sx, err := sexprifyTop(lex)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	elem1 := sx.list[1]
+	if !(elem1.IsToken() && !elem1.IsList() && elem1.tok.name == EMPTY) {
+		t.Errorf("got at 1: %v, want EMPTY", elem1)
 	}
 }
 
@@ -47,6 +62,8 @@ func TestSexprLists(t *testing.T) {
 	}{
 		{`(  foo )`, "(KEYWORD)"},
 		{`(  foo ($id "str")  )`, "(KEYWORD (ID STRING))"},
+		{`(((foo)))`, "(((KEYWORD)))"},
+		{`(x () (()) y)`, "(KEYWORD EMPTY (EMPTY) KEYWORD)"},
 		// TODO: add more tests here, also figure out empty list
 	}
 
