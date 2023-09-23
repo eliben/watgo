@@ -35,23 +35,28 @@ func (sx *sexpr) String() string {
 	}
 }
 
+// sexprifyTop is the entry point to this code; it takes a freshly created
+// lexer (from newLexer) and builds a sexpr representing the code. The lexer
+// will be exhausted.
 func sexprifyTop(lex *lexer) (*sexpr, error) {
 	tok := lex.nextToken()
 	if tok.name == LPAREN {
-		return sexprify(lex)
+		return sexprify(lex, tok)
 	} else {
 		return nil, fmt.Errorf("at %s: %v: expected '('", tok.loc, tok.value)
 	}
 }
 
-// TODO: assumes the last token in lex was LPAREN
-func sexprify(lex *lexer) (*sexpr, error) {
+// sexprify is a helper for a single s-expression; it's called when '(' is
+// encountered and consumed, and returns a new sexpr. lparen is the consumed
+// '(' token.
+func sexprify(lex *lexer, lparen token) (*sexpr, error) {
 	sx := &sexpr{}
 
 	for {
 		tok := lex.nextToken()
 		if tok.name == LPAREN {
-			list, err := sexprify(lex)
+			list, err := sexprify(lex, tok)
 			if err != nil {
 				return nil, err
 			}
@@ -59,9 +64,7 @@ func sexprify(lex *lexer) (*sexpr, error) {
 		} else if tok.name == RPAREN {
 			return sx, nil
 		} else if tok.name == EOF {
-			// TODO: find some way to pass the opening paren here, for better
-			// reporting?
-			return nil, fmt.Errorf("unterminated expression at end of file")
+			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
 		} else {
 			sx.list = append(sx.list, &sexpr{tok: tok})
 		}

@@ -54,7 +54,6 @@ func showForTest(sx *sexpr) string {
 	}
 }
 
-// TODO: add also for errors, detect unterminated (
 func TestSexprLists(t *testing.T) {
 	var tests = []struct {
 		input string
@@ -62,9 +61,9 @@ func TestSexprLists(t *testing.T) {
 	}{
 		{`(  foo )`, "(KEYWORD)"},
 		{`(  foo ($id "str")  )`, "(KEYWORD (ID STRING))"},
+		{`(25 (1.5 "str") foo ($id "str"))`, "(INT (FLOAT STRING) KEYWORD (ID STRING))"},
 		{`(((foo)))`, "(((KEYWORD)))"},
 		{`(x () (()) y)`, "(KEYWORD EMPTY (EMPTY) KEYWORD)"},
-		// TODO: add more tests here, also figure out empty list
 	}
 
 	for _, tt := range tests {
@@ -78,6 +77,30 @@ func TestSexprLists(t *testing.T) {
 			got := showForTest(sx)
 			if got != tt.want {
 				t.Errorf("got %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestErrorUnterminatedLparen(t *testing.T) {
+	var tests = []struct {
+		input string
+		where string
+	}{
+		{`(foo`, "1:1"},
+		{`     ( (abo) (bobo) (foo ()`, "1:21"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			lex := newLexer(tt.input)
+			_, err := sexprifyTop(lex)
+			if err == nil {
+				t.Fatal("got no error, want error")
+			}
+
+			if !strings.Contains(err.Error(), tt.where) {
+				t.Errorf("got error %v, want to find %s", err, tt.where)
 			}
 		})
 	}
