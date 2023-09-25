@@ -57,8 +57,12 @@ var tokenNames = [...]string{
 	STRING:  "STRING",
 }
 
+func (tn tokenName) String() string {
+	return tokenNames[tn]
+}
+
 func (tok token) String() string {
-	return fmt.Sprintf("token{%s, '%s', %s}", tokenNames[tok.name], tok.value, tok.loc)
+	return fmt.Sprintf("token{%s, '%s', %s}", tok.name, tok.value, tok.loc)
 }
 
 // lexer
