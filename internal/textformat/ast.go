@@ -13,6 +13,7 @@ type Module struct {
 
 type Function struct {
 	Id     string
+	Export string
 	TyUse  TypeUse
 	Locals []LocalDecl
 	Instrs []Instruction

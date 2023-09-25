@@ -27,11 +27,21 @@ func parseModule(sx *sexpr) *Module {
 }
 
 func parseFunction(sx *sexpr) *Function {
+	f := &Function{loc: sx.loc}
 
 	cursor := 1
-
 	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
-		// Function name
+		f.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+
+	if sx.list[cursor].HeadKeyword() == "export" {
+		sub := sx.list[cursor]
+		if len(sub.list) == 2 && sub.list[1].tok.name == STRING {
+			f.Export = sub.list[1].tok.value
+		}
+		// TODO: error if length not 2
+		cursor++
 	}
 
 	for i := cursor; i < len(sx.list); i++ {
