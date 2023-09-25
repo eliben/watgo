@@ -61,30 +61,30 @@ func TestLexer(t *testing.T) {
 	}{
 		{"basic keyword and id",
 			`k$% $hi`,
-			[]token{token{KEYWORD, "k$%", location{1, 1}}, token{ID, "$hi", location{1, 5}}}},
+			[]token{{KEYWORD, "k$%", location{1, 1}}, {ID, "$hi", location{1, 5}}}},
 
 		{"parens",
 			`() ( ( ) ) (hello)`,
 			[]token{
-				token{LPAREN, "(", location{1, 1}}, token{RPAREN, ")", location{1, 2}},
-				token{LPAREN, "(", location{1, 4}}, token{LPAREN, "(", location{1, 6}},
-				token{RPAREN, ")", location{1, 8}}, token{RPAREN, ")", location{1, 10}},
-				token{LPAREN, "(", location{1, 12}}, token{KEYWORD, "hello", location{1, 13}}, token{RPAREN, ")", location{1, 18}},
+				{LPAREN, "(", location{1, 1}}, {RPAREN, ")", location{1, 2}},
+				{LPAREN, "(", location{1, 4}}, {LPAREN, "(", location{1, 6}},
+				{RPAREN, ")", location{1, 8}}, {RPAREN, ")", location{1, 10}},
+				{LPAREN, "(", location{1, 12}}, {KEYWORD, "hello", location{1, 13}}, {RPAREN, ")", location{1, 18}},
 			}},
 
 		{"decimal integers",
 			`20 +441 -882 0123 1_000_000`,
 			[]token{
-				token{INT, "20", location{1, 1}}, token{INT, "+441", location{1, 4}},
-				token{INT, "-882", location{1, 9}}, token{INT, "0123", location{1, 14}},
-				token{INT, "1_000_000", location{1, 19}},
+				{INT, "20", location{1, 1}}, {INT, "+441", location{1, 4}},
+				{INT, "-882", location{1, 9}}, {INT, "0123", location{1, 14}},
+				{INT, "1_000_000", location{1, 19}},
 			}},
 
 		{"hex integers",
 			`0xaBc -0x03f +0x1 0xfF_aB`,
 			[]token{
-				token{INT, "0xaBc", location{1, 1}}, token{INT, "-0x03f", location{1, 7}},
-				token{INT, "+0x1", location{1, 14}}, token{INT, "0xfF_aB", location{1, 19}},
+				{INT, "0xaBc", location{1, 1}}, {INT, "-0x03f", location{1, 7}},
+				{INT, "+0x1", location{1, 14}}, {INT, "0xfF_aB", location{1, 19}},
 			}},
 
 		{"decimal floats",
@@ -92,9 +92,9 @@ func TestLexer(t *testing.T) {
 		+2.12 -17. +2_4.5_6
 		4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012`,
 			[]token{
-				token{FLOAT, "0.1", location{1, 1}}, token{FLOAT, "199.34", location{1, 5}}, token{FLOAT, "25.", location{1, 12}},
-				token{FLOAT, "+2.12", location{2, 3}}, token{FLOAT, "-17.", location{2, 9}}, token{FLOAT, "+2_4.5_6", location{2, 14}},
-				token{FLOAT, "4.4e4", location{3, 3}}, token{FLOAT, "2.e-9", location{3, 9}}, token{FLOAT, "0.e+8", location{3, 15}}, token{FLOAT, "2.99e+111", location{3, 21}}, token{FLOAT, "100.008e-012", location{3, 32}},
+				{FLOAT, "0.1", location{1, 1}}, {FLOAT, "199.34", location{1, 5}}, {FLOAT, "25.", location{1, 12}},
+				{FLOAT, "+2.12", location{2, 3}}, {FLOAT, "-17.", location{2, 9}}, {FLOAT, "+2_4.5_6", location{2, 14}},
+				{FLOAT, "4.4e4", location{3, 3}}, {FLOAT, "2.e-9", location{3, 9}}, {FLOAT, "0.e+8", location{3, 15}}, {FLOAT, "2.99e+111", location{3, 21}}, {FLOAT, "100.008e-012", location{3, 32}},
 			}},
 
 		{"hex floats",
@@ -102,8 +102,8 @@ func TestLexer(t *testing.T) {
 		-0xD1.p+21 +0x01EEF.20FEEP-100
 		`,
 			[]token{
-				token{FLOAT, "0xfa.3fe", location{1, 1}}, token{FLOAT, "0x13.", location{1, 10}},
-				token{FLOAT, "-0xD1.p+21", location{2, 3}}, token{FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}},
+				{FLOAT, "0xfa.3fe", location{1, 1}}, {FLOAT, "0x13.", location{1, 10}},
+				{FLOAT, "-0xD1.p+21", location{2, 3}}, {FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}},
 			}},
 
 		{"inf/nan floats",
@@ -111,30 +111,30 @@ func TestLexer(t *testing.T) {
 		inf nan
 		nan:0xf0f0 -nan:0x12 +nan:0x4FFA`,
 			[]token{
-				token{FLOAT, "+inf", location{1, 1}}, token{FLOAT, "-inf", location{1, 6}}, token{FLOAT, "+nan", location{1, 11}}, token{FLOAT, "-nan", location{1, 16}},
-				token{FLOAT, "inf", location{2, 3}}, token{FLOAT, "nan", location{2, 7}},
-				token{FLOAT, "nan:0xf0f0", location{3, 3}}, token{FLOAT, "-nan:0x12", location{3, 14}}, token{FLOAT, "+nan:0x4FFA", location{3, 24}},
+				{FLOAT, "+inf", location{1, 1}}, {FLOAT, "-inf", location{1, 6}}, {FLOAT, "+nan", location{1, 11}}, {FLOAT, "-nan", location{1, 16}},
+				{FLOAT, "inf", location{2, 3}}, {FLOAT, "nan", location{2, 7}},
+				{FLOAT, "nan:0xf0f0", location{3, 3}}, {FLOAT, "-nan:0x12", location{3, 14}}, {FLOAT, "+nan:0x4FFA", location{3, 24}},
 			}},
 
 		{"skipping line comments",
 			`kwa ;;comment
 		;; another comment
 		koi ;;;yet another comment`,
-			[]token{token{KEYWORD, "kwa", location{1, 1}}, token{KEYWORD, "koi", location{3, 3}}}},
+			[]token{{KEYWORD, "kwa", location{1, 1}}, {KEYWORD, "koi", location{3, 3}}}},
 
 		{"block comment",
 			`tok (;
 		x
 		y
 		;) tok2`,
-			[]token{token{KEYWORD, "tok", location{1, 1}}, token{KEYWORD, "tok2", location{4, 6}}}},
+			[]token{{KEYWORD, "tok", location{1, 1}}, {KEYWORD, "tok2", location{4, 6}}}},
 
 		{"nested block comment",
 			`;; line comment
 		aa (; outer block comment (; inner block comment
 		;) more text
 		;) bb`,
-			[]token{token{KEYWORD, "aa", location{2, 3}}, token{KEYWORD, "bb", location{4, 6}}}},
+			[]token{{KEYWORD, "aa", location{2, 3}}, {KEYWORD, "bb", location{4, 6}}}},
 
 		{"strings",
 			`hi "name"
@@ -143,20 +143,20 @@ func TestLexer(t *testing.T) {
 		"escape \" still \\\" going \\" id
 		`,
 			[]token{
-				token{KEYWORD, "hi", location{1, 1}}, token{STRING, `"name"`, location{1, 4}},
-				token{STRING, `"str1"`, location{2, 3}}, token{STRING, `"str2"`, location{2, 11}},
-				token{STRING, `"str3"`, location{3, 3}}, token{STRING, `"str4"`, location{3, 9}},
-				token{STRING, `"escape \" still \\\" going \\"`, location{4, 3}}, token{KEYWORD, "id", location{4, 35}},
+				{KEYWORD, "hi", location{1, 1}}, {STRING, `"name"`, location{1, 4}},
+				{STRING, `"str1"`, location{2, 3}}, {STRING, `"str2"`, location{2, 11}},
+				{STRING, `"str3"`, location{3, 3}}, {STRING, `"str4"`, location{3, 9}},
+				{STRING, `"escape \" still \\\" going \\"`, location{4, 3}}, {KEYWORD, "id", location{4, 35}},
 			}},
 
 		{"string with newline",
 			`id "string starting
 		and ending" id2`,
 			[]token{
-				token{KEYWORD, "id", location{1, 1}},
-				token{STRING, `"string starting
+				{KEYWORD, "id", location{1, 1}},
+				{STRING, `"string starting
 		and ending"`, location{1, 4}},
-				token{KEYWORD, "id2", location{2, 15}},
+				{KEYWORD, "id2", location{2, 15}},
 			}},
 	}
 
@@ -190,7 +190,7 @@ tok +isdf tok`, 2, "invalid word after", location{2, 5}},
 		t.Run(tt.input, func(t *testing.T) {
 			gotTokens := tokenizeAll(tt.input)
 			gotErrTok := gotTokens[tt.errorIndex]
-			if gotErrTok.name != ERROR || strings.Index(gotErrTok.value, tt.errorValue) < 0 || gotErrTok.loc != tt.errorLocation {
+			if gotErrTok.name != ERROR || !strings.Contains(gotErrTok.value, tt.errorValue) || gotErrTok.loc != tt.errorLocation {
 				t.Errorf("got error %v (loc %v), want %v (loc %v)", gotErrTok.value, gotErrTok.loc, tt.errorValue, tt.errorLocation)
 			}
 		})
