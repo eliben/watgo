@@ -13,6 +13,7 @@ import (
 type sexpr struct {
 	tok  token
 	list []*sexpr
+	loc  location
 }
 
 func (sx *sexpr) IsToken() bool {
@@ -66,7 +67,7 @@ func sexprifyTop(lex *lexer) (*sexpr, error) {
 // encountered and consumed, and returns a new sexpr. lparen is the consumed
 // '(' token.
 func sexprify(lex *lexer, lparen token) (*sexpr, error) {
-	sx := &sexpr{}
+	sx := &sexpr{loc: lparen.loc}
 
 	for {
 		tok := lex.nextToken()
@@ -81,7 +82,7 @@ func sexprify(lex *lexer, lparen token) (*sexpr, error) {
 		} else if tok.name == EOF {
 			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
 		} else {
-			sx.list = append(sx.list, &sexpr{tok: tok})
+			sx.list = append(sx.list, &sexpr{tok: tok, loc: tok.loc})
 		}
 	}
 }

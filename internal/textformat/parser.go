@@ -7,7 +7,7 @@ func parseModule(sx *sexpr) *Module {
 		return nil
 	}
 
-	m := &Module{}
+	m := &Module{loc: sx.loc}
 	cursor := 1
 	if len(sx.list) > 1 && sx.list[1].tok.name == ID {
 		m.Name = sx.list[1].tok.value
@@ -27,5 +27,15 @@ func parseModule(sx *sexpr) *Module {
 }
 
 func parseFunction(sx *sexpr) *Function {
+
+	cursor := 1
+
+	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		// Function name
+	}
+
+	for i := cursor; i < len(sx.list); i++ {
+	}
+
 	return nil
 }

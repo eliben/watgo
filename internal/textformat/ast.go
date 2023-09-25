@@ -16,6 +16,7 @@ type Function struct {
 	TyUse  TypeUse
 	Locals []LocalDecl
 	Instrs []Instruction
+	loc    location
 }
 
 // TypeUse represents the typeuse clause: optional type index and optional

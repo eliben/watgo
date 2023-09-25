@@ -17,13 +17,17 @@ func TestSexprSmoke(t *testing.T) {
 	if len(sx.list) != 2 {
 		t.Errorf("got len %v, want 2", len(sx.list))
 	}
+	if sx.loc.String() != "1:1" {
+		t.Errorf("got loc %s, want 1:1", sx.loc)
+	}
+
 	elem0 := sx.list[0]
-	if !(elem0.IsToken() && elem0.tok.value == "foo") {
-		t.Errorf("got at 0: %v, want token 'foo'", elem0)
+	if !(elem0.IsToken() && elem0.tok.value == "foo" && elem0.loc.String() == "1:2") {
+		t.Errorf("got at 0: %v (loc %s), want token 'foo'", elem0, elem0.loc)
 	}
 	elem1 := sx.list[1]
-	if !(elem1.IsToken() && elem1.tok.value == "bar") {
-		t.Errorf("got at 1: %v, want token 'bar'", elem1)
+	if !(elem1.IsToken() && elem1.tok.value == "bar" && elem1.loc.String() == "1:6") {
+		t.Errorf("got at 1: %v (loc %s), want token 'bar'", elem1, elem1.loc)
 	}
 }
 
@@ -37,8 +41,8 @@ func TestEmptyList(t *testing.T) {
 	}
 
 	elem1 := sx.list[1]
-	if !(elem1.IsToken() && !elem1.IsList() && elem1.tok.name == EMPTY) {
-		t.Errorf("got at 1: %v, want EMPTY", elem1)
+	if !(elem1.IsToken() && !elem1.IsList() && elem1.tok.name == EMPTY && elem1.loc.String() == "1:6") {
+		t.Errorf("got at 1: %v (loc %s), want EMPTY", elem1, elem1.loc)
 	}
 }
 
