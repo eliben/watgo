@@ -1,4 +1,4 @@
-package ast
+package textformat
 
 // AST representation of WASM in textual format (including labels, identifiers
 // that represent indices, folded instructions etc.)
@@ -7,7 +7,8 @@ package ast
 
 type Module struct {
 	Name  string
-	Funcs []Function
+	Funcs []*Function
+	loc   location
 }
 
 type Function struct {

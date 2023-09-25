@@ -1,4 +1,4 @@
-package ast
+package textformat
 
 type Instruction interface {
 	isInstr()

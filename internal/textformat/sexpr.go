@@ -23,6 +23,21 @@ func (sx *sexpr) IsList() bool {
 	return len(sx.list) > 0
 }
 
+// HeadKeyword returns the keyword value at the head of the sexpr; for sexprs
+// of the form (head foo bar ...), where `head` is a KEYWORD token, this returns
+// the value of the token. For other sexprs it returns ""
+func (sx *sexpr) HeadKeyword() string {
+	if !sx.IsList() {
+		return ""
+	}
+	head := sx.list[0]
+	if head.tok.name == KEYWORD {
+		return head.tok.value
+	} else {
+		return ""
+	}
+}
+
 func (sx *sexpr) String() string {
 	if len(sx.list) > 0 {
 		var parts []string
