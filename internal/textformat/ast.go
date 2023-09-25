@@ -14,9 +14,9 @@ type Module struct {
 type Function struct {
 	Id     string
 	Export string
-	TyUse  TypeUse
-	Locals []LocalDecl
-	Instrs []Instruction
+	TyUse  *TypeUse
+	Locals []*LocalDecl
+	Instrs []*Instruction
 	loc    location
 }
 
@@ -24,20 +24,24 @@ type Function struct {
 // lists of param/result types.
 type TypeUse struct {
 	Id      string
-	Params  []ParamDecl
-	Results []ResultDecl
+	Params  []*ParamDecl
+	Results []*ResultDecl
+	loc     location
 }
 
 type ParamDecl struct {
-	Id string
-	Ty Type
+	Id  string
+	Ty  Type
+	loc location
 }
 
 type ResultDecl struct {
-	Ty Type
+	Ty  Type
+	loc location
 }
 
 type LocalDecl struct {
-	Id string
-	Ty Type
+	Id  string
+	Ty  Type
+	loc location
 }

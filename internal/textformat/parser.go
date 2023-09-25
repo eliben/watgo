@@ -27,7 +27,10 @@ func parseModule(sx *sexpr) *Module {
 }
 
 func parseFunction(sx *sexpr) *Function {
-	f := &Function{loc: sx.loc}
+	f := &Function{
+		TyUse: &TypeUse{},
+		loc:   sx.loc,
+	}
 
 	cursor := 1
 	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
@@ -36,6 +39,8 @@ func parseFunction(sx *sexpr) *Function {
 	}
 
 	if sx.list[cursor].HeadKeyword() == "export" {
+		// TODO: need primitives for matchId, matchString etc. that return
+		// the value and register an error if none
 		sub := sx.list[cursor]
 		if len(sub.list) == 2 && sub.list[1].tok.name == STRING {
 			f.Export = sub.list[1].tok.value
@@ -45,7 +50,26 @@ func parseFunction(sx *sexpr) *Function {
 	}
 
 	for i := cursor; i < len(sx.list); i++ {
+		if sx.list[cursor].HeadKeyword() == "param" {
+
+		}
 	}
 
-	return nil
+	return f
+}
+
+func parseParamDecl(sx *sexpr) *ParamDecl {
+	p := &ParamDecl{loc: sx.loc}
+
+	if len(sx.list) == 3 {
+		// id and type
+
+	} else if len(sx.list) == 2 {
+		// just type
+
+	} else {
+		// TODO: error
+	}
+
+	return p
 }
