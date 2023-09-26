@@ -97,14 +97,18 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 		cursor++
 	}
 
+	f.TyUse = &TypeUse{}
+
 	for ; cursor < len(sx.list); cursor++ {
 		elem := sx.list[cursor]
 		if elem.HeadKeyword() == "param" {
-			f.Params = append(f.Params, p.parseParamDecl(elem))
+			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem))
 		} else if elem.HeadKeyword() == "result" {
-			f.Results = append(f.Results, p.parseResultDecl(elem))
+			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem))
 		}
+		// TODO: parse locals first
 		// TODO: here parse instructions
+
 	}
 
 	return f
