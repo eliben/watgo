@@ -97,10 +97,14 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 		cursor++
 	}
 
-	for i := cursor; i < len(sx.list); i++ {
-		if sx.list[cursor].HeadKeyword() == "param" {
-
+	for ; cursor < len(sx.list); cursor++ {
+		elem := sx.list[cursor]
+		if elem.HeadKeyword() == "param" {
+			f.Params = append(f.Params, p.parseParamDecl(elem))
+		} else if elem.HeadKeyword() == "result" {
+			f.Results = append(f.Results, p.parseResultDecl(elem))
 		}
+		// TODO: here parse instructions
 	}
 
 	return f
@@ -111,15 +115,26 @@ func (p *Parser) parseParamDecl(sx *sexpr) *ParamDecl {
 
 	if len(sx.list) == 3 {
 		pd.Id = p.matchElement(sx, 1, ID)
-		// TODO: parse type
+		pd.Ty = p.parseType(sx.list[2])
 	} else if len(sx.list) == 2 {
-		// TODO: parse type
+		pd.Ty = p.parseType(sx.list[1])
 	} else {
 		p.emitError(sx.loc, "invalid '(param' declaration")
 		return nil
 	}
-
 	return pd
+}
+
+func (p *Parser) parseResultDecl(sx *sexpr) *ResultDecl {
+	rd := &ResultDecl{loc: sx.loc}
+
+	if len(sx.list) == 2 {
+		rd.Ty = p.parseType(sx.list[1])
+	} else {
+		p.emitError(sx.loc, "invalid '(result' declaration")
+		return nil
+	}
+	return rd
 }
 
 func (p *Parser) parseType(sx *sexpr) Type {
