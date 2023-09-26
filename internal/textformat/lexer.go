@@ -274,9 +274,9 @@ func (lex *lexer) scanString() token {
 	if lex.r < 0 {
 		return lex.errorToken(fmt.Sprintf("unterminated string starting at %v", startloc), lex.loc)
 	} else {
-		closeQuotePos := lex.nextpos
+		closeQuotePos := lex.rpos
 		lex.next()
-		return token{STRING, lex.buf[startpos:closeQuotePos], startloc}
+		return token{STRING, lex.buf[startpos+1 : closeQuotePos], startloc}
 	}
 }
 

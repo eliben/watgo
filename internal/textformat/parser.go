@@ -64,7 +64,7 @@ func (p *Parser) parseModule(sx *sexpr) *Module {
 	// Optional module name
 	cursor := 1
 	if len(sx.list) > 1 && sx.list[cursor].tok.name == ID {
-		m.Name = sx.list[cursor].tok.value
+		m.Id = sx.list[cursor].tok.value
 		cursor++
 	}
 
