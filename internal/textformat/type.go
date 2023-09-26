@@ -2,6 +2,7 @@ package textformat
 
 type Type interface {
 	isType()
+	String() string
 }
 
 var basicTypes = map[string]bool{
@@ -16,3 +17,6 @@ type BasicType struct {
 }
 
 func (*BasicType) isType() {}
+func (bt *BasicType) String() string {
+	return bt.Name
+}

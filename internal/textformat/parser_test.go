@@ -29,4 +29,20 @@ func TestParseSmoke(t *testing.T) {
 	if func0.Export != "add" {
 		t.Errorf("got func export %v, want add", func0.Export)
 	}
+
+	func0params := func0.TyUse.Params
+	if len(func0params) != 2 {
+		t.Errorf("got %d params, want 2", len(func0params))
+	}
+	if func0params[0].Id != "$a" || func0params[0].Ty.String() != "i32" {
+		t.Errorf("got param id=%v ty=%s, want $a i32", func0params[0].Id, func0params[0].Ty)
+	}
+	if func0params[1].Id != "$b" || func0params[1].Ty.String() != "i32" {
+		t.Errorf("got param id=%v ty=%s, want $b i32", func0params[1].Id, func0params[1].Ty)
+	}
+
+	func0result := func0.TyUse.Results[0]
+	if func0result.Ty.String() != "i32" {
+		t.Errorf("got result ty=%s, want i32", func0result.Ty)
+	}
 }
