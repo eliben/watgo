@@ -28,11 +28,11 @@ func (p *Parser) emitError(loc location, msg string) {
 	p.errs.Add(fmt.Errorf("%s: %s", loc, msg))
 }
 
-// matchToken matches element [idx] of sx to the given tokname. If successful,
-// it returns the actual token value at [idx]; otherwise it emits an error and
-// returns "".
+// matchToken expects a list sx and matches element [idx] to the given tokname.
+// If successful, it returns the actual token value at [idx]; otherwise it emits
+// an error and returns "".
 func (p *Parser) matchElement(sx *sexpr, idx int, tokname tokenName) string {
-	if sx.IsToken() {
+	if !sx.IsList() {
 		p.emitError(sx.loc, "expected list")
 		return ""
 	}
@@ -61,10 +61,10 @@ func (p *Parser) parseModule(sx *sexpr) *Module {
 	}
 
 	m := &Module{loc: sx.loc}
+	// Optional module name
 	cursor := 1
-	if len(sx.list) > 1 && sx.list[1].tok.name == ID {
-		m.Name = sx.list[1].tok.value
-		m.loc = sx.list[1].tok.loc
+	if len(sx.list) > 1 && sx.list[cursor].tok.name == ID {
+		m.Name = sx.list[cursor].tok.value
 		cursor++
 	}
 
@@ -85,7 +85,7 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 		loc:   sx.loc,
 	}
 
-	// Optional function name: an identifier
+	// Optional function name
 	cursor := 1
 	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
 		f.Id = sx.list[cursor].tok.value
@@ -110,14 +110,26 @@ func (p *Parser) parseParamDecl(sx *sexpr) *ParamDecl {
 	pd := &ParamDecl{loc: sx.loc}
 
 	if len(sx.list) == 3 {
-		// id and type
-
+		pd.Id = p.matchElement(sx, 1, ID)
+		// TODO: parse type
 	} else if len(sx.list) == 2 {
-		// just type
-
+		// TODO: parse type
 	} else {
-		// TODO: error
+		p.emitError(sx.loc, "invalid '(param' declaration")
+		return nil
 	}
 
 	return pd
+}
+
+func (p *Parser) parseType(sx *sexpr) Type {
+	if sx.IsToken() && sx.tok.name == KEYWORD {
+		name := sx.tok.value
+		if _, ok := basicTypes[name]; ok {
+			return &BasicType{Name: name}
+		}
+	}
+
+	p.emitError(sx.loc, "invalid type")
+	return nil
 }
