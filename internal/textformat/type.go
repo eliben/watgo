@@ -8,6 +8,8 @@ type Type interface {
 var basicTypes = map[string]bool{
 	"i32": true,
 	"i64": true,
+	"f32": true,
+	"f64": true,
 }
 
 // BasicType is a type that can be described by a single keyword, e.g.

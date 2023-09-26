@@ -100,13 +100,18 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 	f.TyUse = &TypeUse{}
 
 	for ; cursor < len(sx.list); cursor++ {
+		// TODO: enforce order on param/result/local clauses?
 		elem := sx.list[cursor]
 		if elem.HeadKeyword() == "param" {
 			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem))
 		} else if elem.HeadKeyword() == "result" {
 			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem))
+		} else if elem.HeadKeyword() == "local" {
+			f.Locals = append(f.Locals, p.parseLocalDecl(elem))
 		}
 		// TODO: parse locals first
+		// locals also have an optional id, and a mandatory type
+
 		// TODO: here parse instructions
 
 	}
@@ -139,6 +144,21 @@ func (p *Parser) parseResultDecl(sx *sexpr) *ResultDecl {
 		return nil
 	}
 	return rd
+}
+
+func (p *Parser) parseLocalDecl(sx *sexpr) *LocalDecl {
+	ld := &LocalDecl{loc: sx.loc}
+
+	if len(sx.list) == 3 {
+		ld.Id = p.matchElement(sx, 1, ID)
+		ld.Ty = p.parseType(sx.list[2])
+	} else if len(sx.list) == 2 {
+		ld.Ty = p.parseType(sx.list[1])
+	} else {
+		p.emitError(sx.loc, "invalid '(local' declaration")
+		return nil
+	}
+	return ld
 }
 
 func (p *Parser) parseType(sx *sexpr) Type {
