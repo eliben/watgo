@@ -108,12 +108,12 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem))
 		} else if elem.HeadKeyword() == "local" {
 			f.Locals = append(f.Locals, p.parseLocalDecl(elem))
+		} else {
+			// Neither of these, so the instruction sequence started. Parse the
+			// entire instruction sequence.
+			f.Instrs = p.parseInstrs(sx, cursor)
+			break
 		}
-		// TODO: parse locals first
-		// locals also have an optional id, and a mandatory type
-
-		// TODO: here parse instructions
-
 	}
 
 	return f
@@ -170,5 +170,18 @@ func (p *Parser) parseType(sx *sexpr) Type {
 	}
 
 	p.emitError(sx.loc, "invalid type")
+	return nil
+}
+
+// parseInstrs parses a list of instructions from sx, starting at [idx]. It
+// expects all tokens from [idx] until the end of sx to represent instructions,
+// and will emit errors otherwise.
+func (p *Parser) parseInstrs(sx *sexpr, idx int) []*Instruction {
+	for cursor := idx; cursor < len(sx.list); cursor++ {
+		elem := sx.list[cursor]
+		if elem.IsList() {
+			// TODO: folded instruction
+		}
+	}
 	return nil
 }
