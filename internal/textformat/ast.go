@@ -16,7 +16,7 @@ type Function struct {
 	Export string
 	TyUse  *TypeUse
 	Locals []*LocalDecl
-	Instrs []*Instruction
+	Instrs []Instruction
 	loc    location
 }
 

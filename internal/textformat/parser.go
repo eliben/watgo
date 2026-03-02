@@ -87,12 +87,12 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 
 	// Optional function name
 	cursor := 1
-	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
 		f.Id = sx.list[cursor].tok.value
 		cursor++
 	}
 
-	if sx.list[cursor].HeadKeyword() == "export" {
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
 		f.Export = p.matchElement(sx.list[cursor], 1, STRING)
 		cursor++
 	}
@@ -176,12 +176,69 @@ func (p *Parser) parseType(sx *sexpr) Type {
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It
 // expects all tokens from [idx] until the end of sx to represent instructions,
 // and will emit errors otherwise.
-func (p *Parser) parseInstrs(sx *sexpr, idx int) []*Instruction {
-	for cursor := idx; cursor < len(sx.list); cursor++ {
+func (p *Parser) parseInstrs(sx *sexpr, idx int) []Instruction {
+	var out []Instruction
+
+	for cursor := idx; cursor < len(sx.list); {
 		elem := sx.list[cursor]
 		if elem.IsList() {
-			// TODO: folded instruction
+			p.emitError(elem.loc, "folded instructions are not supported yet")
+			cursor++
+			continue
+		}
+		if elem.tok.name != KEYWORD {
+			p.emitError(elem.loc, fmt.Sprintf("expected instruction keyword, found %s", elem.tok.name))
+			cursor++
+			continue
+		}
+
+		name := elem.tok.value
+		switch name {
+		case "local.get":
+			if cursor+1 >= len(sx.list) {
+				p.emitError(elem.loc, "local.get expects one operand")
+				cursor++
+				continue
+			}
+
+			operandSx := sx.list[cursor+1]
+			operand := p.parseOperand(operandSx)
+			switch operand.(type) {
+			case *IdOperand, *IntOperand:
+				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}})
+			default:
+				p.emitError(operandSx.loc, "local.get operand must be ID or INT")
+			}
+			cursor += 2
+
+		default:
+			// For this initial subset, parse all other instructions as plain
+			// zero-operand instructions.
+			out = append(out, &PlainInstr{Name: name})
+			cursor++
 		}
 	}
-	return nil
+
+	return out
+}
+
+func (p *Parser) parseOperand(sx *sexpr) Operand {
+	if !sx.IsToken() {
+		return nil
+	}
+
+	switch sx.tok.name {
+	case ID:
+		return &IdOperand{Value: sx.tok.value}
+	case INT:
+		return &IntOperand{Value: sx.tok.value}
+	case FLOAT:
+		return &FloatOperand{Value: sx.tok.value}
+	case STRING:
+		return &StringOperand{Value: sx.tok.value}
+	case KEYWORD:
+		return &KeywordOperand{Value: sx.tok.value}
+	default:
+		return nil
+	}
 }

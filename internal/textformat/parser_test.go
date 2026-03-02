@@ -1,8 +1,18 @@
 package textformat
 
 import (
+	"strings"
 	"testing"
 )
+
+func mustPlainInstr(t *testing.T, instr Instruction) *PlainInstr {
+	t.Helper()
+	pi, ok := instr.(*PlainInstr)
+	if !ok {
+		t.Fatalf("expected *PlainInstr, got %T", instr)
+	}
+	return pi
+}
 
 func TestParseSmoke(t *testing.T) {
 	// Smoke test for parsing a module, checking the parsed AST without using
@@ -61,5 +71,92 @@ func TestParseSmoke(t *testing.T) {
 	local1 := func0.Locals[1]
 	if local1.Id != "" || local1.Ty.String() != "f32" {
 		t.Errorf("got param id=%v ty=%s, want <empty> f32", local1.Id, local1.Ty)
+	}
+}
+
+func TestParseModule_LinearAddInstructions(t *testing.T) {
+	wat := `(module
+  (func (export "add") (param $a i32) (param $b i32) (result i32)
+    local.get $a
+    local.get $b
+    i32.add
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+
+	f := m.Funcs[0]
+	if len(f.Instrs) != 3 {
+		t.Fatalf("got %d instructions, want 3", len(f.Instrs))
+	}
+
+	instr0 := mustPlainInstr(t, f.Instrs[0])
+	if instr0.Name != "local.get" {
+		t.Fatalf("instr0 name=%q, want local.get", instr0.Name)
+	}
+	if len(instr0.Operands) != 1 {
+		t.Fatalf("instr0 has %d operands, want 1", len(instr0.Operands))
+	}
+	op0, ok := instr0.Operands[0].(*IdOperand)
+	if !ok {
+		t.Fatalf("instr0 operand type=%T, want *IdOperand", instr0.Operands[0])
+	}
+	if op0.Value != "$a" {
+		t.Fatalf("instr0 operand value=%q, want $a", op0.Value)
+	}
+
+	instr1 := mustPlainInstr(t, f.Instrs[1])
+	op1, ok := instr1.Operands[0].(*IdOperand)
+	if !ok {
+		t.Fatalf("instr1 operand type=%T, want *IdOperand", instr1.Operands[0])
+	}
+	if instr1.Name != "local.get" || op1.Value != "$b" {
+		t.Fatalf("got instr1=(%q, %q), want (local.get, $b)", instr1.Name, op1.Value)
+	}
+
+	instr2 := mustPlainInstr(t, f.Instrs[2])
+	if instr2.Name != "i32.add" {
+		t.Fatalf("instr2 name=%q, want i32.add", instr2.Name)
+	}
+	if len(instr2.Operands) != 0 {
+		t.Fatalf("instr2 operands=%d, want 0", len(instr2.Operands))
+	}
+}
+
+func TestParseModule_FoldedInstructionIsRejected(t *testing.T) {
+	wat := `(module
+  (func (result i32)
+    (i32.add (i32.const 1) (i32.const 2))
+  )
+)`
+
+	_, err := ParseModule(wat)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "folded instructions are not supported yet") {
+		t.Fatalf("got error %q, want folded-instruction error", err.Error())
+	}
+}
+
+func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
+	wat := `(module
+  (func
+    local.get
+  )
+)`
+
+	_, err := ParseModule(wat)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "local.get expects one operand") {
+		t.Fatalf("got error %q, want local.get missing-operand error", err.Error())
 	}
 }
