@@ -144,8 +144,8 @@ func TestLexer(t *testing.T) {
 		`,
 			[]token{
 				{KEYWORD, "hi", location{1, 1}}, {STRING, `name`, location{1, 4}},
-				{STRING, `"str1"`, location{2, 3}}, {STRING, `str2`, location{2, 11}},
-				{STRING, `"str3"`, location{3, 3}}, {STRING, `str4`, location{3, 9}},
+				{STRING, `str1`, location{2, 3}}, {STRING, `str2`, location{2, 11}},
+				{STRING, `str3`, location{3, 3}}, {STRING, `str4`, location{3, 9}},
 				{STRING, `escape \" still \\\" going \\`, location{4, 3}}, {KEYWORD, "id", location{4, 35}},
 			}},
 
