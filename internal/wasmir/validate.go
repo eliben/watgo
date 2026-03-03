@@ -2,24 +2,25 @@ package wasmir
 
 import "github.com/eliben/watgo/internal/diag"
 
-// ValidateModule validates m and returns all diagnostics found.
-// Diagnostics include module-level checks (type/export indices) and function
+// ValidateModule validates m.
+// Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
-func ValidateModule(m *Module) diag.List {
-	var diags diag.List
+// It returns nil on success. On any failure, it returns diag.ErrorList
+// (including single-error failures).
+func ValidateModule(m *Module) error {
 	if m == nil {
-		diags.Add("module is nil")
-		return diags
+		return diag.Fromf("module is nil")
 	}
 
+	var diags diag.ErrorList
 	for i, f := range m.Funcs {
 		if int(f.TypeIdx) >= len(m.Types) {
 			diags.Addf("func[%d] has invalid type index %d", i, f.TypeIdx)
 			continue
 		}
-		funcDiags := validateFunctionBody(m.Types[f.TypeIdx], f)
-		for _, d := range funcDiags {
-			diags.Addf("func[%d]: %s", i, d.Message)
+		funcErrs := validateFunctionBody(m.Types[f.TypeIdx], f)
+		for _, err := range funcErrs {
+			diags.Addf("func[%d]: %v", i, err)
 		}
 	}
 
@@ -33,21 +34,24 @@ func ValidateModule(m *Module) diag.List {
 		}
 	}
 
-	return diags
+	if diags.HasAny() {
+		return diags
+	}
+	return nil
 }
 
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(ft FuncType, f Function) diag.List {
-	var diags diag.List
+func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
+	var diags diag.ErrorList
 
 	if len(f.Body) == 0 {
-		diags.Add("empty function body")
+		diags.Addf("empty function body")
 		return diags
 	}
 	if f.Body[len(f.Body)-1].Kind != InstrEnd {
-		diags.Add("function body must terminate with end")
+		diags.Addf("function body must terminate with end")
 		return diags
 	}
 

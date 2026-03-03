@@ -1,11 +1,31 @@
 package textformat
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/eliben/watgo/internal/diag"
 	"github.com/eliben/watgo/internal/wasmir"
 )
+
+func asErrorList(t *testing.T, err error) diag.ErrorList {
+	t.Helper()
+	errs, ok := errors.AsType[diag.ErrorList](err)
+	if !ok {
+		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
+	}
+	return errs
+}
+
+func errorListContains(errs diag.ErrorList, needle string) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), needle) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestLowerModule_AddFunction(t *testing.T) {
 	wat := `(module
@@ -21,9 +41,9 @@ func TestLowerModule_AddFunction(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, diags := LowerModule(ast)
-	if len(diags) > 0 {
-		t.Fatalf("LowerModule diagnostics: %v", diags.Error())
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
 	}
 
 	if len(m.Types) != 1 {
@@ -86,12 +106,12 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, diags := LowerModule(ast)
-	if len(diags) == 0 {
-		t.Fatal("LowerModule returned no diagnostics, want failure")
+	_, err = LowerModule(ast)
+	if err == nil {
+		t.Fatal("LowerModule returned nil error, want failure")
 	}
-	if !strings.Contains(diags.Error(), "invalid local.get operand") {
-		t.Fatalf("got diagnostics %q, want invalid local.get operand", diags.Error())
+	if !strings.Contains(err.Error(), "invalid local.get operand") {
+		t.Fatalf("got error %q, want invalid local.get operand", err.Error())
 	}
 }
 
@@ -107,12 +127,12 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, diags := LowerModule(ast)
-	if len(diags) == 0 {
-		t.Fatal("LowerModule returned no diagnostics, want failure")
+	_, err = LowerModule(ast)
+	if err == nil {
+		t.Fatal("LowerModule returned nil error, want failure")
 	}
-	if !strings.Contains(diags.Error(), "unsupported param type") {
-		t.Fatalf("got diagnostics %q, want unsupported param type", diags.Error())
+	if !strings.Contains(err.Error(), "unsupported param type") {
+		t.Fatalf("got error %q, want unsupported param type", err.Error())
 	}
 }
 
@@ -128,14 +148,18 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, diags := LowerModule(ast)
-	if len(diags) < 2 {
-		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(diags), diags.Error())
+	_, err = LowerModule(ast)
+	if err == nil {
+		t.Fatal("LowerModule returned nil error, want diagnostics")
 	}
-	if !strings.Contains(diags.Error(), "unsupported param type") {
-		t.Fatalf("got diagnostics %q, missing unsupported param type", diags.Error())
+	errs := asErrorList(t, err)
+	if len(errs) < 2 {
+		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
 	}
-	if !strings.Contains(diags.Error(), "unsupported instruction") {
-		t.Fatalf("got diagnostics %q, missing unsupported instruction", diags.Error())
+	if !errorListContains(errs, "unsupported param type") {
+		t.Fatalf("got errors %q, missing unsupported param type", errs.Error())
+	}
+	if !errorListContains(errs, "unsupported instruction") {
+		t.Fatalf("got errors %q, missing unsupported instruction", errs.Error())
 	}
 }

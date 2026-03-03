@@ -1,17 +1,24 @@
 package textformat
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/eliben/watgo/internal/diag"
+)
 
 type Parser struct {
-	errs errorList
+	errs diag.ErrorList
 }
 
+// ParseModule parses a text-format module source string.
+// It returns a parsed module and nil on success. On any failure, it returns
+// diag.ErrorList (including single-error failures).
 func ParseModule(buf string) (*Module, error) {
 	lex := newLexer(buf)
 
 	sx, err := sexprifyTop(lex)
 	if err != nil {
-		return nil, err
+		return nil, diag.FromError(err)
 	}
 
 	p := &Parser{}
@@ -25,7 +32,7 @@ func ParseModule(buf string) (*Module, error) {
 }
 
 func (p *Parser) emitError(loc location, msg string) {
-	p.errs.Add(fmt.Errorf("%s: %s", loc, msg))
+	p.errs.Addf("%s: %s", loc, msg)
 }
 
 // matchToken expects a list sx and matches element [idx] to the given tokname.

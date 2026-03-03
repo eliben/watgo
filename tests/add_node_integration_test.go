@@ -36,19 +36,19 @@ func TestAddModuleEndToEndWithNode(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, lowerDiags := textformat.LowerModule(ast)
-	if len(lowerDiags) > 0 {
-		t.Fatalf("LowerModule diagnostics: %v", lowerDiags.Error())
+	m, lowerErr := textformat.LowerModule(ast)
+	if lowerErr != nil {
+		t.Fatalf("LowerModule error: %v", lowerErr)
 	}
 
-	validateDiags := wasmir.ValidateModule(m)
-	if len(validateDiags) > 0 {
-		t.Fatalf("ValidateModule diagnostics: %v", validateDiags.Error())
+	validateErr := wasmir.ValidateModule(m)
+	if validateErr != nil {
+		t.Fatalf("ValidateModule error: %v", validateErr)
 	}
 
-	wasmBytes, encodeDiags := binaryformat.EncodeModule(m)
-	if len(encodeDiags) > 0 {
-		t.Fatalf("EncodeModule diagnostics: %v", encodeDiags.Error())
+	wasmBytes, encodeErr := binaryformat.EncodeModule(m)
+	if encodeErr != nil {
+		t.Fatalf("EncodeModule error: %v", encodeErr)
 	}
 
 	tmpDir := t.TempDir()

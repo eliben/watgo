@@ -1,1 +1,2 @@
-* Refactor diag.List and parser's error lists for consistency
+* No need to say "including single-error failures" everywhere
+* use errorListContains consistently where defined

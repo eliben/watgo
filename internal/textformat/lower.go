@@ -10,15 +10,14 @@ import (
 
 // LowerModule lowers astm (a parsed text-format module) into a semantic
 // wasmir.Module.
-// It returns the lowered module (possibly partial) and all diagnostics found
-// while lowering.
-func LowerModule(astm *Module) (*wasmir.Module, diag.List) {
-	var diags diag.List
+// It returns the lowered module (possibly partial) and nil on success.
+// On any failure, it returns diag.ErrorList (including single-error failures).
+func LowerModule(astm *Module) (*wasmir.Module, error) {
 	if astm == nil {
-		diags.Add("module is nil")
-		return nil, diags
+		return nil, diag.Fromf("module is nil")
 	}
 
+	var diags diag.ErrorList
 	out := &wasmir.Module{}
 
 	for i, f := range astm.Funcs {
@@ -29,12 +28,15 @@ func LowerModule(astm *Module) (*wasmir.Module, diag.List) {
 		lowerFunction(f, i, out, &diags)
 	}
 
-	return out, diags
+	if diags.HasAny() {
+		return out, diags
+	}
+	return out, nil
 }
 
 // lowerFunction lowers f into out as function number funcIdx, appending any
 // diagnostics into diags.
-func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.List) {
+func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.ErrorList) {
 	var params []wasmir.ValueType
 	var results []wasmir.ValueType
 	var locals []wasmir.ValueType
@@ -124,7 +126,7 @@ func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.Lis
 // localsByName maps text local identifiers to semantic local indices.
 // It returns lowered instructions (without the implicit final end) and appends
 // diagnostics into diags.
-func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint32, diags *diag.List) []wasmir.Instruction {
+func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint32, diags *diag.ErrorList) []wasmir.Instruction {
 	out := make([]wasmir.Instruction, 0, len(instrs)+1)
 
 	for _, instr := range instrs {

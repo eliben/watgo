@@ -2,44 +2,50 @@ package diag
 
 import (
 	"fmt"
-	"strings"
 )
 
-// Diagnostic represents a single user-facing issue found during lowering,
-// validation or encoding.
-type Diagnostic struct {
-	Message string
+// ErrorList accumulates multiple errors and implements error.
+type ErrorList []error
+
+// FromError builds an ErrorList containing err (if non-nil).
+func FromError(err error) ErrorList {
+	var el ErrorList
+	el.Add(err)
+	return el
 }
 
-func (d Diagnostic) String() string {
-	return d.Message
+// Fromf builds an ErrorList with a single formatted error.
+func Fromf(format string, args ...any) ErrorList {
+	return FromError(fmt.Errorf(format, args...))
 }
 
-// List accumulates diagnostics while allowing the caller to inspect all issues.
-type List []Diagnostic
-
-func (dl *List) Add(msg string) {
-	*dl = append(*dl, Diagnostic{Message: msg})
+func (el *ErrorList) Add(err error) {
+	if err == nil {
+		return
+	}
+	*el = append(*el, err)
 }
 
-func (dl *List) Addf(format string, args ...any) {
-	dl.Add(fmt.Sprintf(format, args...))
+func (el *ErrorList) Addf(format string, args ...any) {
+	el.Add(fmt.Errorf(format, args...))
 }
 
-func (dl List) HasAny() bool {
-	return len(dl) > 0
+func (el ErrorList) HasAny() bool {
+	return len(el) > 0
 }
 
-func (dl List) Error() string {
-	if len(dl) == 0 {
+// Unwrap returns all contained errors to support multi-error traversal via
+// errors.Is / errors.As / errors.AsType.
+func (el ErrorList) Unwrap() []error {
+	return []error(el)
+}
+
+func (el ErrorList) Error() string {
+	if len(el) == 0 {
 		return "no diagnostics"
 	}
-	if len(dl) == 1 {
-		return dl[0].Message
+	if len(el) == 1 {
+		return el[0].Error()
 	}
-	msgs := make([]string, 0, len(dl))
-	for _, d := range dl {
-		msgs = append(msgs, d.Message)
-	}
-	return strings.Join(msgs, "; ")
+	return fmt.Sprintf("%s (and %d more errors)", el[0], len(el)-1)
 }

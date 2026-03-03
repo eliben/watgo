@@ -37,13 +37,14 @@ const (
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
 // diagnostics collected during encoding.
-func EncodeModule(m *wasmir.Module) ([]byte, diag.List) {
-	var diags diag.List
+// It returns nil error on success. On any failure, it returns diag.ErrorList
+// (including single-error failures).
+func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	if m == nil {
-		diags.Add("module is nil")
-		return nil, diags
+		return nil, diag.Fromf("module is nil")
 	}
 
+	var diags diag.ErrorList
 	var out bytes.Buffer
 	// Module preamble: magic then binary format version.
 	out.WriteString(wasmMagic)
@@ -88,7 +89,7 @@ func writeSection(out *bytes.Buffer, id byte, payload []byte) {
 
 // encodeTypeSection emits section 1.
 // In this slice we encode a vector of function types only.
-func encodeTypeSection(types []wasmir.FuncType, diags *diag.List) []byte {
+func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	if len(types) == 0 {
 		return nil
 	}
@@ -140,7 +141,7 @@ func encodeFunctionSection(funcs []wasmir.Function) []byte {
 
 // encodeExportSection emits section 7 as a vector of exports.
 // Each export entry is: name, external kind tag, and external index.
-func encodeExportSection(exports []wasmir.Export, diags *diag.List) []byte {
+func encodeExportSection(exports []wasmir.Export, diags *diag.ErrorList) []byte {
 	if len(exports) == 0 {
 		return nil
 	}
@@ -173,7 +174,7 @@ func encodeExportSection(exports []wasmir.Export, diags *diag.List) []byte {
 // Function code bytes are:
 //
 //	local declarations vector, then the instruction expression body.
-func encodeCodeSection(funcs []wasmir.Function, diags *diag.List) []byte {
+func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 	if len(funcs) == 0 {
 		return nil
 	}
@@ -209,7 +210,7 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.List) []byte {
 }
 
 // encodeInstr maps semantic instruction kinds to binary opcodes.
-func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.List) {
+func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
 	case wasmir.InstrLocalGet:
 		out.WriteByte(opLocalGetCode)
