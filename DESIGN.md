@@ -19,25 +19,22 @@ This design aims for correctness first, then ergonomics and performance.
 
 ## Architectural Principles
 
-- Single canonical semantic IR for module-level meaning.
-- Lossless-ish text AST for WAT source fidelity (names, folded forms, formatting-sensitive details where needed).
+- Single canonical semantic IR to represent WASM modules, no matter which format
+  they came from (text, binary).
+- Lossless-ish text AST for WAT source fidelity (names, folded forms,
+  formatting-sensitive details where needed).
 - Strict separation between parsing/validation/encoding.
 - Explicit feature gating (MVP = core spec; proposals opt-in).
 - Deterministic outputs for stable tests and debugging.
 
 ## High-Level Pipeline
 
-1. WAT input -> text lexer/parser -> `watast` (text-oriented AST).
-2. `watast` -> resolver/lowerer -> `wasmir` (canonical semantic IR).
+1. WAT input -> text lexer/parser -> `textformat` (text-oriented AST).
+2. `textformat` -> resolver/lowerer -> `wasmir` (canonical semantic IR).
 3. `wasmir` -> validator -> validated IR (or diagnostic set).
 4. `wasmir` -> binary encoder -> WASM bytes.
 5. WASM bytes -> binary decoder -> `wasmir`.
 6. `wasmir` -> text printer -> WAT (canonical pretty-printed form).
-
-This allows:
-
-- Text fidelity workflows: WAT -> `watast` -> pretty/debug transforms.
-- Semantic workflows: WAT/Binary -> `wasmir` -> transforms -> emit text/binary.
 
 ## Suggested Package Layout
 
@@ -47,19 +44,14 @@ Keep packages small and composable:
   - Canonical semantic module IR.
   - Index-based references (typeidx/funcidx/localidx/etc).
   - No text-only constructs.
-- `internal/watast`
-  - Text-format AST preserving names, folded instructions, syntactic sugar.
+  - Validation
 - `internal/textformat`
-  - Lexer + parser to `watast`.
-  - Printer from `watast` and/or from `wasmir` (canonical mode).
+  - Text-format AST preserving names, folded instructions, syntactic sugar.
+  - Lexer + parser
 - `internal/binaryformat`
   - Decoder: WASM bytes -> `wasmir`.
   - Encoder: `wasmir` -> WASM bytes.
-- `internal/resolve`
-  - Name resolution and lowering: `watast` -> `wasmir`.
   - Expands folded syntax into linear instruction sequences.
-- `internal/validate`
-  - WebAssembly validation rules over `wasmir`.
 - `internal/features`
   - Feature flags (MVP + proposals).
 - `cmd/watgo` (later)
@@ -67,7 +59,7 @@ Keep packages small and composable:
 
 ## IR Design
 
-### `watast` (text AST)
+### `textformat` (text AST)
 
 Use this for faithful text parsing:
 
@@ -82,7 +74,8 @@ Use this as the canonical transformation/emission target:
 
 - Fully resolved indices (no unresolved `$name`).
 - Explicit sections/components:
-  - Types, imports, functions, tables, memories, globals, exports, start, elements, data, customs.
+  - Types, imports, functions, tables, memories, globals, exports, start,
+    elements, data, customs.
 - Function bodies in normalized instruction form (unfolded).
 - Constants/immediates represented in typed form.
 - Optional metadata map for debug/provenance.
@@ -95,10 +88,10 @@ This split avoids polluting the semantic IR with text-only syntax concerns.
 
 - Build robust tokenizer first (comments, strings, numbers, keywords, IDs).
 - Parse S-expression structure.
-- Build `watast` for module items and instructions.
+- Build ASTs for module items and instructions.
 - Keep parser permissive enough to collect multiple errors in one pass.
 
-### Resolver/Lowerer
+### Lowerer
 
 - Build symbol tables per index space:
   - types, funcs, tables, memories, globals, locals, labels.
@@ -122,30 +115,9 @@ Validation should be explicit and reusable (not hidden in parser/decoder):
 - Start function constraints.
 - Memory/table/global constraints.
 
-Expose both:
-
-- `Validate(module, features) error`
-- `ValidateAll(module, features) []Diagnostic`
-
-## API Sketch (library-facing)
-
-- `ParseWAT(src []byte, opts ParseOptions) (*watast.Module, []Diagnostic)`
-- `LowerWAT(ast *watast.Module, opts LowerOptions) (*wasmir.Module, []Diagnostic)`
-- `DecodeWASM(bin []byte, opts DecodeOptions) (*wasmir.Module, []Diagnostic)`
-- `EncodeWASM(mod *wasmir.Module, opts EncodeOptions) ([]byte, []Diagnostic)`
-- `PrintWAT(mod *wasmir.Module, opts PrintOptions) ([]byte, []Diagnostic)`
-- `Validate(mod *wasmir.Module, opts ValidateOptions) []Diagnostic`
-
-Consider convenience wrappers:
-
-- `Wat2Wasm(src []byte, opts ToolOptions) ([]byte, []Diagnostic)`
-- `Wasm2Wat(bin []byte, opts ToolOptions) ([]byte, []Diagnostic)`
-
 ## Testing Strategy
 
-Use a layered test plan so bugs are caught close to source and also end-to-end.
-
-### 1. Unit Tests (fast, focused)
+### 1. Unit Tests
 
 - Lexer/token tests (valid + malformed).
 - Parser node-shape tests for WAT constructs.
@@ -159,4 +131,30 @@ Use table-driven tests heavily.
 
 Parse scripts from WebAssembly/spec to extract expected semantics, run them
 and compare. Can use a command-line runtime like 'node' or something similar
-toe execute.
+to execute.
+
+## Notes
+
+Identifiers that stand in for indices (e.g. `local.get $lhs`) aren't reflected
+in the binary format at all. This leads me to think we'll need another
+representation to parse the text format to; some sort of AST. Nested/folded
+instructions (https://www.w3.org/TR/wasm-core-1/#folded-instructions%E2%91%A0)
+is another such scenario. Something like an AST will be required to represent
+the text format with high fidelity.
+
+More details that are lost when lowering from text format:
+
+* nested/folded instructions, and conditions like (if ... (then ...)) are also
+  lowered to flat forms
+* spelling of floating point numbers like 0.125 and other notations (in binary
+  all floats are IEEE-754)
+* names of vars / types
+* inline types (instead of indices)
+
+Realistic WAT code for testing:
+
+* https://github.com/eliben/wasm-wat-samples/
+* Game of life: https://github.com/ColinEberhardt/wasm-game-of-life/blob/master/main.wat
+* Book samples:
+  https://github.com/battlelinegames/ArtOfWasm
+  https://github.com/bsletten/wasm_tdg
