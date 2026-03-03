@@ -1,2 +1,1 @@
-* No need to say "including single-error failures" everywhere
-* use errorListContains consistently where defined
+*

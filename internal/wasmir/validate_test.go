@@ -17,6 +17,15 @@ func errorListContains(errs diag.ErrorList, needle string) bool {
 	return false
 }
 
+func asErrorList(t *testing.T, err error) diag.ErrorList {
+	t.Helper()
+	errs, ok := errors.AsType[diag.ErrorList](err)
+	if !ok {
+		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
+	}
+	return errs
+}
+
 func makeValidAddModule() *Module {
 	return &Module{
 		Types: []FuncType{{
@@ -55,8 +64,9 @@ func TestValidateModule_LocalIndexOutOfRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "local index 99 out of range") {
-		t.Fatalf("got error %q, want local index out of range", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "local index 99 out of range") {
+		t.Fatalf("got errors %q, want local index out of range", errs.Error())
 	}
 }
 
@@ -68,8 +78,9 @@ func TestValidateModule_StackUnderflow(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "i32.add needs 2 operands") {
-		t.Fatalf("got error %q, want i32.add stack error", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "i32.add needs 2 operands") {
+		t.Fatalf("got errors %q, want i32.add stack error", errs.Error())
 	}
 }
 
@@ -85,8 +96,9 @@ func TestValidateModule_ResultArityMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "result arity mismatch") {
-		t.Fatalf("got error %q, want result arity mismatch", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "result arity mismatch") {
+		t.Fatalf("got errors %q, want result arity mismatch", errs.Error())
 	}
 }
 
@@ -98,8 +110,9 @@ func TestValidateModule_ExportIndexOutOfRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "index 5 out of range") {
-		t.Fatalf("got error %q, want export index out of range", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "index 5 out of range") {
+		t.Fatalf("got errors %q, want export index out of range", errs.Error())
 	}
 }
 
@@ -116,10 +129,7 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want diagnostics")
 	}
-	errs, ok := errors.AsType[diag.ErrorList](err)
-	if !ok {
-		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
-	}
+	errs := asErrorList(t, err)
 	if len(errs) < 2 {
 		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
 	}

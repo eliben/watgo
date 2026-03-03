@@ -110,8 +110,9 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "invalid local.get operand") {
-		t.Fatalf("got error %q, want invalid local.get operand", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "invalid local.get operand") {
+		t.Fatalf("got errors %q, want invalid local.get operand", errs.Error())
 	}
 }
 
@@ -131,8 +132,9 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
-	if !strings.Contains(err.Error(), "unsupported param type") {
-		t.Fatalf("got error %q, want unsupported param type", err.Error())
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "unsupported param type") {
+		t.Fatalf("got errors %q, want unsupported param type", errs.Error())
 	}
 }
 

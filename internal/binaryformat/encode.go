@@ -37,8 +37,7 @@ const (
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
 // diagnostics collected during encoding.
-// It returns nil error on success. On any failure, it returns diag.ErrorList
-// (including single-error failures).
+// It returns nil error on success. On any failure, it returns diag.ErrorList.
 func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	if m == nil {
 		return nil, diag.Fromf("module is nil")

@@ -11,7 +11,7 @@ import (
 // LowerModule lowers astm (a parsed text-format module) into a semantic
 // wasmir.Module.
 // It returns the lowered module (possibly partial) and nil on success.
-// On any failure, it returns diag.ErrorList (including single-error failures).
+// On any failure, it returns diag.ErrorList.
 func LowerModule(astm *Module) (*wasmir.Module, error) {
 	if astm == nil {
 		return nil, diag.Fromf("module is nil")

@@ -12,7 +12,7 @@ type Parser struct {
 
 // ParseModule parses a text-format module source string.
 // It returns a parsed module and nil on success. On any failure, it returns
-// diag.ErrorList (including single-error failures).
+// diag.ErrorList.
 func ParseModule(buf string) (*Module, error) {
 	lex := newLexer(buf)
 

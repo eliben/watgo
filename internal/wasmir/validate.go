@@ -5,8 +5,7 @@ import "github.com/eliben/watgo/internal/diag"
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
-// It returns nil on success. On any failure, it returns diag.ErrorList
-// (including single-error failures).
+// It returns nil on success. On any failure, it returns diag.ErrorList.
 func ValidateModule(m *Module) error {
 	if m == nil {
 		return diag.Fromf("module is nil")
