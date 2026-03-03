@@ -13,12 +13,13 @@ import (
 // It returns the lowered module (possibly partial) and all diagnostics found
 // while lowering.
 func LowerModule(astm *Module) (*wasmir.Module, diag.List) {
+	var diags diag.List
 	if astm == nil {
-		return nil, diag.List{{Message: "module is nil"}}
+		diags.Add("module is nil")
+		return nil, diags
 	}
 
 	out := &wasmir.Module{}
-	var diags diag.List
 
 	for i, f := range astm.Funcs {
 		if f == nil {
