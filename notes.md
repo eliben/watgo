@@ -7,9 +7,14 @@ instructions (https://www.w3.org/TR/wasm-core-1/#folded-instructions%E2%91%A0)
 is another such scenario. Something like an AST will be required to represent
 the text format with high fidelity.
 
-The `wasm` package is the base, an abstract representation of the WASM module
-with all its parts. `textformat` should depend on `wasm` because it will parse
-the text format and emit `wasm` modules.
+More details that are lost when lowering from text format:
+
+* nested/folded instructions, and conditions like (if ... (then ...)) are also
+  lowered to flat forms
+* spelling of floating point numbers like 0.125 and other notations (in binary
+  all floats are IEEE-754)
+* names of vars / types
+* inline types (instead of indices)
 
 Realistic WAT code for testing:
 
@@ -18,9 +23,3 @@ Realistic WAT code for testing:
 * Book samples:
   https://github.com/battlelinegames/ArtOfWasm
   https://github.com/bsletten/wasm_tdg
-
-----
-
-== Parsing
-
-Have sexpr now, can parse a sexpr recursively.
