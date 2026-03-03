@@ -1,0 +1,1 @@
+* Refactor diag.List and parser's error lists for consistency
