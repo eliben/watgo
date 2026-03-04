@@ -30,7 +30,7 @@ This design aims for correctness first, then ergonomics and performance.
 ## High-Level Pipeline
 
 1. WAT input -> text lexer/parser -> `textformat` (text-oriented AST).
-2. `textformat` -> resolver/lowerer -> `wasmir` (canonical semantic IR).
+2. `textformat` -> lower -> `wasmir` (canonical semantic IR).
 3. `wasmir` -> validator -> validated IR (or diagnostic set).
 4. `wasmir` -> binary encoder -> WASM bytes.
 5. WASM bytes -> binary decoder -> `wasmir`.
