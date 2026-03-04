@@ -2,6 +2,7 @@ package binaryformat
 
 import (
 	"bytes"
+	"encoding/binary"
 
 	"github.com/eliben/watgo/internal/diag"
 	"github.com/eliben/watgo/internal/wasmir"
@@ -243,15 +244,7 @@ func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
 
 // writeULEB128 writes v as an unsigned LEB128-encoded integer.
 func writeULEB128(out *bytes.Buffer, v uint32) {
-	for {
-		b := byte(v & 0x7f)
-		v >>= 7
-		if v != 0 {
-			b |= 0x80
-		}
-		out.WriteByte(b)
-		if v == 0 {
-			return
-		}
-	}
+	var buf [binary.MaxVarintLen32]byte
+	n := binary.PutUvarint(buf[:], uint64(v))
+	out.Write(buf[:n])
 }
