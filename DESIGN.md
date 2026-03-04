@@ -133,6 +133,13 @@ Parse scripts from WebAssembly/spec to extract expected semantics, run them
 and compare. Can use a command-line runtime like 'node' or something similar
 to execute.
 
+WASM spec tests live in https://github.com/WebAssembly/spec/tree/main/test/core
+Their own runner uses the wasm interpreter in that repo (written in OCaml):
+https://github.com/WebAssembly/spec/tree/main/interpreter
+
+This is the syntax for `*.wast` scripts:
+https://github.com/WebAssembly/spec/tree/main/interpreter#scripts
+
 ## Notes
 
 Identifiers that stand in for indices (e.g. `local.get $lhs`) aren't reflected
