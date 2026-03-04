@@ -1,7 +1,11 @@
 package binaryformat
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
 	"unicode/utf8"
 
 	"github.com/eliben/watgo/internal/diag"
@@ -20,7 +24,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	out := &wasmir.Module{}
 	var diags diag.ErrorList
 
-	r := newByteReader(bin)
+	r := bytes.NewReader(bin)
 	decodePreamble(r, &diags)
 
 	var funcTypeIdxs []uint32
@@ -31,24 +35,24 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	seenExport := false
 	seenCode := false
 
-	for !r.eof() {
-		sectionID, err := r.readByte()
+	for !atEOF(r) {
+		sectionID, err := readByte(r)
 		if err != nil {
 			diags.Addf("failed to read section id: %v", err)
 			break
 		}
 
-		sectionSize, err := r.readULEB128()
+		sectionSize, err := readU32(r)
 		if err != nil {
 			diags.Addf("failed to read section %d size: %v", sectionID, err)
 			break
 		}
-		sectionPayload, err := r.readN(int(sectionSize))
+		sectionPayload, err := readN(r, int(sectionSize))
 		if err != nil {
 			diags.Addf("failed to read section %d payload: %v", sectionID, err)
 			break
 		}
-		sr := newByteReader(sectionPayload)
+		sr := bytes.NewReader(sectionPayload)
 
 		switch sectionID {
 		case 0:
@@ -89,7 +93,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			diags.Addf("unsupported section id %d", sectionID)
 		}
 
-		if !sr.eof() {
+		if !atEOF(sr) {
 			diags.Addf("section %d was not fully consumed", sectionID)
 		}
 	}
@@ -113,8 +117,8 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	return out, nil
 }
 
-func decodePreamble(r *byteReader, diags *diag.ErrorList) {
-	magic, err := r.readN(len(wasmMagic))
+func decodePreamble(r *bytes.Reader, diags *diag.ErrorList) {
+	magic, err := readN(r, len(wasmMagic))
 	if err != nil {
 		diags.Addf("failed to read wasm magic: %v", err)
 		return
@@ -124,7 +128,7 @@ func decodePreamble(r *byteReader, diags *diag.ErrorList) {
 		return
 	}
 
-	version, err := r.readN(len(wasmVersion))
+	version, err := readN(r, len(wasmVersion))
 	if err != nil {
 		diags.Addf("failed to read wasm version: %v", err)
 		return
@@ -134,8 +138,8 @@ func decodePreamble(r *byteReader, diags *diag.ErrorList) {
 	}
 }
 
-func decodeTypeSection(r *byteReader, diags *diag.ErrorList) []wasmir.FuncType {
-	n, err := r.readULEB128()
+func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType {
+	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("type section: invalid vector length: %v", err)
 		return nil
@@ -143,7 +147,7 @@ func decodeTypeSection(r *byteReader, diags *diag.ErrorList) []wasmir.FuncType {
 
 	out := make([]wasmir.FuncType, 0, n)
 	for i := uint32(0); i < n; i++ {
-		form, err := r.readByte()
+		form, err := readByte(r)
 		if err != nil {
 			diags.Addf("type[%d]: failed to read form: %v", i, err)
 			break
@@ -160,8 +164,8 @@ func decodeTypeSection(r *byteReader, diags *diag.ErrorList) []wasmir.FuncType {
 	return out
 }
 
-func decodeFunctionSection(r *byteReader, diags *diag.ErrorList) []uint32 {
-	n, err := r.readULEB128()
+func decodeFunctionSection(r *bytes.Reader, diags *diag.ErrorList) []uint32 {
+	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("function section: invalid vector length: %v", err)
 		return nil
@@ -169,7 +173,7 @@ func decodeFunctionSection(r *byteReader, diags *diag.ErrorList) []uint32 {
 
 	out := make([]uint32, 0, n)
 	for i := uint32(0); i < n; i++ {
-		typeIdx, err := r.readULEB128()
+		typeIdx, err := readU32(r)
 		if err != nil {
 			diags.Addf("function[%d]: invalid type index: %v", i, err)
 			break
@@ -179,8 +183,8 @@ func decodeFunctionSection(r *byteReader, diags *diag.ErrorList) []uint32 {
 	return out
 }
 
-func decodeExportSection(r *byteReader, diags *diag.ErrorList) []wasmir.Export {
-	n, err := r.readULEB128()
+func decodeExportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Export {
+	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("export section: invalid vector length: %v", err)
 		return nil
@@ -188,17 +192,17 @@ func decodeExportSection(r *byteReader, diags *diag.ErrorList) []wasmir.Export {
 
 	out := make([]wasmir.Export, 0, n)
 	for i := uint32(0); i < n; i++ {
-		name, err := r.readName()
+		name, err := readName(r)
 		if err != nil {
 			diags.Addf("export[%d]: invalid name: %v", i, err)
 			break
 		}
-		kindByte, err := r.readByte()
+		kindByte, err := readByte(r)
 		if err != nil {
 			diags.Addf("export[%d]: missing kind: %v", i, err)
 			break
 		}
-		index, err := r.readULEB128()
+		index, err := readU32(r)
 		if err != nil {
 			diags.Addf("export[%d]: invalid index: %v", i, err)
 			break
@@ -214,8 +218,8 @@ func decodeExportSection(r *byteReader, diags *diag.ErrorList) []wasmir.Export {
 	return out
 }
 
-func decodeCodeSection(r *byteReader, diags *diag.ErrorList) []decodedFuncBody {
-	n, err := r.readULEB128()
+func decodeCodeSection(r *bytes.Reader, diags *diag.ErrorList) []decodedFuncBody {
+	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("code section: invalid vector length: %v", err)
 		return nil
@@ -223,21 +227,21 @@ func decodeCodeSection(r *byteReader, diags *diag.ErrorList) []decodedFuncBody {
 
 	out := make([]decodedFuncBody, 0, n)
 	for i := uint32(0); i < n; i++ {
-		bodySize, err := r.readULEB128()
+		bodySize, err := readU32(r)
 		if err != nil {
 			diags.Addf("code[%d]: invalid body size: %v", i, err)
 			break
 		}
-		bodyBytes, err := r.readN(int(bodySize))
+		bodyBytes, err := readN(r, int(bodySize))
 		if err != nil {
 			diags.Addf("code[%d]: body out of bounds: %v", i, err)
 			break
 		}
 
-		br := newByteReader(bodyBytes)
+		br := bytes.NewReader(bodyBytes)
 		locals := decodeLocals(br, i, diags)
 		instrs := decodeInstructionExpr(br, i, diags)
-		if !br.eof() {
+		if !atEOF(br) {
 			diags.Addf("code[%d]: trailing bytes after instruction expression", i)
 		}
 
@@ -246,8 +250,8 @@ func decodeCodeSection(r *byteReader, diags *diag.ErrorList) []decodedFuncBody {
 	return out
 }
 
-func decodeLocals(r *byteReader, funcIdx uint32, diags *diag.ErrorList) []wasmir.ValueType {
-	declCount, err := r.readULEB128()
+func decodeLocals(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasmir.ValueType {
+	declCount, err := readU32(r)
 	if err != nil {
 		diags.Addf("code[%d]: invalid local decl count: %v", funcIdx, err)
 		return nil
@@ -255,12 +259,12 @@ func decodeLocals(r *byteReader, funcIdx uint32, diags *diag.ErrorList) []wasmir
 
 	var locals []wasmir.ValueType
 	for i := uint32(0); i < declCount; i++ {
-		n, err := r.readULEB128()
+		n, err := readU32(r)
 		if err != nil {
 			diags.Addf("code[%d] localdecl[%d]: invalid count: %v", funcIdx, i, err)
 			break
 		}
-		tyCode, err := r.readByte()
+		tyCode, err := readByte(r)
 		if err != nil {
 			diags.Addf("code[%d] localdecl[%d]: missing value type: %v", funcIdx, i, err)
 			break
@@ -277,11 +281,11 @@ func decodeLocals(r *byteReader, funcIdx uint32, diags *diag.ErrorList) []wasmir
 	return locals
 }
 
-func decodeInstructionExpr(r *byteReader, funcIdx uint32, diags *diag.ErrorList) []wasmir.Instruction {
+func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasmir.Instruction {
 	var out []wasmir.Instruction
 
-	for !r.eof() {
-		op, err := r.readByte()
+	for !atEOF(r) {
+		op, err := readByte(r)
 		if err != nil {
 			diags.Addf("code[%d]: failed reading opcode: %v", funcIdx, err)
 			return out
@@ -289,7 +293,7 @@ func decodeInstructionExpr(r *byteReader, funcIdx uint32, diags *diag.ErrorList)
 
 		switch op {
 		case opLocalGetCode:
-			localIndex, err := r.readULEB128()
+			localIndex, err := readU32(r)
 			if err != nil {
 				diags.Addf("code[%d]: local.get missing/invalid immediate: %v", funcIdx, err)
 				return out
@@ -310,8 +314,8 @@ func decodeInstructionExpr(r *byteReader, funcIdx uint32, diags *diag.ErrorList)
 	return out
 }
 
-func decodeValueTypeVec(r *byteReader, where string, diags *diag.ErrorList) []wasmir.ValueType {
-	n, err := r.readULEB128()
+func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) []wasmir.ValueType {
+	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("%s: invalid vector length: %v", where, err)
 		return nil
@@ -319,7 +323,7 @@ func decodeValueTypeVec(r *byteReader, where string, diags *diag.ErrorList) []wa
 
 	out := make([]wasmir.ValueType, 0, n)
 	for i := uint32(0); i < n; i++ {
-		b, err := r.readByte()
+		b, err := readByte(r)
 		if err != nil {
 			diags.Addf("%s[%d]: missing value type: %v", where, i, err)
 			break
@@ -352,63 +356,65 @@ func decodeExportKind(code byte) (wasmir.ExternalKind, bool) {
 	}
 }
 
-type byteReader struct {
-	buf []byte
-	off int
+// atEOF reports whether r has no unread bytes left.
+func atEOF(r *bytes.Reader) bool {
+	return r.Len() == 0
 }
 
-func newByteReader(buf []byte) *byteReader {
-	return &byteReader{buf: buf}
-}
-
-func (r *byteReader) eof() bool {
-	return r.off >= len(r.buf)
-}
-
-func (r *byteReader) readByte() (byte, error) {
-	if r.eof() {
-		return 0, fmt.Errorf("unexpected EOF")
+// readByte reads one byte from r.
+// It returns an "unexpected EOF" error when no bytes remain.
+func readByte(r *bytes.Reader) (byte, error) {
+	b, err := r.ReadByte()
+	if err != nil {
+		if err == io.EOF {
+			return 0, io.ErrUnexpectedEOF
+		}
+		return 0, err
 	}
-	b := r.buf[r.off]
-	r.off++
 	return b, nil
 }
 
-func (r *byteReader) readN(n int) ([]byte, error) {
-	if n < 0 || r.off+n > len(r.buf) {
-		return nil, fmt.Errorf("unexpected EOF")
+// readN reads exactly n bytes from r.
+// It returns an "unexpected EOF" error when fewer than n bytes are available.
+func readN(r *bytes.Reader, n int) ([]byte, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("negative length %d", n)
 	}
-	b := r.buf[r.off : r.off+n]
-	r.off += n
+	b := make([]byte, n)
+	_, err := io.ReadFull(r, b)
+	if err != nil {
+		if err == io.EOF {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
 	return b, nil
 }
 
-func (r *byteReader) readULEB128() (uint32, error) {
-	var result uint32
-	var shift uint
-
-	for i := 0; i < 5; i++ {
-		b, err := r.readByte()
-		if err != nil {
-			return 0, err
+// readU32 reads an unsigned 32-bit LEB128 value from r.
+// It rejects values that overflow uint32.
+func readU32(r *bytes.Reader) (uint32, error) {
+	v, err := binary.ReadUvarint(r)
+	if err != nil {
+		if err == io.EOF {
+			return 0, io.ErrUnexpectedEOF
 		}
-
-		result |= uint32(b&0x7f) << shift
-		if b&0x80 == 0 {
-			return result, nil
-		}
-		shift += 7
+		return 0, err
 	}
-
-	return 0, fmt.Errorf("invalid u32 LEB128 sequence")
+	if v > math.MaxUint32 {
+		return 0, fmt.Errorf("u32 overflow: %d", v)
+	}
+	return uint32(v), nil
 }
 
-func (r *byteReader) readName() (string, error) {
-	n, err := r.readULEB128()
+// readName reads a WASM name from r as: u32 byte length followed by UTF-8
+// bytes.
+func readName(r *bytes.Reader) (string, error) {
+	n, err := readU32(r)
 	if err != nil {
 		return "", err
 	}
-	b, err := r.readN(int(n))
+	b, err := readN(r, int(n))
 	if err != nil {
 		return "", err
 	}
