@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eliben/watgo/internal/diag"
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo/wasmir"
 )
 
 type decodedFuncBody struct {

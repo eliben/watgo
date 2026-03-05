@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/eliben/watgo/internal/textformat"
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo/wasmir"
 )
 
 func TestPipelineEncodeAddModule(t *testing.T) {

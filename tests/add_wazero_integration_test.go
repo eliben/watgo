@@ -5,9 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/eliben/watgo/internal/binaryformat"
-	"github.com/eliben/watgo/internal/textformat"
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo"
 	"github.com/tetratelabs/wazero"
 )
 
@@ -24,24 +22,9 @@ func TestAddModuleEndToEndWithWazero(t *testing.T) {
   )
 )`
 
-	ast, err := textformat.ParseModule(wat)
+	wasmBytes, err := watgo.CompileWAT([]byte(wat))
 	if err != nil {
-		t.Fatalf("ParseModule failed: %v", err)
-	}
-
-	m, lowerErr := textformat.LowerModule(ast)
-	if lowerErr != nil {
-		t.Fatalf("LowerModule error: %v", lowerErr)
-	}
-
-	validateErr := wasmir.ValidateModule(m)
-	if validateErr != nil {
-		t.Fatalf("ValidateModule error: %v", validateErr)
-	}
-
-	wasmBytes, encodeErr := binaryformat.EncodeModule(m)
-	if encodeErr != nil {
-		t.Fatalf("EncodeModule error: %v", encodeErr)
+		t.Fatalf("CompileWAT failed: %v", err)
 	}
 
 	ctx := context.Background()

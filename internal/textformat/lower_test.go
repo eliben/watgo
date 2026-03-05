@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/eliben/watgo/internal/diag"
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo/wasmir"
 )
 
 func asErrorList(t *testing.T, err error) diag.ErrorList {

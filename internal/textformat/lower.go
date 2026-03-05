@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/eliben/watgo/internal/diag"
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo/wasmir"
 )
 
 // LowerModule lowers astm (a parsed text-format module) into a semantic

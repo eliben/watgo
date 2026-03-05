@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/eliben/watgo/internal/wasmir"
+	"github.com/eliben/watgo/wasmir"
 )
 
 func canonicalAddModuleBytes() []byte {
