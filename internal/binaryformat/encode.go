@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 
-	"github.com/eliben/watgo/internal/diag"
+	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/wasmir"
 )
 

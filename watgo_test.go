@@ -2,9 +2,11 @@ package watgo_test
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/eliben/watgo"
+	"github.com/eliben/watgo/diag"
 )
 
 func canonicalAddModuleBytes() []byte {
@@ -34,5 +36,16 @@ func TestCompileWAT_PublicAPI(t *testing.T) {
 	want := canonicalAddModuleBytes()
 	if !bytes.Equal(got, want) {
 		t.Fatalf("CompileWAT bytes mismatch:\n got=%x\nwant=%x", got, want)
+	}
+}
+
+func TestCompileWAT_ErrorList_PublicAPI(t *testing.T) {
+	_, err := watgo.CompileWAT([]byte("(module"))
+	if err == nil {
+		t.Fatal("expected CompileWAT to fail")
+	}
+
+	if _, ok := errors.AsType[diag.ErrorList](err); !ok {
+		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
 	}
 }

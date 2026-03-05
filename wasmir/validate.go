@@ -1,6 +1,6 @@
 package wasmir
 
-import "github.com/eliben/watgo/internal/diag"
+import "github.com/eliben/watgo/diag"
 
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function

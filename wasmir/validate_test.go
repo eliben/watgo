@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eliben/watgo/internal/diag"
+	"github.com/eliben/watgo/diag"
 )
 
 func errorListContains(errs diag.ErrorList, needle string) bool {

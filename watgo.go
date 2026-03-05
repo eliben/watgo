@@ -7,6 +7,8 @@ import (
 )
 
 // CompileWAT compiles text-format WebAssembly to binary WebAssembly.
+//
+// It returns nil error on success. On any failure, it returns diag.ErrorList.
 func CompileWAT(src []byte) ([]byte, error) {
 	tm, err := textformat.ParseModule(string(src))
 	if err != nil {

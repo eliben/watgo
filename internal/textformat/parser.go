@@ -3,7 +3,7 @@ package textformat
 import (
 	"fmt"
 
-	"github.com/eliben/watgo/internal/diag"
+	"github.com/eliben/watgo/diag"
 )
 
 type Parser struct {
