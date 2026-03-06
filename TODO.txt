@@ -1,6 +1,1 @@
-* Add a public API that will be used for end-to-end spec tests
-* Next step: start importing small wast tests from WebAssembly/spec/tests/core
-  and write runner/parser for them that does basic validation and execution
-  (let's try with wazero for now)
-  Once that's in place, we can start taking full .wast scripts and producing
-  enough implementation to satisfy them
+* Continue expanding scope and adding more spec tests

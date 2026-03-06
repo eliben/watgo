@@ -73,11 +73,11 @@ func TestLexer(t *testing.T) {
 			}},
 
 		{"decimal integers",
-			`20 +441 -882 0123 1_000_000`,
+			`1 20 +441 -882 0123 1_000_000`,
 			[]token{
-				{INT, "20", location{1, 1}}, {INT, "+441", location{1, 4}},
-				{INT, "-882", location{1, 9}}, {INT, "0123", location{1, 14}},
-				{INT, "1_000_000", location{1, 19}},
+				{INT, "1", location{1, 1}}, {INT, "20", location{1, 3}},
+				{INT, "+441", location{1, 6}}, {INT, "-882", location{1, 11}},
+				{INT, "0123", location{1, 16}}, {INT, "1_000_000", location{1, 21}},
 			}},
 
 		{"hex integers",

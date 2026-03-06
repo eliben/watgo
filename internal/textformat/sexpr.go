@@ -51,6 +51,26 @@ func (sx *SExpr) String() string {
 	}
 }
 
+// Children returns sx's child expressions for list SExprs.
+// For token SExprs, it returns nil.
+func (sx *SExpr) Children() []*SExpr {
+	return sx.list
+}
+
+// Token returns the token kind and value for token SExprs.
+// For list SExprs, it returns ok=false.
+func (sx *SExpr) Token() (kind string, value string, ok bool) {
+	if !sx.IsToken() {
+		return "", "", false
+	}
+	return sx.tok.name.String(), sx.tok.value, true
+}
+
+// Loc returns sx's source location as "line:column".
+func (sx *SExpr) Loc() string {
+	return sx.loc.String()
+}
+
 // ParseTopLevelSExprs parses all top-level s-expressions in buf.
 func ParseTopLevelSExprs(buf string) ([]*SExpr, error) {
 	lex := newLexer(buf)

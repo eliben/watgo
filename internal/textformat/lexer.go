@@ -283,7 +283,9 @@ func (lex *lexer) scanString() token {
 func (lex *lexer) scanNumber() token {
 	startpos := lex.rpos
 	startloc := lex.loc
+	hadSign := false
 	if isSign(lex.r) {
+		hadSign = true
 		lex.next()
 	}
 
@@ -348,7 +350,7 @@ func (lex *lexer) scanNumber() token {
 
 		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
 	} else {
-		if lex.rpos-startpos == 1 {
+		if hadSign && lex.rpos-startpos == 1 {
 			return lex.errorToken("lonely sign", startloc)
 		}
 		return token{INT, lex.buf[startpos:lex.rpos], startloc}
