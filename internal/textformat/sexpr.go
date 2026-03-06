@@ -77,18 +77,6 @@ func ParseTopLevelSExprs(buf string) ([]*SExpr, error) {
 	return sexprifyAll(lex)
 }
 
-// sexprifyTop is the entry point to this code; it takes a freshly created
-// lexer (from newLexer) and builds a sexpr representing the code. The lexer
-// will be exhausted.
-func sexprifyTop(lex *lexer) (*SExpr, error) {
-	tok := lex.nextToken()
-	if tok.name == LPAREN {
-		return sexprify(lex, tok)
-	} else {
-		return nil, fmt.Errorf("at %s: %v: expected '('", tok.loc, tok.value)
-	}
-}
-
 // sexprifyAll parses all top-level s-expressions from lex until EOF.
 func sexprifyAll(lex *lexer) ([]*SExpr, error) {
 	var out []*SExpr

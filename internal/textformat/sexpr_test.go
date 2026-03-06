@@ -5,14 +5,21 @@ import (
 	"testing"
 )
 
-func TestSexprSmoke(t *testing.T) {
-	s := `(foo bar)`
-	lex := newLexer(s)
-
-	sx, err := sexprifyTop(lex)
+func mustParseSingleSExpr(t *testing.T, input string) *SExpr {
+	t.Helper()
+	sxs, err := ParseTopLevelSExprs(input)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(sxs) != 1 {
+		t.Fatalf("got %d top-level expressions, want 1", len(sxs))
+	}
+	return sxs[0]
+}
+
+func TestSexprSmoke(t *testing.T) {
+	s := `(foo bar)`
+	sx := mustParseSingleSExpr(t, s)
 
 	if len(sx.list) != 2 {
 		t.Errorf("got len %v, want 2", len(sx.list))
@@ -33,12 +40,7 @@ func TestSexprSmoke(t *testing.T) {
 
 func TestEmptyList(t *testing.T) {
 	s := `(foo () bar)`
-	lex := newLexer(s)
-
-	sx, err := sexprifyTop(lex)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sx := mustParseSingleSExpr(t, s)
 
 	elem1 := sx.list[1]
 	if !(elem1.IsToken() && !elem1.IsList() && elem1.tok.name == EMPTY && elem1.loc.String() == "1:6") {
@@ -72,11 +74,7 @@ func TestSexprLists(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			lex := newLexer(tt.input)
-			sx, err := sexprifyTop(lex)
-			if err != nil {
-				t.Fatal(err)
-			}
+			sx := mustParseSingleSExpr(t, tt.input)
 
 			got := showForTest(sx)
 			if got != tt.want {
@@ -97,8 +95,7 @@ func TestErrorUnterminatedLparen(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			lex := newLexer(tt.input)
-			_, err := sexprifyTop(lex)
+			_, err := ParseTopLevelSExprs(tt.input)
 			if err == nil {
 				t.Fatal("got no error, want error")
 			}
