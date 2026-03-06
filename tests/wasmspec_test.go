@@ -64,21 +64,27 @@ func runWasmSpecScriptFile(t *testing.T, scriptPath string) {
 		}
 	}()
 
-	summary := runner.run(commands, runOptions{strictErrorText: false})
-	if got, want := len(summary.results), len(commands); got != want {
+	results := runner.run(commands, runOptions{strictErrorText: false})
+	if got, want := len(results), len(commands); got != want {
 		t.Fatalf("got %d command results, want %d", got, want)
 	}
 
-	if failCount := summary.statusCount(statusFail); failCount != 0 {
-		for _, res := range summary.results {
-			if res.status == statusFail {
-				t.Logf("FAIL command[%d] %s at %s: %s", res.index, res.kind, res.loc, res.detail)
-			}
+	failCount := 0
+	passCount := 0
+	for _, res := range results {
+		if res.status {
+			passCount++
+		} else {
+			failCount++
+			t.Logf("FAIL command[%d] %s at %s: %s", res.index, res.kind, res.loc, res.detail)
 		}
+	}
+
+	if failCount != 0 {
 		t.Fatalf("got %d failed commands, want 0", failCount)
 	}
 
-	if passCount := summary.statusCount(statusPass); passCount == 0 {
+	if passCount == 0 {
 		t.Fatalf("got %d passed commands, want > 0", passCount)
 	}
 }

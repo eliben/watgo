@@ -419,19 +419,12 @@ func sexprToWAT(sx *textformat.SExpr) (string, error) {
 	return "(" + strings.Join(parts, " ") + ")", nil
 }
 
-type resultStatus string
-
-const (
-	statusPass resultStatus = "pass"
-	statusFail resultStatus = "fail"
-)
-
 // commandResult stores harness outcome for one command in execution order.
 type commandResult struct {
 	index  int
 	kind   commandKind
 	loc    string
-	status resultStatus
+	status bool // true if command passed, false if failed
 	detail string
 }
 
@@ -439,21 +432,6 @@ type runOptions struct {
 	// strictErrorText checks expected error text for assert_invalid/assert_malformed.
 	// If false, any compilation error satisfies these assertions.
 	strictErrorText bool
-}
-
-// runSummary collects per-command results for a whole script run.
-type runSummary struct {
-	results []commandResult
-}
-
-func (s runSummary) statusCount(st resultStatus) int {
-	count := 0
-	for _, r := range s.results {
-		if r.status == st {
-			count++
-		}
-	}
-	return count
 }
 
 // scriptRunner executes parsed script commands against a wazero runtime.
@@ -485,8 +463,8 @@ func (r *scriptRunner) close() error {
 
 // run executes commands in script order and returns one result per command.
 // commands is the parsed script command list; opts controls assertion behavior.
-func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) runSummary {
-	summary := runSummary{results: make([]commandResult, 0, len(commands))}
+func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandResult {
+	results := make([]commandResult, 0, len(commands))
 	for i, cmd := range commands {
 		res := commandResult{
 			index: i,
@@ -505,12 +483,12 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) runSummary
 		case commandAssertMalformed:
 			r.runAssertMalformed(&res, cmd, opts)
 		default:
-			res.status = statusFail
+			res.status = false
 			res.detail = fmt.Sprintf("unsupported command kind %q", cmd.kind)
 		}
-		summary.results = append(summary.results, res)
+		results = append(results, res)
 	}
-	return summary
+	return results
 }
 
 // runModule handles a top-level "(module ...)" command.
@@ -518,18 +496,18 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) runSummary
 func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	src, err := sexprToWAT(cmd.moduleExpr)
 	if err != nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("module text generation failed: %v", err)
 		return
 	}
 	mod, err := r.compileAndInstantiate(src)
 	if err != nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("module compile/instantiate failed: %v", err)
 		return
 	}
 	r.replaceCurrent(mod)
-	res.status = statusPass
+	res.status = true
 }
 
 // runAssertReturn handles "(assert_return (invoke ...) (result)*)".
@@ -537,31 +515,31 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 	results, err := r.invoke(cmd.action)
 	if err != nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("invoke failed: %v", err)
 		return
 	}
 
 	if len(results) != len(cmd.expectValues) {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("result arity mismatch: got %d want %d", len(results), len(cmd.expectValues))
 		return
 	}
 	for i := range results {
 		want := cmd.expectValues[i]
 		if want.kind != valueI32Const {
-			res.status = statusFail
+			res.status = false
 			res.detail = fmt.Sprintf("unsupported expected value kind %q", want.kind)
 			return
 		}
 		gotBits := uint32(results[i])
 		if gotBits != want.i32 {
-			res.status = statusFail
+			res.status = false
 			res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.i32)
 			return
 		}
 	}
-	res.status = statusPass
+	res.status = true
 }
 
 // runAssertTrap handles "(assert_trap (invoke ...) \"...\")".
@@ -569,16 +547,16 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 	_, err := r.invoke(cmd.action)
 	if err == nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = "expected trap, got success"
 		return
 	}
 	if cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("trap text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
 		return
 	}
-	res.status = statusPass
+	res.status = true
 }
 
 // runAssertInvalid handles "(assert_invalid (module ...) \"...\")".
@@ -586,22 +564,22 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, opts runOptions) {
 	src, err := sexprToWAT(cmd.moduleExpr)
 	if err != nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("module text generation failed: %v", err)
 		return
 	}
 	_, err = watgo.CompileWAT([]byte(src))
 	if err == nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = "expected invalid module error, got success"
 		return
 	}
 	if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("invalid error text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
 		return
 	}
-	res.status = statusPass
+	res.status = true
 }
 
 // runAssertMalformed handles "(assert_malformed (module quote ...) \"...\")".
@@ -609,16 +587,16 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand, opts runOptions) {
 	_, err := watgo.CompileWAT([]byte(cmd.quotedWAT))
 	if err == nil {
-		res.status = statusFail
+		res.status = false
 		res.detail = "expected malformed module error, got success"
 		return
 	}
 	if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
-		res.status = statusFail
+		res.status = false
 		res.detail = fmt.Sprintf("malformed error text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
 		return
 	}
-	res.status = statusPass
+	res.status = true
 }
 
 // invoke calls an exported function on the current module.
