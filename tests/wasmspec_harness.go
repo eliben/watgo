@@ -1,4 +1,4 @@
-package wasmspec
+package tests
 
 import (
 	"context"
