@@ -200,7 +200,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 	for cursor := idx; cursor < len(sx.list); {
 		elem := sx.list[cursor]
 		if elem.IsList() {
-			p.emitError(elem.loc, "folded instructions are not supported yet")
+			out = append(out, p.parseFoldedInstr(elem)...)
 			cursor++
 			continue
 		}
@@ -237,6 +237,55 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 		}
 	}
 
+	return out
+}
+
+// parseFoldedInstr parses one folded instruction expression and linearizes it
+// into plain instructions in execution order.
+//
+// It expects sx to be a list of the form "(op arg...)", where each arg is
+// either a nested folded instruction list or a plain operand token.
+//
+// Example:
+//
+//	(i32.add (local.get $x) (local.get $y))
+//
+// is lowered to:
+//
+//	local.get $x
+//	local.get $y
+//	i32.add
+func (p *Parser) parseFoldedInstr(sx *SExpr) []Instruction {
+	if !sx.IsList() || len(sx.list) == 0 {
+		p.emitError(sx.loc, "expected folded instruction list")
+		return nil
+	}
+	head := sx.list[0]
+	if !head.IsToken() || head.tok.name != KEYWORD {
+		p.emitError(head.loc, "expected folded instruction keyword")
+		return nil
+	}
+
+	name := head.tok.value
+	var out []Instruction
+	var operands []Operand
+
+	for i := 1; i < len(sx.list); i++ {
+		elem := sx.list[i]
+		if elem.IsList() {
+			out = append(out, p.parseFoldedInstr(elem)...)
+			continue
+		}
+
+		op := p.parseOperand(elem)
+		if op == nil {
+			p.emitError(elem.loc, fmt.Sprintf("invalid operand for %s", name))
+			continue
+		}
+		operands = append(operands, op)
+	}
+
+	out = append(out, &PlainInstr{Name: name, Operands: operands})
 	return out
 }
 

@@ -129,19 +129,44 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	}
 }
 
-func TestParseModule_FoldedInstructionIsRejected(t *testing.T) {
+func TestParseModule_FoldedInstructions(t *testing.T) {
 	wat := `(module
   (func (result i32)
     (i32.add (i32.const 1) (i32.const 2))
   )
 )`
 
-	_, err := ParseModule(wat)
-	if err == nil {
-		t.Fatal("expected parse error, got nil")
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "folded instructions are not supported yet") {
-		t.Fatalf("got error %q, want folded-instruction error", err.Error())
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	f := m.Funcs[0]
+	if len(f.Instrs) != 3 {
+		t.Fatalf("got %d instructions, want 3", len(f.Instrs))
+	}
+
+	i0 := mustPlainInstr(t, f.Instrs[0])
+	if i0.Name != "i32.const" || len(i0.Operands) != 1 {
+		t.Fatalf("instr0=%#v, want i32.const with one operand", i0)
+	}
+	if op, ok := i0.Operands[0].(*IntOperand); !ok || op.Value != "1" {
+		t.Fatalf("instr0 operand=%T(%v), want *IntOperand(\"1\")", i0.Operands[0], i0.Operands[0])
+	}
+
+	i1 := mustPlainInstr(t, f.Instrs[1])
+	if i1.Name != "i32.const" || len(i1.Operands) != 1 {
+		t.Fatalf("instr1=%#v, want i32.const with one operand", i1)
+	}
+	if op, ok := i1.Operands[0].(*IntOperand); !ok || op.Value != "2" {
+		t.Fatalf("instr1 operand=%T(%v), want *IntOperand(\"2\")", i1.Operands[0], i1.Operands[0])
+	}
+
+	i2 := mustPlainInstr(t, f.Instrs[2])
+	if i2.Name != "i32.add" || len(i2.Operands) != 0 {
+		t.Fatalf("instr2=%#v, want i32.add with no operands", i2)
 	}
 }
 

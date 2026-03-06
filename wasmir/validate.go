@@ -69,13 +69,14 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = append(stack, locals[ins.LocalIndex])
 
-		case InstrI32Add:
+		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU:
+			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("instruction %d: i32.add needs 2 operands", i)
+				diags.Addf("instruction %d: %s needs 2 operands", i, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("instruction %d: i32.add expects i32 operands", i)
+				diags.Addf("instruction %d: %s expects i32 operands", i, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -102,4 +103,25 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 	}
 
 	return diags
+}
+
+func instrName(kind InstrKind) string {
+	switch kind {
+	case InstrLocalGet:
+		return "local.get"
+	case InstrI32Add:
+		return "i32.add"
+	case InstrI32Sub:
+		return "i32.sub"
+	case InstrI32Mul:
+		return "i32.mul"
+	case InstrI32DivS:
+		return "i32.div_s"
+	case InstrI32DivU:
+		return "i32.div_u"
+	case InstrEnd:
+		return "end"
+	default:
+		return "unknown"
+	}
 }

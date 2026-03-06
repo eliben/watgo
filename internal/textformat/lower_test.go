@@ -141,7 +141,7 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	wat := `(module
   (func (param $a i64) (result i32)
-    i32.sub
+    i32.and
   )
 )`
 

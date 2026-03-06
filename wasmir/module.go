@@ -11,6 +11,10 @@ type InstrKind uint8
 const (
 	InstrLocalGet InstrKind = iota
 	InstrI32Add
+	InstrI32Sub
+	InstrI32Mul
+	InstrI32DivS
+	InstrI32DivU
 	InstrEnd
 )
 

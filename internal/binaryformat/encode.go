@@ -33,6 +33,10 @@ const (
 	// Opcodes for the currently supported instruction subset.
 	opLocalGetCode byte = 0x20
 	opI32AddCode   byte = 0x6a
+	opI32SubCode   byte = 0x6b
+	opI32MulCode   byte = 0x6c
+	opI32DivSCode  byte = 0x6d
+	opI32DivUCode  byte = 0x6e
 	opEndCode      byte = 0x0b
 )
 
@@ -217,6 +221,14 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.LocalIndex)
 	case wasmir.InstrI32Add:
 		out.WriteByte(opI32AddCode)
+	case wasmir.InstrI32Sub:
+		out.WriteByte(opI32SubCode)
+	case wasmir.InstrI32Mul:
+		out.WriteByte(opI32MulCode)
+	case wasmir.InstrI32DivS:
+		out.WriteByte(opI32DivSCode)
+	case wasmir.InstrI32DivU:
+		out.WriteByte(opI32DivUCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:

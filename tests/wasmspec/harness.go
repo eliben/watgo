@@ -2,7 +2,6 @@ package wasmspec
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -423,9 +422,8 @@ func sexprToWAT(sx *textformat.SExpr) (string, error) {
 type resultStatus string
 
 const (
-	statusPass        resultStatus = "pass"
-	statusFail        resultStatus = "fail"
-	statusUnsupported resultStatus = "unsupported"
+	statusPass resultStatus = "pass"
+	statusFail resultStatus = "fail"
 )
 
 // commandResult stores harness outcome for one command in execution order.
@@ -435,17 +433,6 @@ type commandResult struct {
 	loc    string
 	status resultStatus
 	detail string
-}
-
-// unsupportedError marks commands the harness intentionally cannot evaluate
-// yet (missing opcode support, missing export, etc.). These are reported as
-// statusUnsupported instead of hard failures.
-type unsupportedError struct {
-	msg string
-}
-
-func (e unsupportedError) Error() string {
-	return e.msg
 }
 
 type runOptions struct {
@@ -537,7 +524,7 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	}
 	mod, err := r.compileAndInstantiate(src)
 	if err != nil {
-		res.status = statusUnsupported
+		res.status = statusFail
 		res.detail = fmt.Sprintf("module compile/instantiate failed: %v", err)
 		return
 	}
@@ -550,13 +537,8 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 	results, err := r.invoke(cmd.action)
 	if err != nil {
-		if _, ok := errors.AsType[unsupportedError](err); ok {
-			res.status = statusUnsupported
-			res.detail = err.Error()
-		} else {
-			res.status = statusFail
-			res.detail = fmt.Sprintf("invoke failed: %v", err)
-		}
+		res.status = statusFail
+		res.detail = fmt.Sprintf("invoke failed: %v", err)
 		return
 	}
 
@@ -589,11 +571,6 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 	if err == nil {
 		res.status = statusFail
 		res.detail = "expected trap, got success"
-		return
-	}
-	if _, ok := errors.AsType[unsupportedError](err); ok {
-		res.status = statusUnsupported
-		res.detail = err.Error()
 		return
 	}
 	if cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
@@ -652,12 +629,12 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 		return nil, fmt.Errorf("nil invoke action")
 	}
 	if r.current == nil {
-		return nil, unsupportedError{msg: fmt.Sprintf("no current module for invoke %q", action.funcName)}
+		return nil, fmt.Errorf("no current module for invoke %q", action.funcName)
 	}
 
 	fn := r.current.ExportedFunction(action.funcName)
 	if fn == nil {
-		return nil, unsupportedError{msg: fmt.Sprintf("exported function %q not found", action.funcName)}
+		return nil, fmt.Errorf("exported function %q not found", action.funcName)
 	}
 
 	args := make([]uint64, len(action.args))
@@ -666,7 +643,7 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 		case valueI32Const:
 			args[i] = uint64(arg.i32)
 		default:
-			return nil, unsupportedError{msg: fmt.Sprintf("unsupported invoke arg kind %q", arg.kind)}
+			return nil, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
 		}
 	}
 

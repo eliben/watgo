@@ -157,6 +157,34 @@ func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
 
+		case "i32.sub":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i32.sub expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub})
+
+		case "i32.mul":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i32.mul expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul})
+
+		case "i32.div_s":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i32.div_s expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS})
+
+		case "i32.div_u":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i32.div_u expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
+
 		default:
 			diags.Addf("func[%d]: unsupported instruction %q", funcIdx, pi.Name)
 		}
