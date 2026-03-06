@@ -39,13 +39,24 @@ func TestCompileWAT_PublicAPI(t *testing.T) {
 	}
 }
 
-func TestCompileWAT_ErrorList_PublicAPI(t *testing.T) {
-	_, err := watgo.CompileWAT([]byte("(module"))
+func TestCompileWAT_MultipleErrors_PublicAPI(t *testing.T) {
+	_, err := watgo.CompileWAT([]byte(`(module
+  (func (export "bad_local_get_1") (param $a i32) (result i32)
+    local.get $missing1
+  )
+  (func (export "bad_local_get_2") (param $b i32) (result i32)
+    local.get $missing2
+  )
+)`))
 	if err == nil {
 		t.Fatal("expected CompileWAT to fail")
 	}
 
-	if _, ok := errors.AsType[diag.ErrorList](err); !ok {
+	errs, ok := errors.AsType[diag.ErrorList](err)
+	if !ok {
 		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
+	}
+	if len(errs) < 2 {
+		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
 	}
 }
