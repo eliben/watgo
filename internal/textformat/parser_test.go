@@ -160,3 +160,63 @@ func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
 		t.Fatalf("got error %q, want local.get missing-operand error", err.Error())
 	}
 }
+
+func TestParseTopLevelSExprs_Multiple(t *testing.T) {
+	src := `(module)
+(assert_return (invoke "f"))`
+
+	sxs, err := ParseTopLevelSExprs(src)
+	if err != nil {
+		t.Fatalf("ParseTopLevelSExprs failed: %v", err)
+	}
+	if len(sxs) != 2 {
+		t.Fatalf("got %d top-level expressions, want 2", len(sxs))
+	}
+	if got := sxs[0].HeadKeyword(); got != "module" {
+		t.Fatalf("first head keyword=%q, want module", got)
+	}
+	if got := sxs[1].HeadKeyword(); got != "assert_return" {
+		t.Fatalf("second head keyword=%q, want assert_return", got)
+	}
+}
+
+func TestParseModule_MultipleTopLevelExpressionsRejected(t *testing.T) {
+	src := `(module) (module)`
+
+	_, err := ParseModule(src)
+	if err == nil {
+		t.Fatal("expected ParseModule error, got nil")
+	}
+	if !strings.Contains(err.Error(), "expected exactly one top-level expression") {
+		t.Fatalf("got error %q, want top-level expression count error", err.Error())
+	}
+}
+
+func TestParseModuleSExpr(t *testing.T) {
+	src := `(module
+  (func (export "add") (param $a i32) (param $b i32) (result i32)
+    local.get $a
+    local.get $b
+    i32.add
+  )
+)`
+
+	sxs, err := ParseTopLevelSExprs(src)
+	if err != nil {
+		t.Fatalf("ParseTopLevelSExprs failed: %v", err)
+	}
+	if len(sxs) != 1 {
+		t.Fatalf("got %d top-level expressions, want 1", len(sxs))
+	}
+
+	m, err := ParseModuleSExpr(sxs[0])
+	if err != nil {
+		t.Fatalf("ParseModuleSExpr failed: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	if got := m.Funcs[0].Export; got != "add" {
+		t.Fatalf("func export=%q, want add", got)
+	}
+}

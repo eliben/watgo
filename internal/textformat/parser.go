@@ -14,13 +14,24 @@ type Parser struct {
 // It returns a parsed module and nil on success. On any failure, it returns
 // diag.ErrorList.
 func ParseModule(buf string) (*Module, error) {
-	lex := newLexer(buf)
-
-	sx, err := sexprifyTop(lex)
+	sxs, err := ParseTopLevelSExprs(buf)
 	if err != nil {
 		return nil, diag.FromError(err)
 	}
+	if len(sxs) != 1 {
+		return nil, diag.Fromf("expected exactly one top-level expression, found %d", len(sxs))
+	}
 
+	return ParseModuleSExpr(sxs[0])
+}
+
+// ParseModuleSExpr parses a single module SExpr.
+// It returns a parsed module and nil on success. On any failure, it returns
+// diag.ErrorList.
+func ParseModuleSExpr(sx *SExpr) (*Module, error) {
+	if sx == nil {
+		return nil, diag.Fromf("module s-expression is nil")
+	}
 	p := &Parser{}
 	m := p.parseModule(sx)
 
@@ -38,7 +49,7 @@ func (p *Parser) emitError(loc location, msg string) {
 // matchToken expects a list sx and matches element [idx] to the given tokname.
 // If successful, it returns the actual token value at [idx]; otherwise it emits
 // an error and returns "".
-func (p *Parser) matchElement(sx *sexpr, idx int, tokname tokenName) string {
+func (p *Parser) matchElement(sx *SExpr, idx int, tokname tokenName) string {
 	if !sx.IsList() {
 		p.emitError(sx.loc, "expected list")
 		return ""
@@ -61,7 +72,7 @@ func (p *Parser) matchElement(sx *sexpr, idx int, tokname tokenName) string {
 	return sub.tok.value
 }
 
-func (p *Parser) parseModule(sx *sexpr) *Module {
+func (p *Parser) parseModule(sx *SExpr) *Module {
 	if sx.HeadKeyword() != "module" {
 		p.emitError(sx.loc, "expected 'module'")
 		return nil
@@ -86,7 +97,7 @@ func (p *Parser) parseModule(sx *sexpr) *Module {
 	return m
 }
 
-func (p *Parser) parseFunction(sx *sexpr) *Function {
+func (p *Parser) parseFunction(sx *SExpr) *Function {
 	f := &Function{
 		TyUse: &TypeUse{},
 		loc:   sx.loc,
@@ -126,7 +137,7 @@ func (p *Parser) parseFunction(sx *sexpr) *Function {
 	return f
 }
 
-func (p *Parser) parseParamDecl(sx *sexpr) *ParamDecl {
+func (p *Parser) parseParamDecl(sx *SExpr) *ParamDecl {
 	pd := &ParamDecl{loc: sx.loc}
 
 	if len(sx.list) == 3 {
@@ -141,7 +152,7 @@ func (p *Parser) parseParamDecl(sx *sexpr) *ParamDecl {
 	return pd
 }
 
-func (p *Parser) parseResultDecl(sx *sexpr) *ResultDecl {
+func (p *Parser) parseResultDecl(sx *SExpr) *ResultDecl {
 	rd := &ResultDecl{loc: sx.loc}
 
 	if len(sx.list) == 2 {
@@ -153,7 +164,7 @@ func (p *Parser) parseResultDecl(sx *sexpr) *ResultDecl {
 	return rd
 }
 
-func (p *Parser) parseLocalDecl(sx *sexpr) *LocalDecl {
+func (p *Parser) parseLocalDecl(sx *SExpr) *LocalDecl {
 	ld := &LocalDecl{loc: sx.loc}
 
 	if len(sx.list) == 3 {
@@ -168,7 +179,7 @@ func (p *Parser) parseLocalDecl(sx *sexpr) *LocalDecl {
 	return ld
 }
 
-func (p *Parser) parseType(sx *sexpr) Type {
+func (p *Parser) parseType(sx *SExpr) Type {
 	if sx.IsToken() && sx.tok.name == KEYWORD {
 		name := sx.tok.value
 		if _, ok := basicTypes[name]; ok {
@@ -183,7 +194,7 @@ func (p *Parser) parseType(sx *sexpr) Type {
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It
 // expects all tokens from [idx] until the end of sx to represent instructions,
 // and will emit errors otherwise.
-func (p *Parser) parseInstrs(sx *sexpr, idx int) []Instruction {
+func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 	var out []Instruction
 
 	for cursor := idx; cursor < len(sx.list); {
@@ -229,7 +240,7 @@ func (p *Parser) parseInstrs(sx *sexpr, idx int) []Instruction {
 	return out
 }
 
-func (p *Parser) parseOperand(sx *sexpr) Operand {
+func (p *Parser) parseOperand(sx *SExpr) Operand {
 	if !sx.IsToken() {
 		return nil
 	}

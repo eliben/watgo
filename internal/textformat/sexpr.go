@@ -5,29 +5,29 @@ import (
 	"strings"
 )
 
-// sexpr represents textformat source as an s-expression with tokens.
+// SExpr represents textformat source as an s-expression with tokens.
 // Each s-expression is either a single token (IsToken returns true) or a list
 // of s-expressions (IsList returns true).
 // For an empty list (), IsList will be false and IsToken will be true; the
 // token name will be EMPTY.
-type sexpr struct {
+type SExpr struct {
 	tok  token
-	list []*sexpr
+	list []*SExpr
 	loc  location
 }
 
-func (sx *sexpr) IsToken() bool {
+func (sx *SExpr) IsToken() bool {
 	return len(sx.list) == 0
 }
 
-func (sx *sexpr) IsList() bool {
+func (sx *SExpr) IsList() bool {
 	return len(sx.list) > 0
 }
 
-// HeadKeyword returns the keyword value at the head of the sexpr; for sexprs
+// HeadKeyword returns the keyword value at the head of the SExpr; for SExprs
 // of the form (head foo bar ...), where `head` is a KEYWORD token, this returns
 // the value of the token. For other sexprs it returns ""
-func (sx *sexpr) HeadKeyword() string {
+func (sx *SExpr) HeadKeyword() string {
 	if !sx.IsList() {
 		return ""
 	}
@@ -39,7 +39,7 @@ func (sx *sexpr) HeadKeyword() string {
 	}
 }
 
-func (sx *sexpr) String() string {
+func (sx *SExpr) String() string {
 	if len(sx.list) > 0 {
 		var parts []string
 		for _, sub := range sx.list {
@@ -51,10 +51,16 @@ func (sx *sexpr) String() string {
 	}
 }
 
+// ParseTopLevelSExprs parses all top-level s-expressions in buf.
+func ParseTopLevelSExprs(buf string) ([]*SExpr, error) {
+	lex := newLexer(buf)
+	return sexprifyAll(lex)
+}
+
 // sexprifyTop is the entry point to this code; it takes a freshly created
 // lexer (from newLexer) and builds a sexpr representing the code. The lexer
 // will be exhausted.
-func sexprifyTop(lex *lexer) (*sexpr, error) {
+func sexprifyTop(lex *lexer) (*SExpr, error) {
 	tok := lex.nextToken()
 	if tok.name == LPAREN {
 		return sexprify(lex, tok)
@@ -63,11 +69,31 @@ func sexprifyTop(lex *lexer) (*sexpr, error) {
 	}
 }
 
+// sexprifyAll parses all top-level s-expressions from lex until EOF.
+func sexprifyAll(lex *lexer) ([]*SExpr, error) {
+	var out []*SExpr
+	for {
+		tok := lex.nextToken()
+		if tok.name == EOF {
+			return out, nil
+		}
+		if tok.name != LPAREN {
+			return nil, fmt.Errorf("at %s: %v: expected '('", tok.loc, tok.value)
+		}
+
+		sx, err := sexprify(lex, tok)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sx)
+	}
+}
+
 // sexprify is a helper for a single s-expression; it's called when '(' is
 // encountered and consumed, and returns a new sexpr. lparen is the consumed
 // '(' token.
-func sexprify(lex *lexer, lparen token) (*sexpr, error) {
-	sx := &sexpr{loc: lparen.loc}
+func sexprify(lex *lexer, lparen token) (*SExpr, error) {
+	sx := &SExpr{loc: lparen.loc}
 
 	for {
 		tok := lex.nextToken()
@@ -82,7 +108,7 @@ func sexprify(lex *lexer, lparen token) (*sexpr, error) {
 		} else if tok.name == EOF {
 			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
 		} else {
-			sx.list = append(sx.list, &sexpr{tok: tok, loc: tok.loc})
+			sx.list = append(sx.list, &SExpr{tok: tok, loc: tok.loc})
 		}
 	}
 }

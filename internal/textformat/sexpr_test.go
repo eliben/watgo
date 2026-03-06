@@ -46,7 +46,7 @@ func TestEmptyList(t *testing.T) {
 	}
 }
 
-func showForTest(sx *sexpr) string {
+func showForTest(sx *SExpr) string {
 	if len(sx.list) > 0 {
 		var parts []string
 		for _, sub := range sx.list {

@@ -129,8 +129,8 @@ Use table-driven tests heavily.
 
 ### 2. End-to-end testing with wasm spec
 
-Parse scripts from WebAssembly/spec to extract expected semantics, run them
-and compare. Can use a command-line runtime like 'node' or something similar
+Parse scripts `*.wast` from WebAssembly/spec to extract expected semantics, run
+them and compare. Can use a command-line runtime like 'node' or the Wazero API
 to execute.
 
 WASM spec tests live in https://github.com/WebAssembly/spec/tree/main/test/core
