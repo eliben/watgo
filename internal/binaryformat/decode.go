@@ -292,6 +292,22 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		}
 
 		switch op {
+		case opI32ConstCode:
+			value, err := readS32(r)
+			if err != nil {
+				diags.Addf("code[%d]: read i32 immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: value})
+		case opI64ConstCode:
+			value, err := readS64(r)
+			if err != nil {
+				diags.Addf("code[%d]: read i64 immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: value})
+		case opDropCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
 		case opLocalGetCode:
 			localIndex, err := readU32(r)
 			if err != nil {
@@ -301,6 +317,24 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
 		case opI32AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
+		case opI32SubCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub})
+		case opI32MulCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul})
+		case opI32DivSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS})
+		case opI32DivUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
+		case opI64AddCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
+		case opI64SubCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub})
+		case opI64MulCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul})
+		case opI64DivSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS})
+		case opI64DivUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
 		case opEndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
 			return out
@@ -342,6 +376,8 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 	switch code {
 	case valueTypeI32Code:
 		return wasmir.ValueTypeI32, true
+	case valueTypeI64Code:
+		return wasmir.ValueTypeI64, true
 	default:
 		return 0, false
 	}
@@ -405,6 +441,44 @@ func readU32(r *bytes.Reader) (uint32, error) {
 		return 0, fmt.Errorf("u32 overflow: %d", v)
 	}
 	return uint32(v), nil
+}
+
+// readS32 reads a signed 32-bit LEB128 value from r.
+// It rejects values that do not fit in int32.
+func readS32(r *bytes.Reader) (int32, error) {
+	v, err := readS64(r)
+	if err != nil {
+		return 0, err
+	}
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return 0, fmt.Errorf("overflows a 32-bit integer")
+	}
+	return int32(v), nil
+}
+
+// readS64 reads a signed 64-bit LEB128 value from r.
+func readS64(r *bytes.Reader) (int64, error) {
+	var result int64
+	var shift uint
+
+	for i := 0; i < 10; i++ {
+		b, err := readByte(r)
+		if err != nil {
+			return 0, err
+		}
+
+		result |= int64(b&0x7f) << shift
+		shift += 7
+
+		if (b & 0x80) == 0 {
+			if shift < 64 && (b&0x40) != 0 {
+				result |= ^int64(0) << shift
+			}
+			return result, nil
+		}
+	}
+
+	return 0, fmt.Errorf("overflows a 64-bit integer")
 }
 
 // readName reads a WASM name from r as: u32 byte length followed by UTF-8

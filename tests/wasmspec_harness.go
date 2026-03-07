@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/binaryformat"
 	"github.com/eliben/watgo/internal/textformat"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -699,6 +701,13 @@ func (r *scriptRunner) compileAndInstantiate(watSrc string) (api.Module, error) 
 		return nil, err
 	}
 
+	// For valid modules, enforce binary pipeline stability:
+	// encode -> decode -> encode -> decode -> encode must reach a fixed point.
+	wasmBytes, err = roundTripFixedPoint(wasmBytes)
+	if err != nil {
+		return nil, err
+	}
+
 	compiled, err := r.runtime.CompileModule(r.ctx, wasmBytes)
 	if err != nil {
 		return nil, err
@@ -710,6 +719,33 @@ func (r *scriptRunner) compileAndInstantiate(watSrc string) (api.Module, error) 
 		return nil, err
 	}
 	return mod, nil
+}
+
+// roundTripFixedPoint verifies a decode/encode fixed point on a wasm module
+// binary and returns the stable re-encoded bytes.
+func roundTripFixedPoint(wasm []byte) ([]byte, error) {
+	ir1, err := binaryformat.DecodeModule(wasm)
+	if err != nil {
+		return nil, fmt.Errorf("decode pass 1: %w", err)
+	}
+	wasm1, err := binaryformat.EncodeModule(ir1)
+	if err != nil {
+		return nil, fmt.Errorf("encode pass 1: %w", err)
+	}
+
+	ir2, err := binaryformat.DecodeModule(wasm1)
+	if err != nil {
+		return nil, fmt.Errorf("decode pass 2: %w", err)
+	}
+	wasm2, err := binaryformat.EncodeModule(ir2)
+	if err != nil {
+		return nil, fmt.Errorf("encode pass 2: %w", err)
+	}
+
+	if !bytes.Equal(wasm1, wasm2) {
+		return nil, fmt.Errorf("roundtrip not idempotent: pass1 len=%d pass2 len=%d", len(wasm1), len(wasm2))
+	}
+	return wasm1, nil
 }
 
 // replaceCurrent swaps the current module instance, closing any previous one.

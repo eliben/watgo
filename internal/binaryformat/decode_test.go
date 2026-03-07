@@ -2,8 +2,11 @@ package binaryformat
 
 import (
 	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -87,4 +90,49 @@ func TestDecodeEncodeRoundTrip_AddModule(t *testing.T) {
 	if !bytes.Equal(got, orig) {
 		t.Fatalf("roundtrip mismatch:\n got=%x\nwant=%x", got, orig)
 	}
+}
+
+func TestDecodeModule_BadMagic(t *testing.T) {
+	bin := canonicalAddModuleBytes()
+	bin[0] = 0xff
+
+	_, err := DecodeModule(bin)
+	if err == nil {
+		t.Fatalf("DecodeModule succeeded, want error")
+	}
+
+	var errs diag.ErrorList
+	if !errors.As(err, &errs) {
+		t.Fatalf("DecodeModule error type = %T, want diag.ErrorList", err)
+	}
+	if !errorListContains(errs, "bad wasm magic") {
+		t.Fatalf("expected bad magic diagnostic, got: %v", err)
+	}
+}
+
+func TestDecodeModule_UnsupportedOpcode(t *testing.T) {
+	bin := canonicalAddModuleBytes()
+	bin[len(bin)-2] = 0xff // Replace i32.add opcode with unsupported opcode.
+
+	_, err := DecodeModule(bin)
+	if err == nil {
+		t.Fatalf("DecodeModule succeeded, want error")
+	}
+
+	var errs diag.ErrorList
+	if !errors.As(err, &errs) {
+		t.Fatalf("DecodeModule error type = %T, want diag.ErrorList", err)
+	}
+	if !errorListContains(errs, "unsupported opcode 0xff") {
+		t.Fatalf("expected unsupported opcode diagnostic, got: %v", err)
+	}
+}
+
+func errorListContains(errs diag.ErrorList, needle string) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), needle) {
+			return true
+		}
+	}
+	return false
 }
