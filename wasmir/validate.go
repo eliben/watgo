@@ -108,6 +108,31 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
 
+		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("instruction %d: %s needs 2 operands", i, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
+				diags.Addf("instruction %d: %s expects f32 operands", i, name)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeF32)
+
+		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("instruction %d: %s needs 1 operand", i, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF32 {
+				diags.Addf("instruction %d: %s expects f32 operand", i, name)
+				continue
+			}
+			// Unary f32 operators preserve top-of-stack type.
+
 		case InstrEnd:
 			if i != len(f.Body)-1 {
 				diags.Addf("instruction %d: end must be last", i)
@@ -161,6 +186,28 @@ func instrName(kind InstrKind) string {
 		return "i64.div_s"
 	case InstrI64DivU:
 		return "i64.div_u"
+	case InstrF32Add:
+		return "f32.add"
+	case InstrF32Sub:
+		return "f32.sub"
+	case InstrF32Mul:
+		return "f32.mul"
+	case InstrF32Div:
+		return "f32.div"
+	case InstrF32Sqrt:
+		return "f32.sqrt"
+	case InstrF32Min:
+		return "f32.min"
+	case InstrF32Max:
+		return "f32.max"
+	case InstrF32Ceil:
+		return "f32.ceil"
+	case InstrF32Floor:
+		return "f32.floor"
+	case InstrF32Trunc:
+		return "f32.trunc"
+	case InstrF32Nearest:
+		return "f32.nearest"
 	case InstrEnd:
 		return "end"
 	default:

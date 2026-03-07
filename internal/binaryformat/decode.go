@@ -335,6 +335,28 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS})
 		case opI64DivUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
+		case opF32AddCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add})
+		case opF32SubCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub})
+		case opF32MulCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul})
+		case opF32DivCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div})
+		case opF32SqrtCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt})
+		case opF32MinCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min})
+		case opF32MaxCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max})
+		case opF32CeilCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil})
+		case opF32FloorCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor})
+		case opF32TruncCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc})
+		case opF32NearestCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest})
 		case opEndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
 			return out
@@ -378,6 +400,8 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeI32, true
 	case valueTypeI64Code:
 		return wasmir.ValueTypeI64, true
+	case valueTypeF32Code:
+		return wasmir.ValueTypeF32, true
 	default:
 		return 0, false
 	}

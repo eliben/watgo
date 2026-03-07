@@ -316,10 +316,10 @@ func (lex *lexer) scanNumber() token {
 		}
 	}
 
-	// Finished parsing a number; this could either be the end of it, or a float
-	// if the next rune is a decimal dot.
-
+	// Finished parsing a number; this could either be the end of it, or a float.
+	seenDot := false
 	if lex.r == '.' {
+		seenDot = true
 		lex.next()
 
 		// Either a fractional part maybe followed by +/- exponent, or directly
@@ -336,25 +336,28 @@ func (lex *lexer) scanNumber() token {
 			}
 		}
 
-		// The exponent is preceded by [e|E] for decimal floats and for [p|P] for
-		// hex floats.
-		if (hex && (lex.r == 'p' || lex.r == 'P')) || (lex.r == 'e' || lex.r == 'E') {
-			lex.next()
-			if isSign(lex.r) {
-				lex.next()
-			}
-			for isDigit(lex.r) {
-				lex.next()
-			}
-		}
-
-		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
-	} else {
-		if hadSign && lex.rpos-startpos == 1 {
-			return lex.errorToken("lonely sign", startloc)
-		}
-		return token{INT, lex.buf[startpos:lex.rpos], startloc}
 	}
+
+	// The exponent is preceded by [e|E] for decimal floats and [p|P] for hex
+	// floats, and can appear with or without a fractional dot.
+	if (hex && (lex.r == 'p' || lex.r == 'P')) || (!hex && (lex.r == 'e' || lex.r == 'E')) {
+		lex.next()
+		if isSign(lex.r) {
+			lex.next()
+		}
+		for isDigit(lex.r) {
+			lex.next()
+		}
+		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
+	}
+
+	if seenDot {
+		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
+	}
+	if hadSign && lex.rpos-startpos == 1 {
+		return lex.errorToken("lonely sign", startloc)
+	}
+	return token{INT, lex.buf[startpos:lex.rpos], startloc}
 }
 
 // isIdChar checks whether r is in the idchar group defined by the wasm

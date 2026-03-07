@@ -5,6 +5,7 @@ type ValueType byte
 const (
 	ValueTypeI32 ValueType = iota
 	ValueTypeI64
+	ValueTypeF32
 )
 
 type InstrKind uint8
@@ -24,6 +25,17 @@ const (
 	InstrI64Mul
 	InstrI64DivS
 	InstrI64DivU
+	InstrF32Add
+	InstrF32Sub
+	InstrF32Mul
+	InstrF32Div
+	InstrF32Sqrt
+	InstrF32Min
+	InstrF32Max
+	InstrF32Ceil
+	InstrF32Floor
+	InstrF32Trunc
+	InstrF32Nearest
 	InstrEnd
 )
 

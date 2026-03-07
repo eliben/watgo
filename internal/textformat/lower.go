@@ -251,6 +251,83 @@ func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
 
+		case "f32.add":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.add expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add})
+
+		case "f32.sub":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.sub expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub})
+
+		case "f32.mul":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.mul expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul})
+
+		case "f32.div":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.div expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div})
+
+		case "f32.sqrt":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.sqrt expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt})
+
+		case "f32.min":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.min expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min})
+
+		case "f32.max":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.max expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max})
+
+		case "f32.ceil":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.ceil expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil})
+
+		case "f32.floor":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.floor expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor})
+
+		case "f32.trunc":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.trunc expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc})
+
+		case "f32.nearest":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: f32.nearest expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest})
+
 		default:
 			diags.Addf("func[%d]: unsupported instruction %q", funcIdx, pi.Name)
 		}
@@ -373,6 +450,8 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeI32, true
 	case "i64":
 		return wasmir.ValueTypeI64, true
+	case "f32":
+		return wasmir.ValueTypeF32, true
 	default:
 		return 0, false
 	}

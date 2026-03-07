@@ -28,26 +28,39 @@ const (
 	valueTypeI32Code byte = 0x7f
 	// valueTypeI64Code is the binary encoding of i64.
 	valueTypeI64Code byte = 0x7e
+	// valueTypeF32Code is the binary encoding of f32.
+	valueTypeF32Code byte = 0x7d
 
 	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
 
 	// Opcodes for the currently supported instruction subset.
-	opI32ConstCode byte = 0x41
-	opI64ConstCode byte = 0x42
-	opDropCode     byte = 0x1a
-	opLocalGetCode byte = 0x20
-	opI32AddCode   byte = 0x6a
-	opI32SubCode   byte = 0x6b
-	opI32MulCode   byte = 0x6c
-	opI32DivSCode  byte = 0x6d
-	opI32DivUCode  byte = 0x6e
-	opI64AddCode   byte = 0x7c
-	opI64SubCode   byte = 0x7d
-	opI64MulCode   byte = 0x7e
-	opI64DivSCode  byte = 0x7f
-	opI64DivUCode  byte = 0x80
-	opEndCode      byte = 0x0b
+	opI32ConstCode   byte = 0x41
+	opI64ConstCode   byte = 0x42
+	opDropCode       byte = 0x1a
+	opLocalGetCode   byte = 0x20
+	opI32AddCode     byte = 0x6a
+	opI32SubCode     byte = 0x6b
+	opI32MulCode     byte = 0x6c
+	opI32DivSCode    byte = 0x6d
+	opI32DivUCode    byte = 0x6e
+	opI64AddCode     byte = 0x7c
+	opI64SubCode     byte = 0x7d
+	opI64MulCode     byte = 0x7e
+	opI64DivSCode    byte = 0x7f
+	opI64DivUCode    byte = 0x80
+	opF32CeilCode    byte = 0x8d
+	opF32FloorCode   byte = 0x8e
+	opF32TruncCode   byte = 0x8f
+	opF32NearestCode byte = 0x90
+	opF32SqrtCode    byte = 0x91
+	opF32AddCode     byte = 0x92
+	opF32SubCode     byte = 0x93
+	opF32MulCode     byte = 0x94
+	opF32DivCode     byte = 0x95
+	opF32MinCode     byte = 0x96
+	opF32MaxCode     byte = 0x97
+	opEndCode        byte = 0x0b
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -257,6 +270,28 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI64DivSCode)
 	case wasmir.InstrI64DivU:
 		out.WriteByte(opI64DivUCode)
+	case wasmir.InstrF32Add:
+		out.WriteByte(opF32AddCode)
+	case wasmir.InstrF32Sub:
+		out.WriteByte(opF32SubCode)
+	case wasmir.InstrF32Mul:
+		out.WriteByte(opF32MulCode)
+	case wasmir.InstrF32Div:
+		out.WriteByte(opF32DivCode)
+	case wasmir.InstrF32Sqrt:
+		out.WriteByte(opF32SqrtCode)
+	case wasmir.InstrF32Min:
+		out.WriteByte(opF32MinCode)
+	case wasmir.InstrF32Max:
+		out.WriteByte(opF32MaxCode)
+	case wasmir.InstrF32Ceil:
+		out.WriteByte(opF32CeilCode)
+	case wasmir.InstrF32Floor:
+		out.WriteByte(opF32FloorCode)
+	case wasmir.InstrF32Trunc:
+		out.WriteByte(opF32TruncCode)
+	case wasmir.InstrF32Nearest:
+		out.WriteByte(opF32NearestCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:
@@ -270,6 +305,8 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return valueTypeI32Code, true
 	case wasmir.ValueTypeI64:
 		return valueTypeI64Code, true
+	case wasmir.ValueTypeF32:
+		return valueTypeF32Code, true
 	default:
 		return 0, false
 	}

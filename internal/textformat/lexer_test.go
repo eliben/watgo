@@ -98,11 +98,11 @@ func TestLexer(t *testing.T) {
 			}},
 
 		{"hex floats",
-			`0xfa.3fe 0x13.
+			`0xfa.3fe 0x13. 0x0p+0
 		-0xD1.p+21 +0x01EEF.20FEEP-100
 		`,
 			[]token{
-				{FLOAT, "0xfa.3fe", location{1, 1}}, {FLOAT, "0x13.", location{1, 10}},
+				{FLOAT, "0xfa.3fe", location{1, 1}}, {FLOAT, "0x13.", location{1, 10}}, {FLOAT, "0x0p+0", location{1, 16}},
 				{FLOAT, "-0xD1.p+21", location{2, 3}}, {FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}},
 			}},
 
