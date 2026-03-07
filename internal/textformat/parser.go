@@ -223,7 +223,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 			operand := p.parseOperand(operandSx)
 			switch operand.(type) {
 			case *IdOperand, *IntOperand:
-				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}})
+				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
 			default:
 				p.emitError(operandSx.loc, "local.get operand must be ID or INT")
 			}
@@ -232,7 +232,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 		default:
 			// For this initial subset, parse all other instructions as plain
 			// zero-operand instructions.
-			out = append(out, &PlainInstr{Name: name})
+			out = append(out, &PlainInstr{Name: name, loc: elem.loc})
 			cursor++
 		}
 	}
@@ -285,7 +285,7 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) []Instruction {
 		operands = append(operands, op)
 	}
 
-	out = append(out, &PlainInstr{Name: name, Operands: operands})
+	out = append(out, &PlainInstr{Name: name, Operands: operands, loc: head.loc})
 	return out
 }
 
@@ -296,15 +296,15 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 
 	switch sx.tok.name {
 	case ID:
-		return &IdOperand{Value: sx.tok.value}
+		return &IdOperand{Value: sx.tok.value, loc: sx.loc}
 	case INT:
-		return &IntOperand{Value: sx.tok.value}
+		return &IntOperand{Value: sx.tok.value, loc: sx.loc}
 	case FLOAT:
-		return &FloatOperand{Value: sx.tok.value}
+		return &FloatOperand{Value: sx.tok.value, loc: sx.loc}
 	case STRING:
-		return &StringOperand{Value: sx.tok.value}
+		return &StringOperand{Value: sx.tok.value, loc: sx.loc}
 	case KEYWORD:
-		return &KeywordOperand{Value: sx.tok.value}
+		return &KeywordOperand{Value: sx.tok.value, loc: sx.loc}
 	default:
 		return nil
 	}

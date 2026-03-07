@@ -1,5 +1,6 @@
 package wasmir
 
+import "fmt"
 import "github.com/eliben/watgo/diag"
 
 // ValidateModule validates m.
@@ -44,13 +45,17 @@ func ValidateModule(m *Module) error {
 // local-index bounds and stack/result typing.
 func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 	var diags diag.ErrorList
+	funcCtx := "function"
+	if f.SourceLoc != "" {
+		funcCtx = "function at " + f.SourceLoc
+	}
 
 	if len(f.Body) == 0 {
-		diags.Addf("empty function body")
+		diags.Addf("%s: empty function body", funcCtx)
 		return diags
 	}
 	if f.Body[len(f.Body)-1].Kind != InstrEnd {
-		diags.Addf("function body must terminate with end")
+		diags.Addf("%s: function body must terminate with end", funcCtx)
 		return diags
 	}
 
@@ -61,10 +66,14 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 	stack := make([]ValueType, 0)
 
 	for i, ins := range f.Body {
+		insCtx := fmt.Sprintf("instruction %d", i)
+		if ins.SourceLoc != "" {
+			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
+		}
 		switch ins.Kind {
 		case InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
-				diags.Addf("instruction %d: local index %d out of range", i, ins.LocalIndex)
+				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
 			stack = append(stack, locals[ins.LocalIndex])
@@ -77,7 +86,7 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 
 		case InstrDrop:
 			if len(stack) < 1 {
-				diags.Addf("instruction %d: drop needs 1 operand", i)
+				diags.Addf("%s: drop needs 1 operand", insCtx)
 				continue
 			}
 			stack = stack[:len(stack)-1]
@@ -85,11 +94,11 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("instruction %d: %s needs 2 operands", i, name)
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("instruction %d: %s expects i32 operands", i, name)
+				diags.Addf("%s: %s expects i32 operands", insCtx, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -98,11 +107,11 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("instruction %d: %s needs 2 operands", i, name)
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
-				diags.Addf("instruction %d: %s expects i64 operands", i, name)
+				diags.Addf("%s: %s expects i64 operands", insCtx, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -111,11 +120,11 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("instruction %d: %s needs 2 operands", i, name)
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
-				diags.Addf("instruction %d: %s expects f32 operands", i, name)
+				diags.Addf("%s: %s expects f32 operands", insCtx, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -124,32 +133,32 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest:
 			name := instrName(ins.Kind)
 			if len(stack) < 1 {
-				diags.Addf("instruction %d: %s needs 1 operand", i, name)
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeF32 {
-				diags.Addf("instruction %d: %s expects f32 operand", i, name)
+				diags.Addf("%s: %s expects f32 operand", insCtx, name)
 				continue
 			}
 			// Unary f32 operators preserve top-of-stack type.
 
 		case InstrEnd:
 			if i != len(f.Body)-1 {
-				diags.Addf("instruction %d: end must be last", i)
+				diags.Addf("%s: end must be last", insCtx)
 			}
 
 		default:
-			diags.Addf("instruction %d: unsupported instruction kind %d", i, ins.Kind)
+			diags.Addf("%s: unsupported instruction kind %d", insCtx, ins.Kind)
 		}
 	}
 
 	if len(stack) != len(ft.Results) {
-		diags.Addf("result arity mismatch: got %d stack values, want %d", len(stack), len(ft.Results))
+		diags.Addf("%s: result arity mismatch: got %d stack values, want %d", funcCtx, len(stack), len(ft.Results))
 		return diags
 	}
 	for i := range stack {
 		if stack[i] != ft.Results[i] {
-			diags.Addf("result type mismatch at %d: got %d want %d", i, stack[i], ft.Results[i])
+			diags.Addf("%s: result type mismatch at %d: got %d want %d", funcCtx, i, stack[i], ft.Results[i])
 		}
 	}
 

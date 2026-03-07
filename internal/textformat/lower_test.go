@@ -114,6 +114,9 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 	if !errorListContains(errs, "invalid local.get operand") {
 		t.Fatalf("got errors %q, want invalid local.get operand", errs.Error())
 	}
+	if !errorListContains(errs, "3:15") {
+		t.Fatalf("got errors %q, want source location 3:15", errs.Error())
+	}
 }
 
 func TestLowerModule_UnsupportedType(t *testing.T) {

@@ -57,9 +57,10 @@ type FuncType struct {
 }
 
 type Function struct {
-	TypeIdx uint32
-	Locals  []ValueType
-	Body    []Instruction
+	TypeIdx   uint32
+	Locals    []ValueType
+	Body      []Instruction
+	SourceLoc string
 }
 
 type Export struct {
@@ -73,4 +74,5 @@ type Instruction struct {
 	LocalIndex uint32
 	I32Const   int32
 	I64Const   int64
+	SourceLoc  string
 }

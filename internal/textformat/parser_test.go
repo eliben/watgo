@@ -100,6 +100,9 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	if instr0.Name != "local.get" {
 		t.Fatalf("instr0 name=%q, want local.get", instr0.Name)
 	}
+	if got := instr0.Loc(); got != "3:5" {
+		t.Fatalf("instr0 loc=%q, want 3:5", got)
+	}
 	if len(instr0.Operands) != 1 {
 		t.Fatalf("instr0 has %d operands, want 1", len(instr0.Operands))
 	}
@@ -109,6 +112,9 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	}
 	if op0.Value != "$a" {
 		t.Fatalf("instr0 operand value=%q, want $a", op0.Value)
+	}
+	if got := op0.Loc(); got != "3:15" {
+		t.Fatalf("instr0 operand loc=%q, want 3:15", got)
 	}
 
 	instr1 := mustPlainInstr(t, f.Instrs[1])

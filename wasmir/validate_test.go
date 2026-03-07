@@ -70,6 +70,21 @@ func TestValidateModule_LocalIndexOutOfRange(t *testing.T) {
 	}
 }
 
+func TestValidateModule_IncludesInstructionSourceLocation(t *testing.T) {
+	m := makeValidAddModule()
+	m.Funcs[0].Body[1].LocalIndex = 99
+	m.Funcs[0].Body[1].SourceLoc = "12:34"
+
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "12:34") {
+		t.Fatalf("got errors %q, want source location 12:34", errs.Error())
+	}
+}
+
 func TestValidateModule_StackUnderflow(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body = []Instruction{{Kind: InstrI32Add}, {Kind: InstrEnd}}

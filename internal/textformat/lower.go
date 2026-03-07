@@ -51,14 +51,14 @@ func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.Err
 		}
 		vt, ok := lowerValueType(pd.Ty)
 		if !ok {
-			diags.Addf("func[%d]: unsupported param type %q", funcIdx, pd.Ty)
+			addLowerDiag(diags, funcIdx, pd.loc.String(), "unsupported param type %q", pd.Ty)
 			continue
 		}
 		params = append(params, vt)
 
 		if pd.Id != "" {
 			if _, exists := localsByName[pd.Id]; exists {
-				diags.Addf("func[%d]: duplicate param id %q", funcIdx, pd.Id)
+				addLowerDiag(diags, funcIdx, pd.loc.String(), "duplicate param id %q", pd.Id)
 			} else {
 				localsByName[pd.Id] = nextLocalIndex
 			}
@@ -73,7 +73,7 @@ func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.Err
 		}
 		vt, ok := lowerValueType(rd.Ty)
 		if !ok {
-			diags.Addf("func[%d]: unsupported result type %q", funcIdx, rd.Ty)
+			addLowerDiag(diags, funcIdx, rd.loc.String(), "unsupported result type %q", rd.Ty)
 			continue
 		}
 		results = append(results, vt)
@@ -86,14 +86,14 @@ func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.Err
 		}
 		vt, ok := lowerValueType(ld.Ty)
 		if !ok {
-			diags.Addf("func[%d]: unsupported local type %q", funcIdx, ld.Ty)
+			addLowerDiag(diags, funcIdx, ld.loc.String(), "unsupported local type %q", ld.Ty)
 			continue
 		}
 		locals = append(locals, vt)
 
 		if ld.Id != "" {
 			if _, exists := localsByName[ld.Id]; exists {
-				diags.Addf("func[%d]: duplicate local id %q", funcIdx, ld.Id)
+				addLowerDiag(diags, funcIdx, ld.loc.String(), "duplicate local id %q", ld.Id)
 			} else {
 				localsByName[ld.Id] = nextLocalIndex
 			}
@@ -105,12 +105,13 @@ func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.Err
 	out.Types = append(out.Types, wasmir.FuncType{Params: params, Results: results})
 
 	body := lowerInstrs(f.Instrs, funcIdx, localsByName, diags)
-	body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd})
+	body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: f.loc.String()})
 
 	out.Funcs = append(out.Funcs, wasmir.Function{
-		TypeIdx: typeIdx,
-		Locals:  locals,
-		Body:    body,
+		TypeIdx:   typeIdx,
+		Locals:    locals,
+		Body:      body,
+		SourceLoc: f.loc.String(),
 	})
 
 	if f.Export != "" {
@@ -135,201 +136,202 @@ func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint
 			diags.Addf("func[%d]: unsupported instruction type %T", funcIdx, instr)
 			continue
 		}
+		instrLoc := pi.Loc()
 
 		switch pi.Name {
 		case "local.get":
 			if len(pi.Operands) != 1 {
-				diags.Addf("func[%d]: local.get expects 1 operand", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "local.get expects 1 operand")
 				continue
 			}
 
 			localIndex, ok := lowerLocalIndexOperand(pi.Operands[0], localsByName)
 			if !ok {
-				diags.Addf("func[%d]: invalid local.get operand", funcIdx)
+				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid local.get operand")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex, SourceLoc: instrLoc})
 
 		case "i32.const":
 			if len(pi.Operands) != 1 {
-				diags.Addf("func[%d]: i32.const expects 1 operand", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.const expects 1 operand")
 				continue
 			}
 			imm, ok := lowerI32ConstOperand(pi.Operands[0])
 			if !ok {
-				diags.Addf("func[%d]: invalid i32.const operand", funcIdx)
+				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid i32.const operand")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm, SourceLoc: instrLoc})
 
 		case "i64.const":
 			if len(pi.Operands) != 1 {
-				diags.Addf("func[%d]: i64.const expects 1 operand", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.const expects 1 operand")
 				continue
 			}
 			imm, ok := lowerI64ConstOperand(pi.Operands[0])
 			if !ok {
-				diags.Addf("func[%d]: invalid i64.const operand", funcIdx)
+				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid i64.const operand")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm, SourceLoc: instrLoc})
 
 		case "drop":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: drop expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "drop expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop, SourceLoc: instrLoc})
 
 		case "i32.add":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i32.add expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.add expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add, SourceLoc: instrLoc})
 
 		case "i32.sub":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i32.sub expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.sub expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub, SourceLoc: instrLoc})
 
 		case "i32.mul":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i32.mul expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.mul expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul, SourceLoc: instrLoc})
 
 		case "i32.div_s":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i32.div_s expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.div_s expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS, SourceLoc: instrLoc})
 
 		case "i32.div_u":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i32.div_u expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i32.div_u expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU, SourceLoc: instrLoc})
 
 		case "i64.add":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i64.add expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.add expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add, SourceLoc: instrLoc})
 
 		case "i64.sub":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i64.sub expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.sub expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub, SourceLoc: instrLoc})
 
 		case "i64.mul":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i64.mul expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.mul expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul, SourceLoc: instrLoc})
 
 		case "i64.div_s":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i64.div_s expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.div_s expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS, SourceLoc: instrLoc})
 
 		case "i64.div_u":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: i64.div_u expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "i64.div_u expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU, SourceLoc: instrLoc})
 
 		case "f32.add":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.add expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.add expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add, SourceLoc: instrLoc})
 
 		case "f32.sub":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.sub expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.sub expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub, SourceLoc: instrLoc})
 
 		case "f32.mul":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.mul expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.mul expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul, SourceLoc: instrLoc})
 
 		case "f32.div":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.div expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.div expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div, SourceLoc: instrLoc})
 
 		case "f32.sqrt":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.sqrt expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.sqrt expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt, SourceLoc: instrLoc})
 
 		case "f32.min":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.min expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.min expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min, SourceLoc: instrLoc})
 
 		case "f32.max":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.max expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.max expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max, SourceLoc: instrLoc})
 
 		case "f32.ceil":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.ceil expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.ceil expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil, SourceLoc: instrLoc})
 
 		case "f32.floor":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.floor expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.floor expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor, SourceLoc: instrLoc})
 
 		case "f32.trunc":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.trunc expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.trunc expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc, SourceLoc: instrLoc})
 
 		case "f32.nearest":
 			if len(pi.Operands) != 0 {
-				diags.Addf("func[%d]: f32.nearest expects no operands", funcIdx)
+				addLowerDiag(diags, funcIdx, instrLoc, "f32.nearest expects no operands")
 				continue
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest, SourceLoc: instrLoc})
 
 		default:
-			diags.Addf("func[%d]: unsupported instruction %q", funcIdx, pi.Name)
+			addLowerDiag(diags, funcIdx, instrLoc, "unsupported instruction %q", pi.Name)
 		}
 	}
 
@@ -455,4 +457,22 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// addLowerDiag appends one lowering diagnostic prefixed with function context
+// and optional source location.
+// If loc is non-empty, the message format is:
+//
+//	"func[%d] at <loc>: <message>"
+//
+// Otherwise:
+//
+//	"func[%d]: <message>"
+func addLowerDiag(diags *diag.ErrorList, funcIdx int, loc string, format string, args ...any) {
+	allArgs := append([]any{funcIdx}, args...)
+	if loc != "" {
+		diags.Addf("func[%d] at %s: "+format, append([]any{funcIdx, loc}, args...)...)
+		return
+	}
+	diags.Addf("func[%d]: "+format, allArgs...)
 }

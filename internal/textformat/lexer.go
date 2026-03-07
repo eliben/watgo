@@ -21,6 +21,11 @@ type location struct {
 }
 
 func (loc location) String() string {
+	// The zero-value location means "unknown / unavailable". Rendering it as
+	// empty avoids noisy "0:0" prefixes in diagnostics.
+	if loc.line == 0 {
+		return ""
+	}
 	return fmt.Sprintf("%v:%v", loc.line, loc.column)
 }
 
