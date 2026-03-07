@@ -26,17 +26,27 @@ const (
 
 	// valueTypeI32Code is the binary encoding of i32.
 	valueTypeI32Code byte = 0x7f
+	// valueTypeI64Code is the binary encoding of i64.
+	valueTypeI64Code byte = 0x7e
 
 	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
 
 	// Opcodes for the currently supported instruction subset.
+	opI32ConstCode byte = 0x41
+	opI64ConstCode byte = 0x42
+	opDropCode     byte = 0x1a
 	opLocalGetCode byte = 0x20
 	opI32AddCode   byte = 0x6a
 	opI32SubCode   byte = 0x6b
 	opI32MulCode   byte = 0x6c
 	opI32DivSCode  byte = 0x6d
 	opI32DivUCode  byte = 0x6e
+	opI64AddCode   byte = 0x7c
+	opI64SubCode   byte = 0x7d
+	opI64MulCode   byte = 0x7e
+	opI64DivSCode  byte = 0x7f
+	opI64DivUCode  byte = 0x80
 	opEndCode      byte = 0x0b
 )
 
@@ -216,6 +226,14 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
+	case wasmir.InstrI32Const:
+		out.WriteByte(opI32ConstCode)
+		writeSLEB128(out, int64(instr.I32Const))
+	case wasmir.InstrI64Const:
+		out.WriteByte(opI64ConstCode)
+		writeSLEB128(out, instr.I64Const)
+	case wasmir.InstrDrop:
+		out.WriteByte(opDropCode)
 	case wasmir.InstrLocalGet:
 		out.WriteByte(opLocalGetCode)
 		writeULEB128(out, instr.LocalIndex)
@@ -229,6 +247,16 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32DivSCode)
 	case wasmir.InstrI32DivU:
 		out.WriteByte(opI32DivUCode)
+	case wasmir.InstrI64Add:
+		out.WriteByte(opI64AddCode)
+	case wasmir.InstrI64Sub:
+		out.WriteByte(opI64SubCode)
+	case wasmir.InstrI64Mul:
+		out.WriteByte(opI64MulCode)
+	case wasmir.InstrI64DivS:
+		out.WriteByte(opI64DivSCode)
+	case wasmir.InstrI64DivU:
+		out.WriteByte(opI64DivUCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:
@@ -240,6 +268,8 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 	switch vt {
 	case wasmir.ValueTypeI32:
 		return valueTypeI32Code, true
+	case wasmir.ValueTypeI64:
+		return valueTypeI64Code, true
 	default:
 		return 0, false
 	}
@@ -259,4 +289,33 @@ func writeULEB128(out *bytes.Buffer, v uint32) {
 	var buf [binary.MaxVarintLen32]byte
 	n := binary.PutUvarint(buf[:], uint64(v))
 	out.Write(buf[:n])
+}
+
+// writeSLEB128 writes v as a WebAssembly signed LEB128 integer.
+//
+// Important: this cannot use encoding/binary's PutVarint/AppendVarint.
+// Those functions implement Go's generic signed varint format (with
+// zig-zag-style mapping), which intentionally differs from WASM's signed
+// LEB128 byte encoding used for immediates in the binary format.
+//
+// Example mismatch:
+//   - value -1 in WASM SLEB128 is 0x7f
+//   - binary.PutVarint(-1) emits 0x01
+//
+// For correctness and round-tripping with other WASM tools/runtimes, we emit
+// canonical signed LEB128 bytes directly here.
+func writeSLEB128(out *bytes.Buffer, v int64) {
+	for {
+		b := byte(v & 0x7f)
+		v >>= 7
+
+		signBitSet := (b & 0x40) != 0
+		done := (v == 0 && !signBitSet) || (v == -1 && signBitSet)
+		if done {
+			out.WriteByte(b)
+			return
+		}
+
+		out.WriteByte(b | 0x80)
+	}
 }

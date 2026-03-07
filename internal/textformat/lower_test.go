@@ -118,7 +118,7 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 
 func TestLowerModule_UnsupportedType(t *testing.T) {
 	wat := `(module
-  (func (param $a i64) (result i32)
+  (func (param $a f32) (result i32)
     local.get $a
   )
 )`
@@ -140,7 +140,7 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 
 func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	wat := `(module
-  (func (param $a i64) (result i32)
+  (func (param $a f32) (result i32)
     i32.and
   )
 )`

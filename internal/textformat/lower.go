@@ -150,6 +150,37 @@ func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
 
+		case "i32.const":
+			if len(pi.Operands) != 1 {
+				diags.Addf("func[%d]: i32.const expects 1 operand", funcIdx)
+				continue
+			}
+			imm, ok := lowerI32ConstOperand(pi.Operands[0])
+			if !ok {
+				diags.Addf("func[%d]: invalid i32.const operand", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm})
+
+		case "i64.const":
+			if len(pi.Operands) != 1 {
+				diags.Addf("func[%d]: i64.const expects 1 operand", funcIdx)
+				continue
+			}
+			imm, ok := lowerI64ConstOperand(pi.Operands[0])
+			if !ok {
+				diags.Addf("func[%d]: invalid i64.const operand", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm})
+
+		case "drop":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: drop expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
+
 		case "i32.add":
 			if len(pi.Operands) != 0 {
 				diags.Addf("func[%d]: i32.add expects no operands", funcIdx)
@@ -185,12 +216,77 @@ func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
 
+		case "i64.add":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i64.add expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
+
+		case "i64.sub":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i64.sub expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub})
+
+		case "i64.mul":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i64.mul expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul})
+
+		case "i64.div_s":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i64.div_s expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS})
+
+		case "i64.div_u":
+			if len(pi.Operands) != 0 {
+				diags.Addf("func[%d]: i64.div_u expects no operands", funcIdx)
+				continue
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
+
 		default:
 			diags.Addf("func[%d]: unsupported instruction %q", funcIdx, pi.Name)
 		}
 	}
 
 	return out
+}
+
+// lowerI32ConstOperand resolves op as an i32.const immediate.
+// It returns the immediate value and true on success.
+func lowerI32ConstOperand(op Operand) (int32, bool) {
+	o, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+
+	bits, ok := parseIntLiteralBits(o.Value, 32)
+	if !ok {
+		return 0, false
+	}
+	return int32(bits), true
+}
+
+// lowerI64ConstOperand resolves op as an i64.const immediate.
+// It returns the immediate value and true on success.
+func lowerI64ConstOperand(op Operand) (int64, bool) {
+	o, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+
+	bits, ok := parseIntLiteralBits(o.Value, 64)
+	if !ok {
+		return 0, false
+	}
+	return int64(bits), true
 }
 
 // lowerLocalIndexOperand resolves op as a local index using localsByName.
@@ -205,6 +301,50 @@ func lowerLocalIndexOperand(op Operand, localsByName map[string]uint32) (uint32,
 	default:
 		return 0, false
 	}
+}
+
+// parseIntLiteralBits parses s as an integer literal and returns its
+// two's-complement bits in the requested width (32 or 64).
+func parseIntLiteralBits(s string, bits int) (uint64, bool) {
+	if bits != 32 && bits != 64 {
+		return 0, false
+	}
+
+	clean := strings.ReplaceAll(s, "_", "")
+	neg := false
+	if len(clean) > 0 {
+		switch clean[0] {
+		case '+':
+			clean = clean[1:]
+		case '-':
+			neg = true
+			clean = clean[1:]
+		}
+	}
+	if clean == "" {
+		return 0, false
+	}
+
+	base := 10
+	if strings.HasPrefix(clean, "0x") || strings.HasPrefix(clean, "0X") {
+		base = 16
+		clean = clean[2:]
+		if clean == "" {
+			return 0, false
+		}
+	}
+
+	u, err := strconv.ParseUint(clean, base, bits)
+	if err != nil {
+		return 0, false
+	}
+	if neg {
+		u = ^u + 1
+	}
+	if bits == 32 {
+		u &= (1 << 32) - 1
+	}
+	return u, true
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
@@ -231,6 +371,8 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 	switch bt.Name {
 	case "i32":
 		return wasmir.ValueTypeI32, true
+	case "i64":
+		return wasmir.ValueTypeI64, true
 	default:
 		return 0, false
 	}

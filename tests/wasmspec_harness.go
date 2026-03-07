@@ -40,6 +40,7 @@ type valueKind string
 
 const (
 	valueI32Const valueKind = "i32.const"
+	valueI64Const valueKind = "i64.const"
 )
 
 // scriptValue is one script-level constant result/argument.
@@ -49,7 +50,7 @@ const (
 //	(i32.const <num>)
 type scriptValue struct {
 	kind valueKind
-	i32  uint32
+	bits uint64
 }
 
 // invokeAction is an "(invoke ...)" script action.
@@ -287,7 +288,7 @@ func parseInvoke(sx *textformat.SExpr) (invokeAction, error) {
 }
 
 // parseValue parses one script constant expression.
-// sx is expected to be a value form like "(i32.const 1)".
+// sx is expected to be a value form like "(i32.const 1)" or "(i64.const 1)".
 // It returns a typed scriptValue.
 func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 	head, ok := headKeyword(sx)
@@ -305,11 +306,25 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		if !ok || litKind != "INT" {
 			return scriptValue{}, fmt.Errorf("i32.const literal must be INT token")
 		}
-		i32, err := parseI32Literal(litValue)
+		bits, err := parseIntLiteralBits(litValue, 32)
 		if err != nil {
 			return scriptValue{}, err
 		}
-		return scriptValue{kind: valueI32Const, i32: i32}, nil
+		return scriptValue{kind: valueI32Const, bits: bits}, nil
+	case "i64.const":
+		elems := sx.Children()
+		if len(elems) != 2 {
+			return scriptValue{}, fmt.Errorf("i64.const requires one literal")
+		}
+		litKind, litValue, ok := elems[1].Token()
+		if !ok || litKind != "INT" {
+			return scriptValue{}, fmt.Errorf("i64.const literal must be INT token")
+		}
+		bits, err := parseIntLiteralBits(litValue, 64)
+		if err != nil {
+			return scriptValue{}, err
+		}
+		return scriptValue{kind: valueI64Const, bits: bits}, nil
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported value kind %q", head)
 	}
@@ -373,16 +388,48 @@ func headKeyword(sx *textformat.SExpr) (string, bool) {
 	return value, true
 }
 
-// parseI32Literal parses a WAT integer literal into raw i32 bits.
-// s may be decimal/hex and may include underscores.
-// Example: "-1" -> 0xffffffff.
-func parseI32Literal(s string) (uint32, error) {
-	clean := strings.ReplaceAll(s, "_", "")
-	v, err := strconv.ParseInt(clean, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid i32 literal %q", s)
+// parseIntLiteralBits parses a WAT integer literal into two's-complement bits.
+// bits must be either 32 or 64.
+func parseIntLiteralBits(s string, bits int) (uint64, error) {
+	if bits != 32 && bits != 64 {
+		return 0, fmt.Errorf("unsupported integer width %d", bits)
 	}
-	return uint32(v), nil
+
+	clean := strings.ReplaceAll(s, "_", "")
+	neg := false
+	if len(clean) > 0 {
+		switch clean[0] {
+		case '+':
+			clean = clean[1:]
+		case '-':
+			neg = true
+			clean = clean[1:]
+		}
+	}
+	if clean == "" {
+		return 0, fmt.Errorf("invalid integer literal %q", s)
+	}
+
+	base := 10
+	if strings.HasPrefix(clean, "0x") || strings.HasPrefix(clean, "0X") {
+		base = 16
+		clean = clean[2:]
+		if clean == "" {
+			return 0, fmt.Errorf("invalid integer literal %q", s)
+		}
+	}
+
+	u, err := strconv.ParseUint(clean, base, bits)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer literal %q", s)
+	}
+	if neg {
+		u = ^u + 1
+	}
+	if bits == 32 {
+		u &= (1 << 32) - 1
+	}
+	return u, nil
 }
 
 // sexprToWAT converts an S-expression tree back into WAT text.
@@ -527,15 +574,25 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 	}
 	for i := range results {
 		want := cmd.expectValues[i]
-		if want.kind != valueI32Const {
+		switch want.kind {
+		case valueI32Const:
+			gotBits := uint32(results[i])
+			wantBits := uint32(want.bits)
+			if gotBits != wantBits {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, wantBits)
+				return
+			}
+		case valueI64Const:
+			gotBits := results[i]
+			if gotBits != want.bits {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.bits)
+				return
+			}
+		default:
 			res.status = false
 			res.detail = fmt.Sprintf("unsupported expected value kind %q", want.kind)
-			return
-		}
-		gotBits := uint32(results[i])
-		if gotBits != want.i32 {
-			res.status = false
-			res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.i32)
 			return
 		}
 	}
@@ -619,7 +676,9 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 	for i, arg := range action.args {
 		switch arg.kind {
 		case valueI32Const:
-			args[i] = uint64(arg.i32)
+			args[i] = uint64(uint32(arg.bits))
+		case valueI64Const:
+			args[i] = arg.bits
 		default:
 			return nil, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
 		}

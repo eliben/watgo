@@ -69,6 +69,19 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = append(stack, locals[ins.LocalIndex])
 
+		case InstrI32Const:
+			stack = append(stack, ValueTypeI32)
+
+		case InstrI64Const:
+			stack = append(stack, ValueTypeI64)
+
+		case InstrDrop:
+			if len(stack) < 1 {
+				diags.Addf("instruction %d: drop needs 1 operand", i)
+				continue
+			}
+			stack = stack[:len(stack)-1]
+
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
@@ -81,6 +94,19 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
+
+		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("instruction %d: %s needs 2 operands", i, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
+				diags.Addf("instruction %d: %s expects i64 operands", i, name)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI64)
 
 		case InstrEnd:
 			if i != len(f.Body)-1 {
@@ -109,6 +135,12 @@ func instrName(kind InstrKind) string {
 	switch kind {
 	case InstrLocalGet:
 		return "local.get"
+	case InstrI32Const:
+		return "i32.const"
+	case InstrI64Const:
+		return "i64.const"
+	case InstrDrop:
+		return "drop"
 	case InstrI32Add:
 		return "i32.add"
 	case InstrI32Sub:
@@ -119,6 +151,16 @@ func instrName(kind InstrKind) string {
 		return "i32.div_s"
 	case InstrI32DivU:
 		return "i32.div_u"
+	case InstrI64Add:
+		return "i64.add"
+	case InstrI64Sub:
+		return "i64.sub"
+	case InstrI64Mul:
+		return "i64.mul"
+	case InstrI64DivS:
+		return "i64.div_s"
+	case InstrI64DivU:
+		return "i64.div_u"
 	case InstrEnd:
 		return "end"
 	default:
