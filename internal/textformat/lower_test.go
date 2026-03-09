@@ -168,3 +168,25 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 		t.Fatalf("got errors %q, missing unsupported instruction", errs.Error())
 	}
 }
+
+func TestLowerModule_NamedFunctionInDiagnostics(t *testing.T) {
+	wat := `(module
+  (func $foo (param $a i32) (result i32)
+    local.get $missing
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	_, err = LowerModule(ast)
+	if err == nil {
+		t.Fatal("LowerModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "func[0] $foo") {
+		t.Fatalf("got errors %q, want named function context", errs.Error())
+	}
+}

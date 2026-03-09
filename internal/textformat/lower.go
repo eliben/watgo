@@ -1,6 +1,7 @@
 package textformat
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -147,7 +148,7 @@ func (fl *functionLowerer) lowerTypeUse() {
 func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
 	for _, pd := range params {
 		if pd == nil {
-			fl.mod.diags.Addf("func[%d]: nil param declaration", fl.funcIdx)
+			fl.diagf("", "nil param declaration")
 			continue
 		}
 		vt, ok := lowerValueType(pd.Ty)
@@ -172,7 +173,7 @@ func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
 func (fl *functionLowerer) lowerResults(results []*ResultDecl) {
 	for _, rd := range results {
 		if rd == nil {
-			fl.mod.diags.Addf("func[%d]: nil result declaration", fl.funcIdx)
+			fl.diagf("", "nil result declaration")
 			continue
 		}
 		vt, ok := lowerValueType(rd.Ty)
@@ -188,7 +189,7 @@ func (fl *functionLowerer) lowerResults(results []*ResultDecl) {
 func (fl *functionLowerer) lowerLocals() {
 	for _, ld := range fl.fn.Locals {
 		if ld == nil {
-			fl.mod.diags.Addf("func[%d]: nil local declaration", fl.funcIdx)
+			fl.diagf("", "nil local declaration")
 			continue
 		}
 		vt, ok := lowerValueType(ld.Ty)
@@ -428,7 +429,7 @@ func (fl *functionLowerer) emitInstr(instr wasmir.Instruction) {
 
 // diagf adds one lowering diagnostic for the current function.
 func (fl *functionLowerer) diagf(loc string, format string, args ...any) {
-	addLowerDiag(&fl.mod.diags, fl.funcIdx, loc, format, args...)
+	addLowerDiag(&fl.mod.diags, fl.funcIdx, fl.fn.Id, loc, format, args...)
 }
 
 // lowerI32ConstOperand resolves op as an i32.const immediate.
@@ -556,16 +557,28 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 // and optional source location.
 // If loc is non-empty, the message format is:
 //
-//	"func[%d] at <loc>: <message>"
+//	"func[...] at <loc>: <message>"
 //
 // Otherwise:
 //
-//	"func[%d]: <message>"
-func addLowerDiag(diags *diag.ErrorList, funcIdx int, loc string, format string, args ...any) {
-	allArgs := append([]any{funcIdx}, args...)
+//	"func[...]: <message>"
+//
+// Function context always includes the numeric function index and includes the
+// textual function identifier too when present.
+func addLowerDiag(diags *diag.ErrorList, funcIdx int, funcName string, loc string, format string, args ...any) {
+	fnCtx := formatFunctionContext(funcIdx, funcName)
 	if loc != "" {
-		diags.Addf("func[%d] at %s: "+format, append([]any{funcIdx, loc}, args...)...)
+		diags.Addf("%s at %s: "+format, append([]any{fnCtx, loc}, args...)...)
 		return
 	}
-	diags.Addf("func[%d]: "+format, allArgs...)
+	diags.Addf("%s: "+format, append([]any{fnCtx}, args...)...)
+}
+
+// formatFunctionContext formats a function diagnostic prefix using function
+// index and, when available, the source function identifier.
+func formatFunctionContext(funcIdx int, funcName string) string {
+	if funcName == "" {
+		return fmt.Sprintf("func[%d]", funcIdx)
+	}
+	return fmt.Sprintf("func[%d] %s", funcIdx, funcName)
 }
