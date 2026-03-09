@@ -350,7 +350,7 @@ func (lex *lexer) scanNumber() token {
 		if isSign(lex.r) {
 			lex.next()
 		}
-		for isDigit(lex.r) {
+		for isDigit(lex.r) || lex.r == '_' {
 			lex.next()
 		}
 		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}

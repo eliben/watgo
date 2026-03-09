@@ -3,6 +3,7 @@ package textformat
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -656,6 +657,31 @@ func parseF32LiteralBits(s string) (uint32, bool) {
 		return 0, false
 	}
 
+	sign, mag := splitSign(clean)
+	switch mag {
+	case "inf":
+		if sign < 0 {
+			return 0xff800000, true
+		}
+		return 0x7f800000, true
+	case "nan":
+		if sign < 0 {
+			return 0xffc00000, true
+		}
+		return 0x7fc00000, true
+	}
+	if strings.HasPrefix(mag, "nan:0x") {
+		payload, err := strconv.ParseUint(mag[6:], 16, 32)
+		if err != nil || payload == 0 || payload > 0x7fffff {
+			return 0, false
+		}
+		bits := uint32(0x7f800000 | payload)
+		if sign < 0 {
+			bits |= 0x80000000
+		}
+		return bits, true
+	}
+
 	// Fast path: Go supports decimal floats and hex floats with p-exponent.
 	if bits, ok := parseF32WithParseFloat(clean); ok {
 		return bits, true
@@ -664,8 +690,7 @@ func parseF32LiteralBits(s string) (uint32, bool) {
 	// Fallback path (manual handling): we accept WAT-specific forms that
 	// ParseFloat rejects:
 	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
-	// 2) Plain hex integer literals used with f32.const (converted numerically).
-	sign, mag := splitSign(clean)
+	// 2) Arbitrary-size integer literals (decimal and hex), rounded to f32.
 	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
 		// Hex float forms without explicit exponent are valid in WAT.
 		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
@@ -674,16 +699,10 @@ func parseF32LiteralBits(s string) (uint32, bool) {
 				return bits, true
 			}
 		}
+	}
 
-		// Hex integer form for f32.const (e.g. 0x0123...).
-		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
-			u, err := strconv.ParseUint(mag[2:], 16, 64)
-			if err != nil {
-				return 0, false
-			}
-			f := float32(sign * float64(u))
-			return float32bits(f), true
-		}
+	if bits, ok := parseIntegerLiteralF32Bits(clean); ok {
+		return bits, true
 	}
 
 	return 0, false
@@ -697,6 +716,31 @@ func parseF64LiteralBits(s string) (uint64, bool) {
 		return 0, false
 	}
 
+	sign, mag := splitSign(clean)
+	switch mag {
+	case "inf":
+		if sign < 0 {
+			return 0xfff0000000000000, true
+		}
+		return 0x7ff0000000000000, true
+	case "nan":
+		if sign < 0 {
+			return 0xfff8000000000000, true
+		}
+		return 0x7ff8000000000000, true
+	}
+	if strings.HasPrefix(mag, "nan:0x") {
+		payload, err := strconv.ParseUint(mag[6:], 16, 64)
+		if err != nil || payload == 0 || payload > 0x000fffffffffffff {
+			return 0, false
+		}
+		bits := uint64(0x7ff0000000000000 | payload)
+		if sign < 0 {
+			bits |= 0x8000000000000000
+		}
+		return bits, true
+	}
+
 	// Fast path: Go supports decimal floats and hex floats with p-exponent.
 	if bits, ok := parseF64WithParseFloat(clean); ok {
 		return bits, true
@@ -705,8 +749,7 @@ func parseF64LiteralBits(s string) (uint64, bool) {
 	// Fallback path (manual handling): we accept WAT-specific forms that
 	// ParseFloat rejects:
 	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
-	// 2) Plain hex integer literals used with f64.const (converted numerically).
-	sign, mag := splitSign(clean)
+	// 2) Arbitrary-size integer literals (decimal and hex), rounded to f64.
 	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
 		// Hex float forms without explicit exponent are valid in WAT.
 		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
@@ -715,16 +758,10 @@ func parseF64LiteralBits(s string) (uint64, bool) {
 				return bits, true
 			}
 		}
+	}
 
-		// Hex integer form for f64.const (e.g. 0x0123...).
-		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
-			u, err := strconv.ParseUint(mag[2:], 16, 64)
-			if err != nil {
-				return 0, false
-			}
-			f := sign * float64(u)
-			return float64bits(f), true
-		}
+	if bits, ok := parseIntegerLiteralF64Bits(clean); ok {
+		return bits, true
 	}
 
 	return 0, false
@@ -743,6 +780,72 @@ func parseF32WithParseFloat(s string) (uint32, bool) {
 func parseF64WithParseFloat(s string) (uint64, bool) {
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
+		return 0, false
+	}
+	return float64bits(f), true
+}
+
+// parseIntegerLiteralF32Bits parses signed decimal/hex integer literals and
+// rounds them to f32 using nearest-even semantics.
+func parseIntegerLiteralF32Bits(s string) (uint32, bool) {
+	sign, mag := splitSign(s)
+	if mag == "" || strings.Contains(mag, ".") {
+		return 0, false
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if strings.ContainsAny(mag, "pP") {
+			return 0, false
+		}
+	} else if strings.ContainsAny(mag, "eE") {
+		return 0, false
+	}
+
+	bi, ok := new(big.Int).SetString(mag, 0)
+	if !ok {
+		return 0, false
+	}
+
+	bf := new(big.Float).SetMode(big.ToNearestEven)
+	bf.SetInt(bi)
+	if sign < 0 {
+		bf.Neg(bf)
+	}
+
+	f, _ := bf.Float32()
+	if math.IsInf(float64(f), 0) {
+		return 0, false
+	}
+	return float32bits(f), true
+}
+
+// parseIntegerLiteralF64Bits parses signed decimal/hex integer literals and
+// rounds them to f64 using nearest-even semantics.
+func parseIntegerLiteralF64Bits(s string) (uint64, bool) {
+	sign, mag := splitSign(s)
+	if mag == "" || strings.Contains(mag, ".") {
+		return 0, false
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if strings.ContainsAny(mag, "pP") {
+			return 0, false
+		}
+	} else if strings.ContainsAny(mag, "eE") {
+		return 0, false
+	}
+
+	bi, ok := new(big.Int).SetString(mag, 0)
+	if !ok {
+		return 0, false
+	}
+
+	bf := new(big.Float).SetMode(big.ToNearestEven)
+	bf.SetInt(bi)
+	if sign < 0 {
+		bf.Neg(bf)
+	}
+
+	f, _ := bf.Float64()
+	if math.IsInf(f, 0) {
 		return 0, false
 	}
 	return float64bits(f), true

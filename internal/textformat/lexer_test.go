@@ -90,20 +90,20 @@ func TestLexer(t *testing.T) {
 		{"decimal floats",
 			`0.1 199.34 25.
 		+2.12 -17. +2_4.5_6
-		4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012`,
+		4.4e4 2.e-9 0.e+8 2.99e+111  100.008e-012 1.0e+0_1_9`,
 			[]token{
 				{FLOAT, "0.1", location{1, 1}}, {FLOAT, "199.34", location{1, 5}}, {FLOAT, "25.", location{1, 12}},
 				{FLOAT, "+2.12", location{2, 3}}, {FLOAT, "-17.", location{2, 9}}, {FLOAT, "+2_4.5_6", location{2, 14}},
-				{FLOAT, "4.4e4", location{3, 3}}, {FLOAT, "2.e-9", location{3, 9}}, {FLOAT, "0.e+8", location{3, 15}}, {FLOAT, "2.99e+111", location{3, 21}}, {FLOAT, "100.008e-012", location{3, 32}},
+				{FLOAT, "4.4e4", location{3, 3}}, {FLOAT, "2.e-9", location{3, 9}}, {FLOAT, "0.e+8", location{3, 15}}, {FLOAT, "2.99e+111", location{3, 21}}, {FLOAT, "100.008e-012", location{3, 32}}, {FLOAT, "1.0e+0_1_9", location{3, 45}},
 			}},
 
 		{"hex floats",
 			`0xfa.3fe 0x13. 0x0p+0
-		-0xD1.p+21 +0x01EEF.20FEEP-100
+		-0xD1.p+21 +0x01EEF.20FEEP-100 0x1.fp+0_1_9
 		`,
 			[]token{
 				{FLOAT, "0xfa.3fe", location{1, 1}}, {FLOAT, "0x13.", location{1, 10}}, {FLOAT, "0x0p+0", location{1, 16}},
-				{FLOAT, "-0xD1.p+21", location{2, 3}}, {FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}},
+				{FLOAT, "-0xD1.p+21", location{2, 3}}, {FLOAT, "+0x01EEF.20FEEP-100", location{2, 14}}, {FLOAT, "0x1.fp+0_1_9", location{2, 34}},
 			}},
 
 		{"inf/nan floats",
