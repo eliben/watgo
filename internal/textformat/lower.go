@@ -8,6 +8,52 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+// moduleLowerer owns module-wide lowering state.
+type moduleLowerer struct {
+	// out is the semantic module being constructed during lowering. All
+	// successfully lowered types, functions, and exports are appended here as
+	// we walk the AST, even if other parts fail and diagnostics are collected.
+	out *wasmir.Module
+
+	// diags accumulates every lowering diagnostic discovered for the module.
+	// Lowering keeps going after errors so callers get a complete error list in
+	// one pass instead of failing at the first issue.
+	diags diag.ErrorList
+}
+
+// functionLowerer owns state while lowering one function.
+type functionLowerer struct {
+	// mod points to the parent module-level lowering context.
+	mod *moduleLowerer
+
+	// funcIdx is this function's index in the source module's function list.
+	funcIdx int
+
+	// fn is the source text-format function AST currently being lowered.
+	// Per-function methods read declarations and instructions from this node.
+	fn *Function
+
+	// params holds lowered parameter value types in declaration order.
+	params []wasmir.ValueType
+
+	// results holds lowered result value types in declaration order.
+	results []wasmir.ValueType
+
+	// locals holds lowered local variable value types (excluding params).
+	locals []wasmir.ValueType
+
+	// body stores lowered semantic instructions as they are produced.
+	body []wasmir.Instruction
+
+	// localsByName maps text local identifiers (for params and locals) to their
+	// resolved local indices.
+	localsByName map[string]uint32
+
+	// nextLocalIndex tracks the next available local index while processing
+	// params and locals.
+	nextLocalIndex uint32
+}
+
 // LowerModule lowers astm (a parsed text-format module) into a semantic
 // wasmir.Module.
 // It returns the lowered module (possibly partial) and nil on success.
@@ -17,325 +63,372 @@ func LowerModule(astm *Module) (*wasmir.Module, error) {
 		return nil, diag.Fromf("module is nil")
 	}
 
-	var diags diag.ErrorList
-	out := &wasmir.Module{}
-
-	for i, f := range astm.Funcs {
-		if f == nil {
-			diags.Addf("func[%d]: nil function", i)
-			continue
-		}
-		lowerFunction(f, i, out, &diags)
+	l := newModuleLowerer()
+	l.lowerModule(astm)
+	if l.diags.HasAny() {
+		return l.out, l.diags
 	}
-
-	if diags.HasAny() {
-		return out, diags
-	}
-	return out, nil
+	return l.out, nil
 }
 
-// lowerFunction lowers f into out as function number funcIdx, appending any
-// diagnostics into diags.
-func lowerFunction(f *Function, funcIdx int, out *wasmir.Module, diags *diag.ErrorList) {
-	var params []wasmir.ValueType
-	var results []wasmir.ValueType
-	var locals []wasmir.ValueType
+// newModuleLowerer creates a module lowerer with an empty output module.
+func newModuleLowerer() *moduleLowerer {
+	return &moduleLowerer{out: &wasmir.Module{}}
+}
 
-	localsByName := map[string]uint32{}
-	nextLocalIndex := uint32(0)
-
-	for _, pd := range f.TyUse.Params {
-		if pd == nil {
-			diags.Addf("func[%d]: nil param declaration", funcIdx)
+// lowerModule lowers all functions in astm into l.out and accumulates
+// diagnostics in l.diags.
+func (l *moduleLowerer) lowerModule(astm *Module) {
+	for i, f := range astm.Funcs {
+		if f == nil {
+			l.diags.Addf("func[%d]: nil function", i)
 			continue
 		}
-		vt, ok := lowerValueType(pd.Ty)
-		if !ok {
-			addLowerDiag(diags, funcIdx, pd.loc.String(), "unsupported param type %q", pd.Ty)
-			continue
-		}
-		params = append(params, vt)
-
-		if pd.Id != "" {
-			if _, exists := localsByName[pd.Id]; exists {
-				addLowerDiag(diags, funcIdx, pd.loc.String(), "duplicate param id %q", pd.Id)
-			} else {
-				localsByName[pd.Id] = nextLocalIndex
-			}
-		}
-		nextLocalIndex++
+		l.lowerFunction(i, f)
 	}
+}
 
-	for _, rd := range f.TyUse.Results {
-		if rd == nil {
-			diags.Addf("func[%d]: nil result declaration", funcIdx)
-			continue
-		}
-		vt, ok := lowerValueType(rd.Ty)
-		if !ok {
-			addLowerDiag(diags, funcIdx, rd.loc.String(), "unsupported result type %q", rd.Ty)
-			continue
-		}
-		results = append(results, vt)
+// lowerFunction lowers one text-format function f as function number funcIdx
+// into the output module.
+func (l *moduleLowerer) lowerFunction(funcIdx int, f *Function) {
+	fl := newFunctionLowerer(l, funcIdx, f)
+	fl.lower()
+}
+
+// newFunctionLowerer constructs a per-function lowering context.
+func newFunctionLowerer(mod *moduleLowerer, funcIdx int, fn *Function) *functionLowerer {
+	return &functionLowerer{
+		mod:          mod,
+		funcIdx:      funcIdx,
+		fn:           fn,
+		localsByName: map[string]uint32{},
+		body:         make([]wasmir.Instruction, 0, len(fn.Instrs)+1),
 	}
+}
 
-	for _, ld := range f.Locals {
-		if ld == nil {
-			diags.Addf("func[%d]: nil local declaration", funcIdx)
-			continue
-		}
-		vt, ok := lowerValueType(ld.Ty)
-		if !ok {
-			addLowerDiag(diags, funcIdx, ld.loc.String(), "unsupported local type %q", ld.Ty)
-			continue
-		}
-		locals = append(locals, vt)
+// lower lowers fl.fn into fl.mod.out and records any diagnostics.
+func (fl *functionLowerer) lower() {
+	fl.lowerTypeUse()
+	fl.lowerLocals()
 
-		if ld.Id != "" {
-			if _, exists := localsByName[ld.Id]; exists {
-				addLowerDiag(diags, funcIdx, ld.loc.String(), "duplicate local id %q", ld.Id)
-			} else {
-				localsByName[ld.Id] = nextLocalIndex
-			}
-		}
-		nextLocalIndex++
-	}
+	typeIdx := uint32(len(fl.mod.out.Types))
+	fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{Params: fl.params, Results: fl.results})
 
-	typeIdx := uint32(len(out.Types))
-	out.Types = append(out.Types, wasmir.FuncType{Params: params, Results: results})
+	fl.lowerInstrs()
+	fl.body = append(fl.body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fl.fn.loc.String()})
 
-	body := lowerInstrs(f.Instrs, funcIdx, localsByName, diags)
-	body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: f.loc.String()})
-
-	out.Funcs = append(out.Funcs, wasmir.Function{
+	fl.mod.out.Funcs = append(fl.mod.out.Funcs, wasmir.Function{
 		TypeIdx:   typeIdx,
-		Locals:    locals,
-		Body:      body,
-		SourceLoc: f.loc.String(),
+		Locals:    fl.locals,
+		Body:      fl.body,
+		SourceLoc: fl.fn.loc.String(),
 	})
 
-	if f.Export != "" {
-		out.Exports = append(out.Exports, wasmir.Export{
-			Name:  f.Export,
+	if fl.fn.Export != "" {
+		fl.mod.out.Exports = append(fl.mod.out.Exports, wasmir.Export{
+			Name:  fl.fn.Export,
 			Kind:  wasmir.ExternalKindFunction,
-			Index: uint32(len(out.Funcs) - 1),
+			Index: uint32(len(fl.mod.out.Funcs) - 1),
 		})
 	}
 }
 
-// lowerInstrs lowers instrs for function funcIdx.
-// localsByName maps text local identifiers to semantic local indices.
-// It returns lowered instructions (without the implicit final end) and appends
-// diagnostics into diags.
-func lowerInstrs(instrs []Instruction, funcIdx int, localsByName map[string]uint32, diags *diag.ErrorList) []wasmir.Instruction {
-	out := make([]wasmir.Instruction, 0, len(instrs)+1)
+// lowerTypeUse lowers params/results from fl.fn.TyUse.
+func (fl *functionLowerer) lowerTypeUse() {
+	if fl.fn.TyUse == nil {
+		fl.diagf(fl.fn.loc.String(), "missing function type use")
+		return
+	}
+	fl.lowerParams(fl.fn.TyUse.Params)
+	fl.lowerResults(fl.fn.TyUse.Results)
+}
 
-	for _, instr := range instrs {
-		pi, ok := instr.(*PlainInstr)
-		if !ok {
-			diags.Addf("func[%d]: unsupported instruction type %T", funcIdx, instr)
+// lowerParams lowers parameter declarations and updates the local index space.
+func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
+	for _, pd := range params {
+		if pd == nil {
+			fl.mod.diags.Addf("func[%d]: nil param declaration", fl.funcIdx)
 			continue
 		}
-		instrLoc := pi.Loc()
-
-		switch pi.Name {
-		case "local.get":
-			if len(pi.Operands) != 1 {
-				addLowerDiag(diags, funcIdx, instrLoc, "local.get expects 1 operand")
-				continue
-			}
-
-			localIndex, ok := lowerLocalIndexOperand(pi.Operands[0], localsByName)
-			if !ok {
-				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid local.get operand")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex, SourceLoc: instrLoc})
-
-		case "i32.const":
-			if len(pi.Operands) != 1 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.const expects 1 operand")
-				continue
-			}
-			imm, ok := lowerI32ConstOperand(pi.Operands[0])
-			if !ok {
-				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid i32.const operand")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm, SourceLoc: instrLoc})
-
-		case "i64.const":
-			if len(pi.Operands) != 1 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.const expects 1 operand")
-				continue
-			}
-			imm, ok := lowerI64ConstOperand(pi.Operands[0])
-			if !ok {
-				addLowerDiag(diags, funcIdx, pi.Operands[0].Loc(), "invalid i64.const operand")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm, SourceLoc: instrLoc})
-
-		case "drop":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "drop expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop, SourceLoc: instrLoc})
-
-		case "i32.add":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.add expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add, SourceLoc: instrLoc})
-
-		case "i32.sub":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.sub expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub, SourceLoc: instrLoc})
-
-		case "i32.mul":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.mul expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul, SourceLoc: instrLoc})
-
-		case "i32.div_s":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.div_s expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS, SourceLoc: instrLoc})
-
-		case "i32.div_u":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i32.div_u expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU, SourceLoc: instrLoc})
-
-		case "i64.add":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.add expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add, SourceLoc: instrLoc})
-
-		case "i64.sub":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.sub expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub, SourceLoc: instrLoc})
-
-		case "i64.mul":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.mul expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul, SourceLoc: instrLoc})
-
-		case "i64.div_s":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.div_s expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS, SourceLoc: instrLoc})
-
-		case "i64.div_u":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "i64.div_u expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU, SourceLoc: instrLoc})
-
-		case "f32.add":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.add expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add, SourceLoc: instrLoc})
-
-		case "f32.sub":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.sub expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub, SourceLoc: instrLoc})
-
-		case "f32.mul":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.mul expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul, SourceLoc: instrLoc})
-
-		case "f32.div":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.div expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div, SourceLoc: instrLoc})
-
-		case "f32.sqrt":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.sqrt expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt, SourceLoc: instrLoc})
-
-		case "f32.min":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.min expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min, SourceLoc: instrLoc})
-
-		case "f32.max":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.max expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max, SourceLoc: instrLoc})
-
-		case "f32.ceil":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.ceil expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil, SourceLoc: instrLoc})
-
-		case "f32.floor":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.floor expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor, SourceLoc: instrLoc})
-
-		case "f32.trunc":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.trunc expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc, SourceLoc: instrLoc})
-
-		case "f32.nearest":
-			if len(pi.Operands) != 0 {
-				addLowerDiag(diags, funcIdx, instrLoc, "f32.nearest expects no operands")
-				continue
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest, SourceLoc: instrLoc})
-
-		default:
-			addLowerDiag(diags, funcIdx, instrLoc, "unsupported instruction %q", pi.Name)
+		vt, ok := lowerValueType(pd.Ty)
+		if !ok {
+			fl.diagf(pd.loc.String(), "unsupported param type %q", pd.Ty)
+			continue
 		}
-	}
 
-	return out
+		fl.params = append(fl.params, vt)
+		if pd.Id != "" {
+			if _, exists := fl.localsByName[pd.Id]; exists {
+				fl.diagf(pd.loc.String(), "duplicate param id %q", pd.Id)
+			} else {
+				fl.localsByName[pd.Id] = fl.nextLocalIndex
+			}
+		}
+		fl.nextLocalIndex++
+	}
+}
+
+// lowerResults lowers result declarations.
+func (fl *functionLowerer) lowerResults(results []*ResultDecl) {
+	for _, rd := range results {
+		if rd == nil {
+			fl.mod.diags.Addf("func[%d]: nil result declaration", fl.funcIdx)
+			continue
+		}
+		vt, ok := lowerValueType(rd.Ty)
+		if !ok {
+			fl.diagf(rd.loc.String(), "unsupported result type %q", rd.Ty)
+			continue
+		}
+		fl.results = append(fl.results, vt)
+	}
+}
+
+// lowerLocals lowers local declarations and updates the local index space.
+func (fl *functionLowerer) lowerLocals() {
+	for _, ld := range fl.fn.Locals {
+		if ld == nil {
+			fl.mod.diags.Addf("func[%d]: nil local declaration", fl.funcIdx)
+			continue
+		}
+		vt, ok := lowerValueType(ld.Ty)
+		if !ok {
+			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)
+			continue
+		}
+
+		fl.locals = append(fl.locals, vt)
+		if ld.Id != "" {
+			if _, exists := fl.localsByName[ld.Id]; exists {
+				fl.diagf(ld.loc.String(), "duplicate local id %q", ld.Id)
+			} else {
+				fl.localsByName[ld.Id] = fl.nextLocalIndex
+			}
+		}
+		fl.nextLocalIndex++
+	}
+}
+
+// lowerInstrs lowers all instructions in fl.fn into fl.body.
+func (fl *functionLowerer) lowerInstrs() {
+	for _, instr := range fl.fn.Instrs {
+		pi, ok := instr.(*PlainInstr)
+		if !ok {
+			fl.diagf(instr.Loc(), "unsupported instruction type %T", instr)
+			continue
+		}
+		fl.lowerPlainInstr(pi)
+	}
+}
+
+// lowerPlainInstr lowers one plain instruction into fl.body.
+func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
+	instrLoc := pi.Loc()
+
+	switch pi.Name {
+	case "local.get":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "local.get expects 1 operand")
+			return
+		}
+		localIndex, ok := lowerLocalIndexOperand(pi.Operands[0], fl.localsByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid local.get operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex, SourceLoc: instrLoc})
+
+	case "i32.const":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "i32.const expects 1 operand")
+			return
+		}
+		imm, ok := lowerI32ConstOperand(pi.Operands[0])
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid i32.const operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm, SourceLoc: instrLoc})
+
+	case "i64.const":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "i64.const expects 1 operand")
+			return
+		}
+		imm, ok := lowerI64ConstOperand(pi.Operands[0])
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid i64.const operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm, SourceLoc: instrLoc})
+
+	case "drop":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "drop expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrDrop, SourceLoc: instrLoc})
+
+	case "i32.add":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i32.add expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Add, SourceLoc: instrLoc})
+
+	case "i32.sub":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i32.sub expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Sub, SourceLoc: instrLoc})
+
+	case "i32.mul":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i32.mul expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Mul, SourceLoc: instrLoc})
+
+	case "i32.div_s":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i32.div_s expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32DivS, SourceLoc: instrLoc})
+
+	case "i32.div_u":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i32.div_u expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32DivU, SourceLoc: instrLoc})
+
+	case "i64.add":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.add expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Add, SourceLoc: instrLoc})
+
+	case "i64.sub":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.sub expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Sub, SourceLoc: instrLoc})
+
+	case "i64.mul":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.mul expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Mul, SourceLoc: instrLoc})
+
+	case "i64.div_s":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.div_s expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64DivS, SourceLoc: instrLoc})
+
+	case "i64.div_u":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.div_u expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64DivU, SourceLoc: instrLoc})
+
+	case "f32.add":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.add expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Add, SourceLoc: instrLoc})
+
+	case "f32.sub":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.sub expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Sub, SourceLoc: instrLoc})
+
+	case "f32.mul":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.mul expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Mul, SourceLoc: instrLoc})
+
+	case "f32.div":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.div expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Div, SourceLoc: instrLoc})
+
+	case "f32.sqrt":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.sqrt expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Sqrt, SourceLoc: instrLoc})
+
+	case "f32.min":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.min expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Min, SourceLoc: instrLoc})
+
+	case "f32.max":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.max expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Max, SourceLoc: instrLoc})
+
+	case "f32.ceil":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.ceil expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Ceil, SourceLoc: instrLoc})
+
+	case "f32.floor":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.floor expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Floor, SourceLoc: instrLoc})
+
+	case "f32.trunc":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.trunc expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Trunc, SourceLoc: instrLoc})
+
+	case "f32.nearest":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f32.nearest expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Nearest, SourceLoc: instrLoc})
+
+	default:
+		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
+	}
+}
+
+// emitInstr appends one lowered instruction to the current function body.
+func (fl *functionLowerer) emitInstr(instr wasmir.Instruction) {
+	fl.body = append(fl.body, instr)
+}
+
+// diagf adds one lowering diagnostic for the current function.
+func (fl *functionLowerer) diagf(loc string, format string, args ...any) {
+	addLowerDiag(&fl.mod.diags, fl.funcIdx, loc, format, args...)
 }
 
 // lowerI32ConstOperand resolves op as an i32.const immediate.
