@@ -87,6 +87,9 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrF32Const:
 			stack = append(stack, ValueTypeF32)
 
+		case InstrF64Const:
+			stack = append(stack, ValueTypeF64)
+
 		case InstrDrop:
 			if len(stack) < 1 {
 				diags.Addf("%s: drop needs 1 operand", insCtx)
@@ -145,6 +148,31 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 			}
 			// Unary f32 operators preserve top-of-stack type.
 
+		case InstrF64Add, InstrF64Sub, InstrF64Mul, InstrF64Div, InstrF64Min, InstrF64Max:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeF64 {
+				diags.Addf("%s: %s expects f64 operands", insCtx, name)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeF64)
+
+		case InstrF64Sqrt, InstrF64Ceil, InstrF64Floor, InstrF64Trunc, InstrF64Nearest:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF64 {
+				diags.Addf("%s: %s expects f64 operand", insCtx, name)
+				continue
+			}
+			// Unary f64 operators preserve top-of-stack type.
+
 		case InstrEnd:
 			if i != len(f.Body)-1 {
 				diags.Addf("%s: end must be last", insCtx)
@@ -178,6 +206,8 @@ func instrName(kind InstrKind) string {
 		return "i64.const"
 	case InstrF32Const:
 		return "f32.const"
+	case InstrF64Const:
+		return "f64.const"
 	case InstrDrop:
 		return "drop"
 	case InstrI32Add:
@@ -222,6 +252,28 @@ func instrName(kind InstrKind) string {
 		return "f32.trunc"
 	case InstrF32Nearest:
 		return "f32.nearest"
+	case InstrF64Add:
+		return "f64.add"
+	case InstrF64Sub:
+		return "f64.sub"
+	case InstrF64Mul:
+		return "f64.mul"
+	case InstrF64Div:
+		return "f64.div"
+	case InstrF64Sqrt:
+		return "f64.sqrt"
+	case InstrF64Min:
+		return "f64.min"
+	case InstrF64Max:
+		return "f64.max"
+	case InstrF64Ceil:
+		return "f64.ceil"
+	case InstrF64Floor:
+		return "f64.floor"
+	case InstrF64Trunc:
+		return "f64.trunc"
+	case InstrF64Nearest:
+		return "f64.nearest"
 	case InstrEnd:
 		return "end"
 	default:

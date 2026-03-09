@@ -30,6 +30,8 @@ const (
 	valueTypeI64Code byte = 0x7e
 	// valueTypeF32Code is the binary encoding of f32.
 	valueTypeF32Code byte = 0x7d
+	// valueTypeF64Code is the binary encoding of f64.
+	valueTypeF64Code byte = 0x7c
 
 	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
@@ -38,6 +40,7 @@ const (
 	opI32ConstCode   byte = 0x41
 	opI64ConstCode   byte = 0x42
 	opF32ConstCode   byte = 0x43
+	opF64ConstCode   byte = 0x44
 	opDropCode       byte = 0x1a
 	opLocalGetCode   byte = 0x20
 	opI32AddCode     byte = 0x6a
@@ -61,6 +64,17 @@ const (
 	opF32DivCode     byte = 0x95
 	opF32MinCode     byte = 0x96
 	opF32MaxCode     byte = 0x97
+	opF64CeilCode    byte = 0x9b
+	opF64FloorCode   byte = 0x9c
+	opF64TruncCode   byte = 0x9d
+	opF64NearestCode byte = 0x9e
+	opF64SqrtCode    byte = 0x9f
+	opF64AddCode     byte = 0xa0
+	opF64SubCode     byte = 0xa1
+	opF64MulCode     byte = 0xa2
+	opF64DivCode     byte = 0xa3
+	opF64MinCode     byte = 0xa4
+	opF64MaxCode     byte = 0xa5
 	opEndCode        byte = 0x0b
 )
 
@@ -249,6 +263,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrF32Const:
 		out.WriteByte(opF32ConstCode)
 		writeU32LE(out, instr.F32Const)
+	case wasmir.InstrF64Const:
+		out.WriteByte(opF64ConstCode)
+		writeU64LE(out, instr.F64Const)
 	case wasmir.InstrDrop:
 		out.WriteByte(opDropCode)
 	case wasmir.InstrLocalGet:
@@ -296,6 +313,28 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF32TruncCode)
 	case wasmir.InstrF32Nearest:
 		out.WriteByte(opF32NearestCode)
+	case wasmir.InstrF64Add:
+		out.WriteByte(opF64AddCode)
+	case wasmir.InstrF64Sub:
+		out.WriteByte(opF64SubCode)
+	case wasmir.InstrF64Mul:
+		out.WriteByte(opF64MulCode)
+	case wasmir.InstrF64Div:
+		out.WriteByte(opF64DivCode)
+	case wasmir.InstrF64Sqrt:
+		out.WriteByte(opF64SqrtCode)
+	case wasmir.InstrF64Min:
+		out.WriteByte(opF64MinCode)
+	case wasmir.InstrF64Max:
+		out.WriteByte(opF64MaxCode)
+	case wasmir.InstrF64Ceil:
+		out.WriteByte(opF64CeilCode)
+	case wasmir.InstrF64Floor:
+		out.WriteByte(opF64FloorCode)
+	case wasmir.InstrF64Trunc:
+		out.WriteByte(opF64TruncCode)
+	case wasmir.InstrF64Nearest:
+		out.WriteByte(opF64NearestCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:
@@ -311,6 +350,8 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return valueTypeI64Code, true
 	case wasmir.ValueTypeF32:
 		return valueTypeF32Code, true
+	case wasmir.ValueTypeF64:
+		return valueTypeF64Code, true
 	default:
 		return 0, false
 	}
@@ -365,5 +406,12 @@ func writeSLEB128(out *bytes.Buffer, v int64) {
 func writeU32LE(out *bytes.Buffer, v uint32) {
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], v)
+	out.Write(buf[:])
+}
+
+// writeU64LE writes v as an 8-byte little-endian integer.
+func writeU64LE(out *bytes.Buffer, v uint64) {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], v)
 	out.Write(buf[:])
 }

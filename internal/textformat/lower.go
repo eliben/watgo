@@ -276,6 +276,18 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm, SourceLoc: instrLoc})
 
+	case "f64.const":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "f64.const expects 1 operand")
+			return
+		}
+		imm, ok := lowerF64ConstOperand(pi.Operands[0])
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid f64.const operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm, SourceLoc: instrLoc})
+
 	case "drop":
 		if len(pi.Operands) != 0 {
 			fl.diagf(instrLoc, "drop expects no operands")
@@ -430,6 +442,83 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Nearest, SourceLoc: instrLoc})
 
+	case "f64.add":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.add expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Add, SourceLoc: instrLoc})
+
+	case "f64.sub":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.sub expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Sub, SourceLoc: instrLoc})
+
+	case "f64.mul":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.mul expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Mul, SourceLoc: instrLoc})
+
+	case "f64.div":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.div expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Div, SourceLoc: instrLoc})
+
+	case "f64.sqrt":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.sqrt expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Sqrt, SourceLoc: instrLoc})
+
+	case "f64.min":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.min expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Min, SourceLoc: instrLoc})
+
+	case "f64.max":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.max expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Max, SourceLoc: instrLoc})
+
+	case "f64.ceil":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.ceil expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Ceil, SourceLoc: instrLoc})
+
+	case "f64.floor":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.floor expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Floor, SourceLoc: instrLoc})
+
+	case "f64.trunc":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.trunc expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Trunc, SourceLoc: instrLoc})
+
+	case "f64.nearest":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "f64.nearest expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Nearest, SourceLoc: instrLoc})
+
 	default:
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
 	}
@@ -483,6 +572,19 @@ func lowerF32ConstOperand(op Operand) (uint32, bool) {
 		return parseF32LiteralBits(o.Value)
 	case *IntOperand:
 		return parseF32LiteralBits(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerF64ConstOperand resolves op as an f64.const immediate.
+// It returns IEEE-754 f64 bits and true on success.
+func lowerF64ConstOperand(op Operand) (uint64, bool) {
+	switch o := op.(type) {
+	case *FloatOperand:
+		return parseF64LiteralBits(o.Value)
+	case *IntOperand:
+		return parseF64LiteralBits(o.Value)
 	default:
 		return 0, false
 	}
@@ -583,6 +685,43 @@ func parseF32LiteralBits(s string) (uint32, bool) {
 	return 0, false
 }
 
+// parseF64LiteralBits parses s as an f64 literal and returns IEEE-754 bits.
+// It accepts decimal/hex float forms, and integer forms used with f64.const.
+func parseF64LiteralBits(s string) (uint64, bool) {
+	clean := strings.ReplaceAll(s, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+
+	// Fast path: Go supports decimal floats and hex floats with p-exponent.
+	if bits, ok := parseF64WithParseFloat(clean); ok {
+		return bits, true
+	}
+
+	sign, mag := splitSign(clean)
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		// Hex float forms without explicit exponent are valid in WAT.
+		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+			withExp := clean + "p0"
+			if bits, ok := parseF64WithParseFloat(withExp); ok {
+				return bits, true
+			}
+		}
+
+		// Hex integer form for f64.const (e.g. 0x0123...).
+		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+			u, err := strconv.ParseUint(mag[2:], 16, 64)
+			if err != nil {
+				return 0, false
+			}
+			f := sign * float64(u)
+			return float64bits(f), true
+		}
+	}
+
+	return 0, false
+}
+
 // parseF32WithParseFloat parses s with strconv.ParseFloat and returns f32 bits.
 func parseF32WithParseFloat(s string) (uint32, bool) {
 	f, err := strconv.ParseFloat(s, 32)
@@ -590,6 +729,15 @@ func parseF32WithParseFloat(s string) (uint32, bool) {
 		return 0, false
 	}
 	return float32bits(float32(f)), true
+}
+
+// parseF64WithParseFloat parses s with strconv.ParseFloat and returns f64 bits.
+func parseF64WithParseFloat(s string) (uint64, bool) {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64bits(f), true
 }
 
 // splitSign splits s into sign (+1/-1) and unsigned magnitude string.
@@ -610,6 +758,11 @@ func splitSign(s string) (float64, string) {
 // float32bits returns IEEE-754 bits for f.
 func float32bits(f float32) uint32 {
 	return math.Float32bits(f)
+}
+
+// float64bits returns IEEE-754 bits for f.
+func float64bits(f float64) uint64 {
+	return math.Float64bits(f)
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
@@ -640,6 +793,8 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeI64, true
 	case "f32":
 		return wasmir.ValueTypeF32, true
+	case "f64":
+		return wasmir.ValueTypeF64, true
 	default:
 		return 0, false
 	}

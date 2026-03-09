@@ -6,6 +6,7 @@ const (
 	ValueTypeI32 ValueType = iota
 	ValueTypeI64
 	ValueTypeF32
+	ValueTypeF64
 )
 
 type InstrKind uint8
@@ -15,6 +16,7 @@ const (
 	InstrI32Const
 	InstrI64Const
 	InstrF32Const
+	InstrF64Const
 	InstrDrop
 	InstrI32Add
 	InstrI32Sub
@@ -37,6 +39,17 @@ const (
 	InstrF32Floor
 	InstrF32Trunc
 	InstrF32Nearest
+	InstrF64Add
+	InstrF64Sub
+	InstrF64Mul
+	InstrF64Div
+	InstrF64Sqrt
+	InstrF64Min
+	InstrF64Max
+	InstrF64Ceil
+	InstrF64Floor
+	InstrF64Trunc
+	InstrF64Nearest
 	InstrEnd
 )
 
@@ -76,5 +89,6 @@ type Instruction struct {
 	I32Const   int32
 	I64Const   int64
 	F32Const   uint32
+	F64Const   uint64
 	SourceLoc  string
 }

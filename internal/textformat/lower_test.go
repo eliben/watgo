@@ -120,18 +120,15 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 }
 
 func TestLowerModule_UnsupportedType(t *testing.T) {
-	wat := `(module
-  (func (param $a f64) (result i32)
-    local.get $a
-  )
-)`
-
-	ast, err := ParseModule(wat)
-	if err != nil {
-		t.Fatalf("ParseModule failed: %v", err)
+	ast := &Module{
+		Funcs: []*Function{{
+			TyUse: &TypeUse{
+				Params: []*ParamDecl{{Id: "$a", Ty: &BasicType{Name: "v128"}}},
+			},
+		}},
 	}
 
-	_, err = LowerModule(ast)
+	_, err := LowerModule(ast)
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
@@ -143,7 +140,8 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 
 func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	wat := `(module
-  (func (param $a f64) (result i32)
+  (func (param $a i32) (result i32)
+    local.get $missing
     i32.and
   )
 )`
@@ -161,8 +159,8 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	if len(errs) < 2 {
 		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
 	}
-	if !errorListContains(errs, "unsupported param type") {
-		t.Fatalf("got errors %q, missing unsupported param type", errs.Error())
+	if !errorListContains(errs, "invalid local.get operand") {
+		t.Fatalf("got errors %q, missing invalid local.get operand", errs.Error())
 	}
 	if !errorListContains(errs, "unsupported instruction") {
 		t.Fatalf("got errors %q, missing unsupported instruction", errs.Error())

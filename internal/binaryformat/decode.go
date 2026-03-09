@@ -313,6 +313,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: value})
+		case opF64ConstCode:
+			value, err := readU64LE(r)
+			if err != nil {
+				diags.Addf("code[%d]: read f64 immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: value})
 		case opDropCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
 		case opLocalGetCode:
@@ -364,6 +371,28 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc})
 		case opF32NearestCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest})
+		case opF64AddCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Add})
+		case opF64SubCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Sub})
+		case opF64MulCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Mul})
+		case opF64DivCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Div})
+		case opF64SqrtCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Sqrt})
+		case opF64MinCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Min})
+		case opF64MaxCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Max})
+		case opF64CeilCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Ceil})
+		case opF64FloorCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Floor})
+		case opF64TruncCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Trunc})
+		case opF64NearestCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Nearest})
 		case opEndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
 			return out
@@ -409,6 +438,8 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeI64, true
 	case valueTypeF32Code:
 		return wasmir.ValueTypeF32, true
+	case valueTypeF64Code:
+		return wasmir.ValueTypeF64, true
 	default:
 		return 0, false
 	}
@@ -519,6 +550,15 @@ func readU32LE(r *bytes.Reader) (uint32, error) {
 		return 0, err
 	}
 	return binary.LittleEndian.Uint32(b), nil
+}
+
+// readU64LE reads an 8-byte little-endian uint64 from r.
+func readU64LE(r *bytes.Reader) (uint64, error) {
+	b, err := readN(r, 8)
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(b), nil
 }
 
 // readName reads a WASM name from r as: u32 byte length followed by UTF-8

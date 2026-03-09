@@ -42,9 +42,14 @@ const (
 type valueKind string
 
 const (
-	valueI32Const valueKind = "i32.const"
-	valueI64Const valueKind = "i64.const"
-	valueF32Const valueKind = "f32.const"
+	valueI32Const         valueKind = "i32.const"
+	valueI64Const         valueKind = "i64.const"
+	valueF32Const         valueKind = "f32.const"
+	valueF32NaNCanonical  valueKind = "f32.nan:canonical"
+	valueF32NaNArithmetic valueKind = "f32.nan:arithmetic"
+	valueF64Const         valueKind = "f64.const"
+	valueF64NaNCanonical  valueKind = "f64.nan:canonical"
+	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
 )
 
 // scriptValue is one script-level constant result/argument.
@@ -54,6 +59,8 @@ const (
 //	(i32.const <num>)
 type scriptValue struct {
 	kind valueKind
+	// bits stores the raw IEEE-754/integer bit pattern used for exact
+	// comparisons in assert_return. NaN marker kinds don't use this field.
 	bits uint64
 }
 
@@ -335,14 +342,49 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("f32.const requires one literal")
 		}
 		litKind, litValue, ok := elems[1].Token()
-		if !ok || (litKind != "FLOAT" && litKind != "INT") {
-			return scriptValue{}, fmt.Errorf("f32.const literal must be FLOAT or INT token")
+		if !ok {
+			return scriptValue{}, fmt.Errorf("f32.const literal must be token")
+		}
+		// In spec scripts, expected results may be matchers rather than concrete
+		// values. Keep these as dedicated kinds so assert_return can apply the
+		// right NaN classification rule.
+		if litValue == "nan:canonical" {
+			return scriptValue{kind: valueF32NaNCanonical}, nil
+		}
+		if litValue == "nan:arithmetic" {
+			return scriptValue{kind: valueF32NaNArithmetic}, nil
+		}
+		if litKind != "FLOAT" && litKind != "INT" {
+			return scriptValue{}, fmt.Errorf("f32.const literal must be FLOAT/INT or nan marker")
 		}
 		bits, err := parseF32LiteralBits(litValue)
 		if err != nil {
 			return scriptValue{}, err
 		}
 		return scriptValue{kind: valueF32Const, bits: uint64(bits)}, nil
+	case "f64.const":
+		elems := sx.Children()
+		if len(elems) != 2 {
+			return scriptValue{}, fmt.Errorf("f64.const requires one literal")
+		}
+		litKind, litValue, ok := elems[1].Token()
+		if !ok {
+			return scriptValue{}, fmt.Errorf("f64.const literal must be token")
+		}
+		if litValue == "nan:canonical" {
+			return scriptValue{kind: valueF64NaNCanonical}, nil
+		}
+		if litValue == "nan:arithmetic" {
+			return scriptValue{kind: valueF64NaNArithmetic}, nil
+		}
+		if litKind != "FLOAT" && litKind != "INT" {
+			return scriptValue{}, fmt.Errorf("f64.const literal must be FLOAT/INT or nan marker")
+		}
+		bits, err := parseF64LiteralBits(litValue)
+		if err != nil {
+			return scriptValue{}, err
+		}
+		return scriptValue{kind: valueF64Const, bits: bits}, nil
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported value kind %q", head)
 	}
@@ -451,13 +493,116 @@ func parseIntLiteralBits(s string, bits int) (uint64, error) {
 }
 
 // parseF32LiteralBits parses a WAT f32 literal and returns its IEEE-754 bits.
+//
+// Supported forms include:
+//   - decimal/hex numeric literals accepted by strconv.ParseFloat
+//   - "inf"/"-inf"
+//   - "nan"/"-nan" (canonical quiet NaN with sign)
+//   - "nan:0x..." payload form used in spec scripts
 func parseF32LiteralBits(s string) (uint32, error) {
 	clean := strings.ReplaceAll(s, "_", "")
+	sign, mag := splitSign(clean)
+	switch mag {
+	case "inf":
+		if sign < 0 {
+			return 0xff800000, nil
+		}
+		return 0x7f800000, nil
+	case "nan":
+		if sign < 0 {
+			return 0xffc00000, nil
+		}
+		return 0x7fc00000, nil
+	}
+	if strings.HasPrefix(mag, "nan:0x") {
+		payload, err := strconv.ParseUint(mag[6:], 16, 32)
+		if err != nil || payload == 0 || payload > 0x7fffff {
+			return 0, fmt.Errorf("invalid f32 literal %q", s)
+		}
+		// Preserve payload bits exactly as requested by the script. The quiet/signaling
+		// choice is encoded in the payload high bit and left untouched.
+		bits := uint32(0x7f800000 | payload)
+		if sign < 0 {
+			bits |= 0x80000000
+		}
+		return bits, nil
+	}
+
 	f, err := strconv.ParseFloat(clean, 32)
 	if err != nil {
+		// WAT accepts hex float forms without explicit exponent and hex integer
+		// forms in f32.const.
+		if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+			if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+				f, err = strconv.ParseFloat(clean+"p0", 32)
+				if err == nil {
+					return math.Float32bits(float32(f)), nil
+				}
+			}
+			if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+				u, parseErr := strconv.ParseUint(mag[2:], 16, 64)
+				if parseErr == nil {
+					return math.Float32bits(float32(sign * float64(u))), nil
+				}
+			}
+		}
 		return 0, fmt.Errorf("invalid f32 literal %q", s)
 	}
 	return math.Float32bits(float32(f)), nil
+}
+
+// parseF64LiteralBits parses a WAT f64 literal and returns its IEEE-754 bits.
+//
+// It mirrors parseF32LiteralBits semantics for f64, including support for
+// inf/nan spellings and explicit NaN payload literals ("nan:0x...").
+func parseF64LiteralBits(s string) (uint64, error) {
+	clean := strings.ReplaceAll(s, "_", "")
+	sign, mag := splitSign(clean)
+	switch mag {
+	case "inf":
+		if sign < 0 {
+			return 0xfff0000000000000, nil
+		}
+		return 0x7ff0000000000000, nil
+	case "nan":
+		if sign < 0 {
+			return 0xfff8000000000000, nil
+		}
+		return 0x7ff8000000000000, nil
+	}
+	if strings.HasPrefix(mag, "nan:0x") {
+		payload, err := strconv.ParseUint(mag[6:], 16, 64)
+		if err != nil || payload == 0 || payload > 0x000fffffffffffff {
+			return 0, fmt.Errorf("invalid f64 literal %q", s)
+		}
+		// Preserve payload bits exactly as requested by the script.
+		bits := uint64(0x7ff0000000000000 | payload)
+		if sign < 0 {
+			bits |= 0x8000000000000000
+		}
+		return bits, nil
+	}
+
+	f, err := strconv.ParseFloat(clean, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid f64 literal %q", s)
+	}
+	return math.Float64bits(f), nil
+}
+
+// splitSign splits s into sign (+1/-1) and unsigned magnitude string.
+func splitSign(s string) (float64, string) {
+	if s == "" {
+		return 1, s
+	}
+	switch s[0] {
+	case '+':
+		return 1, s[1:]
+	case '-':
+		return -1, s[1:]
+	default:
+		return 1, s
+	}
 }
 
 // sexprToWAT converts an S-expression tree back into WAT text.
@@ -626,6 +771,41 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, wantBits)
 				return
 			}
+		case valueF32NaNCanonical:
+			gotBits := uint32(results[i])
+			if !isCanonicalNaN32(gotBits) {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want canonical NaN", i, gotBits)
+				return
+			}
+		case valueF32NaNArithmetic:
+			gotBits := uint32(results[i])
+			if !isArithmeticNaN32(gotBits) {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want arithmetic NaN", i, gotBits)
+				return
+			}
+		case valueF64Const:
+			gotBits := results[i]
+			if gotBits != want.bits {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.bits)
+				return
+			}
+		case valueF64NaNCanonical:
+			gotBits := results[i]
+			if !isCanonicalNaN64(gotBits) {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want canonical NaN", i, gotBits)
+				return
+			}
+		case valueF64NaNArithmetic:
+			gotBits := results[i]
+			if !isArithmeticNaN64(gotBits) {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want arithmetic NaN", i, gotBits)
+				return
+			}
 		default:
 			res.status = false
 			res.detail = fmt.Sprintf("unsupported expected value kind %q", want.kind)
@@ -717,6 +897,15 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 			args[i] = arg.bits
 		case valueF32Const:
 			args[i] = uint64(uint32(arg.bits))
+		case valueF64Const:
+			args[i] = arg.bits
+		case valueF32NaNCanonical, valueF32NaNArithmetic:
+			// assert_return NaN markers are meaningful for expected values. When they
+			// appear as invoke args, pass a deterministic quiet NaN value.
+			args[i] = uint64(0x7fc00000)
+		case valueF64NaNCanonical, valueF64NaNArithmetic:
+			// Same rule as f32: canonical quiet NaN for deterministic invocation args.
+			args[i] = 0x7ff8000000000000
 		default:
 			return nil, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
 		}
@@ -727,6 +916,44 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 		return nil, err
 	}
 	return results, nil
+}
+
+// isCanonicalNaN32 reports whether bits encode canonical f32 NaN:
+// exponent all ones and mantissa exactly 0x00400000 (sign ignored).
+func isCanonicalNaN32(bits uint32) bool {
+	const expMask uint32 = 0x7f800000
+	const mantissaMask uint32 = 0x007fffff
+	const canonicalMantissa uint32 = 0x00400000
+	return (bits&expMask) == expMask && (bits&mantissaMask) == canonicalMantissa
+}
+
+// isArithmeticNaN32 reports whether bits encode an arithmetic f32 NaN:
+// exponent all ones and quiet bit set in the payload (sign ignored).
+func isArithmeticNaN32(bits uint32) bool {
+	const expMask uint32 = 0x7f800000
+	const mantissaMask uint32 = 0x007fffff
+	const quietBit uint32 = 0x00400000
+	mantissa := bits & mantissaMask
+	return (bits&expMask) == expMask && (mantissa&quietBit) != 0
+}
+
+// isCanonicalNaN64 reports whether bits encode canonical f64 NaN:
+// exponent all ones and mantissa exactly 0x0008000000000000 (sign ignored).
+func isCanonicalNaN64(bits uint64) bool {
+	const expMask uint64 = 0x7ff0000000000000
+	const mantissaMask uint64 = 0x000fffffffffffff
+	const canonicalMantissa uint64 = 0x0008000000000000
+	return (bits&expMask) == expMask && (bits&mantissaMask) == canonicalMantissa
+}
+
+// isArithmeticNaN64 reports whether bits encode an arithmetic f64 NaN:
+// exponent all ones and quiet bit set in the payload (sign ignored).
+func isArithmeticNaN64(bits uint64) bool {
+	const expMask uint64 = 0x7ff0000000000000
+	const mantissaMask uint64 = 0x000fffffffffffff
+	const quietBit uint64 = 0x0008000000000000
+	mantissa := bits & mantissaMask
+	return (bits&expMask) == expMask && (mantissa&quietBit) != 0
 }
 
 // compileAndInstantiate compiles WAT source with watgo and instantiates it.
