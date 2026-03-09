@@ -2,6 +2,7 @@ package textformat
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -263,6 +264,18 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm, SourceLoc: instrLoc})
 
+	case "f32.const":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "f32.const expects 1 operand")
+			return
+		}
+		imm, ok := lowerF32ConstOperand(pi.Operands[0])
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid f32.const operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm, SourceLoc: instrLoc})
+
 	case "drop":
 		if len(pi.Operands) != 0 {
 			fl.diagf(instrLoc, "drop expects no operands")
@@ -462,6 +475,19 @@ func lowerI64ConstOperand(op Operand) (int64, bool) {
 	return int64(bits), true
 }
 
+// lowerF32ConstOperand resolves op as an f32.const immediate.
+// It returns IEEE-754 f32 bits and true on success.
+func lowerF32ConstOperand(op Operand) (uint32, bool) {
+	switch o := op.(type) {
+	case *FloatOperand:
+		return parseF32LiteralBits(o.Value)
+	case *IntOperand:
+		return parseF32LiteralBits(o.Value)
+	default:
+		return 0, false
+	}
+}
+
 // lowerLocalIndexOperand resolves op as a local index using localsByName.
 // It returns the resolved index and true on success, or 0/false otherwise.
 func lowerLocalIndexOperand(op Operand, localsByName map[string]uint32) (uint32, bool) {
@@ -518,6 +544,72 @@ func parseIntLiteralBits(s string, bits int) (uint64, bool) {
 		u &= (1 << 32) - 1
 	}
 	return u, true
+}
+
+// parseF32LiteralBits parses s as an f32 literal and returns IEEE-754 bits.
+// It accepts decimal/hex float forms, and integer forms used with f32.const.
+func parseF32LiteralBits(s string) (uint32, bool) {
+	clean := strings.ReplaceAll(s, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+
+	// Fast path: Go supports decimal floats and hex floats with p-exponent.
+	if bits, ok := parseF32WithParseFloat(clean); ok {
+		return bits, true
+	}
+
+	sign, mag := splitSign(clean)
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		// Hex float forms without explicit exponent are valid in WAT.
+		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+			withExp := clean + "p0"
+			if bits, ok := parseF32WithParseFloat(withExp); ok {
+				return bits, true
+			}
+		}
+
+		// Hex integer form for f32.const (e.g. 0x0123...).
+		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
+			u, err := strconv.ParseUint(mag[2:], 16, 64)
+			if err != nil {
+				return 0, false
+			}
+			f := float32(sign * float64(u))
+			return float32bits(f), true
+		}
+	}
+
+	return 0, false
+}
+
+// parseF32WithParseFloat parses s with strconv.ParseFloat and returns f32 bits.
+func parseF32WithParseFloat(s string) (uint32, bool) {
+	f, err := strconv.ParseFloat(s, 32)
+	if err != nil {
+		return 0, false
+	}
+	return float32bits(float32(f)), true
+}
+
+// splitSign splits s into sign (+1/-1) and unsigned magnitude string.
+func splitSign(s string) (float64, string) {
+	if s == "" {
+		return 1, s
+	}
+	switch s[0] {
+	case '+':
+		return 1, s[1:]
+	case '-':
+		return -1, s[1:]
+	default:
+		return 1, s
+	}
+}
+
+// float32bits returns IEEE-754 bits for f.
+func float32bits(f float32) uint32 {
+	return math.Float32bits(f)
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.

@@ -37,6 +37,7 @@ const (
 	// Opcodes for the currently supported instruction subset.
 	opI32ConstCode   byte = 0x41
 	opI64ConstCode   byte = 0x42
+	opF32ConstCode   byte = 0x43
 	opDropCode       byte = 0x1a
 	opLocalGetCode   byte = 0x20
 	opI32AddCode     byte = 0x6a
@@ -245,6 +246,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI64Const:
 		out.WriteByte(opI64ConstCode)
 		writeSLEB128(out, instr.I64Const)
+	case wasmir.InstrF32Const:
+		out.WriteByte(opF32ConstCode)
+		writeU32LE(out, instr.F32Const)
 	case wasmir.InstrDrop:
 		out.WriteByte(opDropCode)
 	case wasmir.InstrLocalGet:
@@ -355,4 +359,11 @@ func writeSLEB128(out *bytes.Buffer, v int64) {
 
 		out.WriteByte(b | 0x80)
 	}
+}
+
+// writeU32LE writes v as a 4-byte little-endian integer.
+func writeU32LE(out *bytes.Buffer, v uint32) {
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], v)
+	out.Write(buf[:])
 }

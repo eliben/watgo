@@ -84,6 +84,9 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 		case InstrI64Const:
 			stack = append(stack, ValueTypeI64)
 
+		case InstrF32Const:
+			stack = append(stack, ValueTypeF32)
+
 		case InstrDrop:
 			if len(stack) < 1 {
 				diags.Addf("%s: drop needs 1 operand", insCtx)
@@ -173,6 +176,8 @@ func instrName(kind InstrKind) string {
 		return "i32.const"
 	case InstrI64Const:
 		return "i64.const"
+	case InstrF32Const:
+		return "f32.const"
 	case InstrDrop:
 		return "drop"
 	case InstrI32Add:

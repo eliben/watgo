@@ -14,6 +14,7 @@ const (
 	InstrLocalGet InstrKind = iota
 	InstrI32Const
 	InstrI64Const
+	InstrF32Const
 	InstrDrop
 	InstrI32Add
 	InstrI32Sub
@@ -74,5 +75,6 @@ type Instruction struct {
 	LocalIndex uint32
 	I32Const   int32
 	I64Const   int64
+	F32Const   uint32
 	SourceLoc  string
 }

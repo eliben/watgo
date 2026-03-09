@@ -306,6 +306,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: value})
+		case opF32ConstCode:
+			value, err := readU32LE(r)
+			if err != nil {
+				diags.Addf("code[%d]: read f32 immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: value})
 		case opDropCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
 		case opLocalGetCode:
@@ -503,6 +510,15 @@ func readS64(r *bytes.Reader) (int64, error) {
 	}
 
 	return 0, fmt.Errorf("overflows a 64-bit integer")
+}
+
+// readU32LE reads a 4-byte little-endian uint32 from r.
+func readU32LE(r *bytes.Reader) (uint32, error) {
+	b, err := readN(r, 4)
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint32(b), nil
 }
 
 // readName reads a WASM name from r as: u32 byte length followed by UTF-8
