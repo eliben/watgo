@@ -661,6 +661,10 @@ func parseF32LiteralBits(s string) (uint32, bool) {
 		return bits, true
 	}
 
+	// Fallback path (manual handling): we accept WAT-specific forms that
+	// ParseFloat rejects:
+	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
+	// 2) Plain hex integer literals used with f32.const (converted numerically).
 	sign, mag := splitSign(clean)
 	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
 		// Hex float forms without explicit exponent are valid in WAT.
@@ -698,6 +702,10 @@ func parseF64LiteralBits(s string) (uint64, bool) {
 		return bits, true
 	}
 
+	// Fallback path (manual handling): we accept WAT-specific forms that
+	// ParseFloat rejects:
+	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
+	// 2) Plain hex integer literals used with f64.const (converted numerically).
 	sign, mag := splitSign(clean)
 	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
 		// Hex float forms without explicit exponent are valid in WAT.
