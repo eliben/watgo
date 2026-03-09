@@ -20,6 +20,34 @@ func canonicalAddModuleBytes() []byte {
 	}
 }
 
+func canonicalFloatOpsModuleBytes() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+		0x03, 0x02, 0x01, 0x00,
+		0x0a, 0x36, 0x01, 0x34, 0x00,
+		0x43, 0x00, 0x00, 0x80, 0x3f,
+		0x8d, 0x8e, 0x8f, 0x90, 0x91,
+		0x43, 0x00, 0x00, 0x00, 0x40,
+		0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+		0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f,
+		0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+		0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+		0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5,
+		0x0b,
+	}
+}
+
+func truncatedF64ConstModuleBytes() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+		0x03, 0x02, 0x01, 0x00,
+		0x0a, 0x0b, 0x01, 0x09, 0x00,
+		0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0,
+	}
+}
+
 func TestDecodeModule_AddModule(t *testing.T) {
 	m, err := DecodeModule(canonicalAddModuleBytes())
 	if err != nil {
@@ -74,6 +102,73 @@ func TestDecodeModule_AddModule(t *testing.T) {
 	}
 }
 
+func TestDecodeModule_FloatOps(t *testing.T) {
+	m, err := DecodeModule(canonicalFloatOpsModuleBytes())
+	if err != nil {
+		t.Fatalf("DecodeModule failed: %v", err)
+	}
+
+	if len(m.Types) != 1 {
+		t.Fatalf("got %d types, want 1", len(m.Types))
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+
+	fn := m.Funcs[0]
+	if len(fn.Body) != 27 {
+		t.Fatalf("got %d body instructions, want 27", len(fn.Body))
+	}
+
+	expected := []wasmir.InstrKind{
+		wasmir.InstrF32Const,
+		wasmir.InstrF32Ceil,
+		wasmir.InstrF32Floor,
+		wasmir.InstrF32Trunc,
+		wasmir.InstrF32Nearest,
+		wasmir.InstrF32Sqrt,
+		wasmir.InstrF32Const,
+		wasmir.InstrF32Add,
+		wasmir.InstrF32Sub,
+		wasmir.InstrF32Mul,
+		wasmir.InstrF32Div,
+		wasmir.InstrF32Min,
+		wasmir.InstrF32Max,
+		wasmir.InstrF64Const,
+		wasmir.InstrF64Ceil,
+		wasmir.InstrF64Floor,
+		wasmir.InstrF64Trunc,
+		wasmir.InstrF64Nearest,
+		wasmir.InstrF64Sqrt,
+		wasmir.InstrF64Const,
+		wasmir.InstrF64Add,
+		wasmir.InstrF64Sub,
+		wasmir.InstrF64Mul,
+		wasmir.InstrF64Div,
+		wasmir.InstrF64Min,
+		wasmir.InstrF64Max,
+		wasmir.InstrEnd,
+	}
+	for i, kind := range expected {
+		if fn.Body[i].Kind != kind {
+			t.Fatalf("body[%d] kind=%v, want %v", i, fn.Body[i].Kind, kind)
+		}
+	}
+
+	if fn.Body[0].F32Const != 0x3f800000 {
+		t.Fatalf("body[0] f32 const bits=%#x, want 0x3f800000", fn.Body[0].F32Const)
+	}
+	if fn.Body[6].F32Const != 0x40000000 {
+		t.Fatalf("body[6] f32 const bits=%#x, want 0x40000000", fn.Body[6].F32Const)
+	}
+	if fn.Body[13].F64Const != 0x3ff0000000000000 {
+		t.Fatalf("body[13] f64 const bits=%#x, want 0x3ff0000000000000", fn.Body[13].F64Const)
+	}
+	if fn.Body[19].F64Const != 0x4000000000000000 {
+		t.Fatalf("body[19] f64 const bits=%#x, want 0x4000000000000000", fn.Body[19].F64Const)
+	}
+}
+
 func TestDecodeEncodeRoundTrip_AddModule(t *testing.T) {
 	orig := canonicalAddModuleBytes()
 
@@ -125,6 +220,21 @@ func TestDecodeModule_UnsupportedOpcode(t *testing.T) {
 	}
 	if !errorListContains(errs, "unsupported opcode 0xff") {
 		t.Fatalf("expected unsupported opcode diagnostic, got: %v", err)
+	}
+}
+
+func TestDecodeModule_TruncatedF64Immediate(t *testing.T) {
+	_, err := DecodeModule(truncatedF64ConstModuleBytes())
+	if err == nil {
+		t.Fatalf("DecodeModule succeeded, want error")
+	}
+
+	var errs diag.ErrorList
+	if !errors.As(err, &errs) {
+		t.Fatalf("DecodeModule error type = %T, want diag.ErrorList", err)
+	}
+	if !errorListContains(errs, "read f64 immediate") {
+		t.Fatalf("expected f64 immediate diagnostic, got: %v", err)
 	}
 }
 
