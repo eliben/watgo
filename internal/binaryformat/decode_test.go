@@ -10,6 +10,13 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+// canonicalAddModuleBytes returns the binary encoding of:
+//
+//	(module
+//	  (func (export "add") (param i32 i32) (result i32)
+//	    local.get 0
+//	    local.get 1
+//	    i32.add))
 func canonicalAddModuleBytes() []byte {
 	return []byte{
 		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -20,6 +27,36 @@ func canonicalAddModuleBytes() []byte {
 	}
 }
 
+// canonicalFloatOpsModuleBytes returns the binary encoding of:
+//
+//	(module
+//	  (func
+//	    f32.const 1.0
+//	    f32.ceil
+//	    f32.floor
+//	    f32.trunc
+//	    f32.nearest
+//	    f32.sqrt
+//	    f32.const 2.0
+//	    f32.add
+//	    f32.sub
+//	    f32.mul
+//	    f32.div
+//	    f32.min
+//	    f32.max
+//	    f64.const 1.0
+//	    f64.ceil
+//	    f64.floor
+//	    f64.trunc
+//	    f64.nearest
+//	    f64.sqrt
+//	    f64.const 2.0
+//	    f64.add
+//	    f64.sub
+//	    f64.mul
+//	    f64.div
+//	    f64.min
+//	    f64.max))
 func canonicalFloatOpsModuleBytes() []byte {
 	return []byte{
 		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -38,6 +75,13 @@ func canonicalFloatOpsModuleBytes() []byte {
 	}
 }
 
+// truncatedF64ConstModuleBytes is a malformed truncation of:
+//
+//	(module
+//	  (func
+//	    f64.const 1.0))
+//
+// The final immediate byte is intentionally missing to test decode errors.
 func truncatedF64ConstModuleBytes() []byte {
 	return []byte{
 		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
