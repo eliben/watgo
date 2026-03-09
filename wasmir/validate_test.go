@@ -155,3 +155,47 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 		t.Fatalf("got errors %q, missing export out-of-range", errs.Error())
 	}
 }
+
+func TestValidateModule_CallTypeMismatch(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{
+			{Params: []ValueType{ValueTypeI32}, Results: []ValueType{ValueTypeI32}}, // callee
+			{Params: []ValueType{}, Results: []ValueType{ValueTypeI32}},             // caller
+			{Params: []ValueType{ValueTypeF32}, Results: []ValueType{ValueTypeI32}}, // bad caller
+		},
+		Funcs: []Function{
+			{
+				TypeIdx: 0,
+				Body: []Instruction{
+					{Kind: InstrLocalGet, LocalIndex: 0},
+					{Kind: InstrEnd},
+				},
+			},
+			{
+				TypeIdx: 1,
+				Body: []Instruction{
+					{Kind: InstrI32Const, I32Const: 7},
+					{Kind: InstrCall, FuncIndex: 0},
+					{Kind: InstrEnd},
+				},
+			},
+			{
+				TypeIdx: 2,
+				Body: []Instruction{
+					{Kind: InstrLocalGet, LocalIndex: 0},
+					{Kind: InstrCall, FuncIndex: 0},
+					{Kind: InstrEnd},
+				},
+			},
+		},
+	}
+
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "call expects operand 0") {
+		t.Fatalf("got errors %q, want call operand type mismatch", errs.Error())
+	}
+}

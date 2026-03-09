@@ -22,6 +22,11 @@ type moduleLowerer struct {
 	// Lowering keeps going after errors so callers get a complete error list in
 	// one pass instead of failing at the first issue.
 	diags diag.ErrorList
+
+	// funcsByName maps function identifiers to their function indices in the
+	// source module. It is used to resolve call operands like "$f" to concrete
+	// function indices.
+	funcsByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -76,18 +81,36 @@ func LowerModule(astm *Module) (*wasmir.Module, error) {
 
 // newModuleLowerer creates a module lowerer with an empty output module.
 func newModuleLowerer() *moduleLowerer {
-	return &moduleLowerer{out: &wasmir.Module{}}
+	return &moduleLowerer{
+		out:         &wasmir.Module{},
+		funcsByName: map[string]uint32{},
+	}
 }
 
 // lowerModule lowers all functions in astm into l.out and accumulates
 // diagnostics in l.diags.
 func (l *moduleLowerer) lowerModule(astm *Module) {
+	l.collectFunctionNames(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
 			l.diags.Addf("func[%d]: nil function", i)
 			continue
 		}
 		l.lowerFunction(i, f)
+	}
+}
+
+// collectFunctionNames pre-scans astm and records named function indices.
+func (l *moduleLowerer) collectFunctionNames(astm *Module) {
+	for i, f := range astm.Funcs {
+		if f == nil || f.Id == "" {
+			continue
+		}
+		if prev, exists := l.funcsByName[f.Id]; exists {
+			l.diags.Addf("func[%d] %s: duplicate function id (first seen at func[%d])", i, f.Id, prev)
+			continue
+		}
+		l.funcsByName[f.Id] = uint32(i)
 	}
 }
 
@@ -240,6 +263,17 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex, SourceLoc: instrLoc})
+	case "call":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "call expects 1 operand")
+			return
+		}
+		funcIndex, ok := lowerFuncIndexOperand(pi.Operands[0], fl.mod.funcsByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid call operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrCall, FuncIndex: funcIndex, SourceLoc: instrLoc})
 
 	case "i32.const":
 		if len(pi.Operands) != 1 {
@@ -597,6 +631,20 @@ func lowerLocalIndexOperand(op Operand, localsByName map[string]uint32) (uint32,
 	switch o := op.(type) {
 	case *IdOperand:
 		idx, ok := localsByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerFuncIndexOperand resolves op as a function index using funcsByName.
+// It returns the resolved index and true on success, or 0/false otherwise.
+func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := funcsByName[o.Value]
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)

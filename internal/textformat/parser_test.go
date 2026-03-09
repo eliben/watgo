@@ -176,6 +176,79 @@ func TestParseModule_FoldedInstructions(t *testing.T) {
 	}
 }
 
+func TestParseModule_MultiParamAndResultClauses(t *testing.T) {
+	wat := `(module
+  (func (param i32 i64) (result i32 i64)
+    local.get 0
+    local.get 1
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+
+	f := m.Funcs[0]
+	if len(f.TyUse.Params) != 2 {
+		t.Fatalf("got %d params, want 2", len(f.TyUse.Params))
+	}
+	if got := f.TyUse.Params[0].Ty.String(); got != "i32" {
+		t.Fatalf("param0 type=%q, want i32", got)
+	}
+	if got := f.TyUse.Params[1].Ty.String(); got != "i64" {
+		t.Fatalf("param1 type=%q, want i64", got)
+	}
+
+	if len(f.TyUse.Results) != 2 {
+		t.Fatalf("got %d results, want 2", len(f.TyUse.Results))
+	}
+	if got := f.TyUse.Results[0].Ty.String(); got != "i32" {
+		t.Fatalf("result0 type=%q, want i32", got)
+	}
+	if got := f.TyUse.Results[1].Ty.String(); got != "i64" {
+		t.Fatalf("result1 type=%q, want i64", got)
+	}
+}
+
+func TestParseModule_FoldedCall(t *testing.T) {
+	wat := `(module
+  (func $callee (result i32)
+    (i32.const 42)
+  )
+  (func (result i32)
+    (call $callee)
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Funcs) != 2 {
+		t.Fatalf("got %d funcs, want 2", len(m.Funcs))
+	}
+
+	f := m.Funcs[1]
+	if len(f.Instrs) != 1 {
+		t.Fatalf("got %d instructions, want 1", len(f.Instrs))
+	}
+	call := mustPlainInstr(t, f.Instrs[0])
+	if call.Name != "call" {
+		t.Fatalf("instruction name=%q, want call", call.Name)
+	}
+	if len(call.Operands) != 1 {
+		t.Fatalf("call has %d operands, want 1", len(call.Operands))
+	}
+	op, ok := call.Operands[0].(*IdOperand)
+	if !ok || op.Value != "$callee" {
+		t.Fatalf("call operand=%T(%v), want *IdOperand($callee)", call.Operands[0], call.Operands[0])
+	}
+}
+
 func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
 	wat := `(module
   (func

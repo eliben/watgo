@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -546,6 +547,9 @@ func parseF32LiteralBits(s string) (uint32, error) {
 				}
 			}
 		}
+		if bits, ok := parseIntegerLiteralF32Bits(clean); ok {
+			return bits, nil
+		}
 		return 0, fmt.Errorf("invalid f32 literal %q", s)
 	}
 	return math.Float32bits(float32(f)), nil
@@ -585,9 +589,74 @@ func parseF64LiteralBits(s string) (uint64, error) {
 
 	f, err := strconv.ParseFloat(clean, 64)
 	if err != nil {
+		if bits, ok := parseIntegerLiteralF64Bits(clean); ok {
+			return bits, nil
+		}
 		return 0, fmt.Errorf("invalid f64 literal %q", s)
 	}
 	return math.Float64bits(f), nil
+}
+
+func parseIntegerLiteralF32Bits(s string) (uint32, bool) {
+	sign, mag := splitSign(s)
+	if mag == "" || strings.Contains(mag, ".") {
+		return 0, false
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if strings.ContainsAny(mag, "pP") {
+			return 0, false
+		}
+	} else if strings.ContainsAny(mag, "eE") {
+		return 0, false
+	}
+
+	bi, ok := new(big.Int).SetString(mag, 0)
+	if !ok {
+		return 0, false
+	}
+
+	bf := new(big.Float).SetMode(big.ToNearestEven)
+	bf.SetInt(bi)
+	if sign < 0 {
+		bf.Neg(bf)
+	}
+
+	f, _ := bf.Float32()
+	if math.IsInf(float64(f), 0) {
+		return 0, false
+	}
+	return math.Float32bits(f), true
+}
+
+func parseIntegerLiteralF64Bits(s string) (uint64, bool) {
+	sign, mag := splitSign(s)
+	if mag == "" || strings.Contains(mag, ".") {
+		return 0, false
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if strings.ContainsAny(mag, "pP") {
+			return 0, false
+		}
+	} else if strings.ContainsAny(mag, "eE") {
+		return 0, false
+	}
+
+	bi, ok := new(big.Int).SetString(mag, 0)
+	if !ok {
+		return 0, false
+	}
+
+	bf := new(big.Float).SetMode(big.ToNearestEven)
+	bf.SetInt(bi)
+	if sign < 0 {
+		bf.Neg(bf)
+	}
+
+	f, _ := bf.Float64()
+	if math.IsInf(f, 0) {
+		return 0, false
+	}
+	return math.Float64bits(f), true
 }
 
 // splitSign splits s into sign (+1/-1) and unsigned magnitude string.

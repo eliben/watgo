@@ -329,6 +329,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
+		case opCallCode:
+			funcIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: call missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrCall, FuncIndex: funcIndex})
 		case opI32AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
 		case opI32SubCode:

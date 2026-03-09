@@ -121,9 +121,9 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 		// TODO: enforce order on param/result/local clauses?
 		elem := sx.list[cursor]
 		if elem.HeadKeyword() == "param" {
-			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem))
+			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem)...)
 		} else if elem.HeadKeyword() == "result" {
-			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem))
+			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem)...)
 		} else if elem.HeadKeyword() == "local" {
 			f.Locals = append(f.Locals, p.parseLocalDecl(elem))
 		} else {
@@ -137,31 +137,60 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 	return f
 }
 
-func (p *Parser) parseParamDecl(sx *SExpr) *ParamDecl {
-	pd := &ParamDecl{loc: sx.loc}
+// parseParamDecl parses one "(param ...)" clause and returns one or more
+// ParamDecl entries.
+//
+// Supported forms are:
+//   - named single param: "(param $x i32)" -> one ParamDecl {Id: "$x", Ty: i32}
+//   - anonymous multi param: "(param i32 i64)" -> two ParamDecl entries
+//
+// On malformed input it emits a parser error and returns nil.
+func (p *Parser) parseParamDecl(sx *SExpr) []*ParamDecl {
+	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
+		return []*ParamDecl{{
+			Id:  p.matchElement(sx, 1, ID),
+			Ty:  p.parseType(sx.list[2]),
+			loc: sx.loc,
+		}}
+	}
 
-	if len(sx.list) == 3 {
-		pd.Id = p.matchElement(sx, 1, ID)
-		pd.Ty = p.parseType(sx.list[2])
-	} else if len(sx.list) == 2 {
-		pd.Ty = p.parseType(sx.list[1])
-	} else {
+	if len(sx.list) < 2 {
 		p.emitError(sx.loc, "invalid '(param' declaration")
 		return nil
 	}
-	return pd
+
+	out := make([]*ParamDecl, 0, len(sx.list)-1)
+	for i := 1; i < len(sx.list); i++ {
+		out = append(out, &ParamDecl{
+			Ty:  p.parseType(sx.list[i]),
+			loc: sx.loc,
+		})
+	}
+	return out
 }
 
-func (p *Parser) parseResultDecl(sx *SExpr) *ResultDecl {
-	rd := &ResultDecl{loc: sx.loc}
-
-	if len(sx.list) == 2 {
-		rd.Ty = p.parseType(sx.list[1])
-	} else {
+// parseResultDecl parses one "(result ...)" clause and returns one or more
+// ResultDecl entries.
+//
+// Supported forms are:
+//   - single result: "(result i32)" -> one ResultDecl {Ty: i32}
+//   - multi result: "(result i32 i64)" -> two ResultDecl entries
+//
+// On malformed input it emits a parser error and returns nil.
+func (p *Parser) parseResultDecl(sx *SExpr) []*ResultDecl {
+	if len(sx.list) < 2 {
 		p.emitError(sx.loc, "invalid '(result' declaration")
 		return nil
 	}
-	return rd
+
+	out := make([]*ResultDecl, 0, len(sx.list)-1)
+	for i := 1; i < len(sx.list); i++ {
+		out = append(out, &ResultDecl{
+			Ty:  p.parseType(sx.list[i]),
+			loc: sx.loc,
+		})
+	}
+	return out
 }
 
 func (p *Parser) parseLocalDecl(sx *SExpr) *LocalDecl {
@@ -226,6 +255,22 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
 			default:
 				p.emitError(operandSx.loc, "local.get operand must be ID or INT")
+			}
+			cursor += 2
+		case "call":
+			if cursor+1 >= len(sx.list) {
+				p.emitError(elem.loc, "call expects one operand")
+				cursor++
+				continue
+			}
+
+			operandSx := sx.list[cursor+1]
+			operand := p.parseOperand(operandSx)
+			switch operand.(type) {
+			case *IdOperand, *IntOperand:
+				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
+			default:
+				p.emitError(operandSx.loc, "call operand must be ID or INT")
 			}
 			cursor += 2
 

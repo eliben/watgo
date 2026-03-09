@@ -188,3 +188,38 @@ func TestLowerModule_NamedFunctionInDiagnostics(t *testing.T) {
 		t.Fatalf("got errors %q, want named function context", errs.Error())
 	}
 }
+
+func TestLowerModule_LowersCallByName(t *testing.T) {
+	wat := `(module
+  (func $callee (result i32)
+    (i32.const 42)
+  )
+  (func (export "caller") (result i32)
+    call $callee
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	if len(m.Funcs) != 2 {
+		t.Fatalf("got %d funcs, want 2", len(m.Funcs))
+	}
+
+	body := m.Funcs[1].Body
+	if len(body) != 2 {
+		t.Fatalf("got %d body instructions, want 2", len(body))
+	}
+	if body[0].Kind != wasmir.InstrCall || body[0].FuncIndex != 0 {
+		t.Fatalf("body[0]=%#v, want call funcidx 0", body[0])
+	}
+	if body[1].Kind != wasmir.InstrEnd {
+		t.Fatalf("body[1]=%#v, want end", body[1])
+	}
+}

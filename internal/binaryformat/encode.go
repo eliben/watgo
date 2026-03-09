@@ -43,6 +43,7 @@ const (
 	opF64ConstCode   byte = 0x44
 	opDropCode       byte = 0x1a
 	opLocalGetCode   byte = 0x20
+	opCallCode       byte = 0x10
 	opI32AddCode     byte = 0x6a
 	opI32SubCode     byte = 0x6b
 	opI32MulCode     byte = 0x6c
@@ -271,6 +272,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrLocalGet:
 		out.WriteByte(opLocalGetCode)
 		writeULEB128(out, instr.LocalIndex)
+	case wasmir.InstrCall:
+		out.WriteByte(opCallCode)
+		writeULEB128(out, instr.FuncIndex)
 	case wasmir.InstrI32Add:
 		out.WriteByte(opI32AddCode)
 	case wasmir.InstrI32Sub:

@@ -18,7 +18,7 @@ func ValidateModule(m *Module) error {
 			diags.Addf("func[%d] has invalid type index %d", i, f.TypeIdx)
 			continue
 		}
-		funcErrs := validateFunctionBody(m.Types[f.TypeIdx], f)
+		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f)
 		for _, err := range funcErrs {
 			diags.Addf("func[%d]: %v", i, err)
 		}
@@ -43,7 +43,7 @@ func ValidateModule(m *Module) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
+func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 	var diags diag.ErrorList
 	funcCtx := "function"
 	if f.SourceLoc != "" {
@@ -77,6 +77,35 @@ func validateFunctionBody(ft FuncType, f Function) diag.ErrorList {
 				continue
 			}
 			stack = append(stack, locals[ins.LocalIndex])
+		case InstrCall:
+			if int(ins.FuncIndex) >= len(m.Funcs) {
+				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
+				continue
+			}
+			callee := m.Funcs[ins.FuncIndex]
+			if int(callee.TypeIdx) >= len(m.Types) {
+				diags.Addf("%s: call target func[%d] has invalid type index %d", insCtx, ins.FuncIndex, callee.TypeIdx)
+				continue
+			}
+			calleeType := m.Types[callee.TypeIdx]
+			if len(stack) < len(calleeType.Params) {
+				diags.Addf("%s: call needs %d operands", insCtx, len(calleeType.Params))
+				continue
+			}
+			base := len(stack) - len(calleeType.Params)
+			ok := true
+			for j, pt := range calleeType.Params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: call expects operand %d to be %d", insCtx, j, pt)
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			stack = stack[:base]
+			stack = append(stack, calleeType.Results...)
 
 		case InstrI32Const:
 			stack = append(stack, ValueTypeI32)
@@ -200,6 +229,8 @@ func instrName(kind InstrKind) string {
 	switch kind {
 	case InstrLocalGet:
 		return "local.get"
+	case InstrCall:
+		return "call"
 	case InstrI32Const:
 		return "i32.const"
 	case InstrI64Const:
