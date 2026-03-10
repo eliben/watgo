@@ -223,3 +223,50 @@ func TestLowerModule_LowersCallByName(t *testing.T) {
 		t.Fatalf("body[1]=%#v, want end", body[1])
 	}
 }
+
+func TestLowerModule_LowersFoldedIf(t *testing.T) {
+	wat := `(module
+  (func (result i64)
+    (if (result i64) (i64.eqz (i64.const 0))
+      (then (i64.const 1))
+      (else (i64.const 2))
+    )
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) != 8 {
+		t.Fatalf("got %d body instructions, want 8", len(body))
+	}
+	if body[0].Kind != wasmir.InstrI64Const {
+		t.Fatalf("body[0]=%#v, want i64.const", body[0])
+	}
+	if body[1].Kind != wasmir.InstrI64Eqz {
+		t.Fatalf("body[1]=%#v, want i64.eqz", body[1])
+	}
+	if body[2].Kind != wasmir.InstrIf || !body[2].BlockHasResult || body[2].BlockType != wasmir.ValueTypeI64 {
+		t.Fatalf("body[2]=%#v, want if with i64 result", body[2])
+	}
+	if body[4].Kind != wasmir.InstrElse {
+		t.Fatalf("body[4]=%#v, want else", body[4])
+	}
+	if body[6].Kind != wasmir.InstrEnd {
+		t.Fatalf("body[6]=%#v, want end (if)", body[6])
+	}
+	if body[7].Kind != wasmir.InstrEnd {
+		t.Fatalf("body[7]=%#v, want end (func)", body[7])
+	}
+}

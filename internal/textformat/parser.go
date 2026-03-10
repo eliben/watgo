@@ -229,7 +229,10 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 	for cursor := idx; cursor < len(sx.list); {
 		elem := sx.list[cursor]
 		if elem.IsList() {
-			out = append(out, p.parseFoldedInstr(elem)...)
+			fi := p.parseFoldedInstr(elem)
+			if fi != nil {
+				out = append(out, fi)
+			}
 			cursor++
 			continue
 		}
@@ -285,8 +288,8 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 	return out
 }
 
-// parseFoldedInstr parses one folded instruction expression and linearizes it
-// into plain instructions in execution order.
+// parseFoldedInstr parses one folded instruction expression and preserves it
+// as a folded AST node.
 //
 // It expects sx to be a list of the form "(op arg...)", where each arg is
 // either a nested folded instruction list or a plain operand token.
@@ -295,12 +298,9 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 //
 //	(i32.add (local.get $x) (local.get $y))
 //
-// is lowered to:
-//
-//	local.get $x
-//	local.get $y
-//	i32.add
-func (p *Parser) parseFoldedInstr(sx *SExpr) []Instruction {
+// and is represented as a FoldedInstr("i32.add") with two nested
+// FoldedInstr children.
+func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	if !sx.IsList() || len(sx.list) == 0 {
 		p.emitError(sx.loc, "expected folded instruction list")
 		return nil
@@ -312,13 +312,17 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) []Instruction {
 	}
 
 	name := head.tok.value
-	var out []Instruction
-	var operands []Operand
+	var args []FoldedArg
 
 	for i := 1; i < len(sx.list); i++ {
 		elem := sx.list[i]
 		if elem.IsList() {
-			out = append(out, p.parseFoldedInstr(elem)...)
+			child := p.parseFoldedInstr(elem)
+			if child == nil {
+				p.emitError(elem.loc, fmt.Sprintf("invalid nested instruction for %s", name))
+				continue
+			}
+			args = append(args, FoldedArg{Instr: child})
 			continue
 		}
 
@@ -327,11 +331,10 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) []Instruction {
 			p.emitError(elem.loc, fmt.Sprintf("invalid operand for %s", name))
 			continue
 		}
-		operands = append(operands, op)
+		args = append(args, FoldedArg{Operand: op})
 	}
 
-	out = append(out, &PlainInstr{Name: name, Operands: operands, loc: head.loc})
-	return out
+	return &FoldedInstr{Name: name, Args: args, loc: head.loc}
 }
 
 func (p *Parser) parseOperand(sx *SExpr) Operand {

@@ -65,6 +65,13 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 	locals = append(locals, f.Locals...)
 
 	stack := make([]ValueType, 0)
+	type ifFrame struct {
+		entryHeight int
+		hasResult   bool
+		resultType  ValueType
+		sawElse     bool
+	}
+	var ifStack []ifFrame
 
 	for i, ins := range f.Body {
 		insCtx := fmt.Sprintf("instruction %d", i)
@@ -72,6 +79,43 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
 		}
 		switch ins.Kind {
+		case InstrIf:
+			if len(stack) < 1 {
+				diags.Addf("%s: if needs 1 i32 condition operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: if expects i32 condition operand", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-1]
+			ifStack = append(ifStack, ifFrame{
+				entryHeight: len(stack),
+				hasResult:   ins.BlockHasResult,
+				resultType:  ins.BlockType,
+			})
+		case InstrElse:
+			if len(ifStack) == 0 {
+				diags.Addf("%s: else without matching if", insCtx)
+				continue
+			}
+			frame := ifStack[len(ifStack)-1]
+			if frame.sawElse {
+				diags.Addf("%s: duplicate else for if", insCtx)
+				continue
+			}
+			wantHeight := frame.entryHeight
+			if frame.hasResult {
+				wantHeight++
+			}
+			if len(stack) != wantHeight {
+				diags.Addf("%s: then-branch stack height mismatch: got %d want %d", insCtx, len(stack), wantHeight)
+			} else if frame.hasResult && stack[frame.entryHeight] != frame.resultType {
+				diags.Addf("%s: then-branch result type mismatch: got %s want %s", insCtx, valueTypeName(stack[frame.entryHeight]), valueTypeName(frame.resultType))
+			}
+			stack = stack[:frame.entryHeight]
+			frame.sawElse = true
+			ifStack[len(ifStack)-1] = frame
 		case InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
@@ -153,6 +197,16 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
+		case InstrI64Eqz:
+			if len(stack) < 1 {
+				diags.Addf("%s: i64.eqz needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 {
+				diags.Addf("%s: i64.eqz expects i64 operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI32
 
 		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
 			name := instrName(ins.Kind)
@@ -205,6 +259,29 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			// Unary f64 operators preserve top-of-stack type.
 
 		case InstrEnd:
+			if len(ifStack) > 0 {
+				frame := ifStack[len(ifStack)-1]
+				ifStack = ifStack[:len(ifStack)-1]
+
+				wantHeight := frame.entryHeight
+				if frame.hasResult {
+					wantHeight++
+				}
+				if len(stack) != wantHeight {
+					diags.Addf("%s: if-branch stack height mismatch: got %d want %d", insCtx, len(stack), wantHeight)
+				} else if frame.hasResult && stack[frame.entryHeight] != frame.resultType {
+					diags.Addf("%s: if-branch result type mismatch: got %s want %s", insCtx, valueTypeName(stack[frame.entryHeight]), valueTypeName(frame.resultType))
+				}
+				if frame.hasResult && !frame.sawElse {
+					diags.Addf("%s: if with result requires else branch", insCtx)
+				}
+
+				stack = stack[:frame.entryHeight]
+				if frame.hasResult {
+					stack = append(stack, frame.resultType)
+				}
+				continue
+			}
 			if i != len(f.Body)-1 {
 				diags.Addf("%s: end must be last", insCtx)
 			}
@@ -212,6 +289,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 		default:
 			diags.Addf("%s: unsupported instruction kind %d", insCtx, ins.Kind)
 		}
+	}
+	if len(ifStack) > 0 {
+		diags.Addf("%sunterminated if: missing end", funcLocCtx)
 	}
 
 	if len(stack) != len(ft.Results) {
@@ -285,6 +365,10 @@ func instrName(kind InstrKind) string {
 		return "local.get"
 	case InstrCall:
 		return "call"
+	case InstrIf:
+		return "if"
+	case InstrElse:
+		return "else"
 	case InstrI32Const:
 		return "i32.const"
 	case InstrI64Const:
@@ -307,6 +391,8 @@ func instrName(kind InstrKind) string {
 		return "i32.div_u"
 	case InstrI64Add:
 		return "i64.add"
+	case InstrI64Eqz:
+		return "i64.eqz"
 	case InstrI64Sub:
 		return "i64.sub"
 	case InstrI64Mul:

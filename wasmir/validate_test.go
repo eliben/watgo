@@ -205,3 +205,30 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 		t.Fatalf("got errors %q, want call operand type mismatch", errs.Error())
 	}
 }
+
+func TestValidateModule_IfElseWithResult(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{
+			{Params: nil, Results: []ValueType{ValueTypeI64}},
+		},
+		Funcs: []Function{
+			{
+				TypeIdx: 0,
+				Body: []Instruction{
+					{Kind: InstrI64Const, I64Const: 0},
+					{Kind: InstrI64Eqz},
+					{Kind: InstrIf, BlockHasResult: true, BlockType: ValueTypeI64},
+					{Kind: InstrI64Const, I64Const: 1},
+					{Kind: InstrElse},
+					{Kind: InstrI64Const, I64Const: 2},
+					{Kind: InstrEnd},
+					{Kind: InstrEnd},
+				},
+			},
+		},
+	}
+
+	if err := ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+}

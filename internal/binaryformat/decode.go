@@ -283,6 +283,7 @@ func decodeLocals(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasm
 
 func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasmir.Instruction {
 	var out []wasmir.Instruction
+	depth := 0
 
 	for !atEOF(r) {
 		op, err := readByte(r)
@@ -292,6 +293,30 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		}
 
 		switch op {
+		case opIfCode:
+			blockType, err := readByte(r)
+			if err != nil {
+				diags.Addf("code[%d]: if missing/invalid block type: %v", funcIdx, err)
+				return out
+			}
+			ins := wasmir.Instruction{Kind: wasmir.InstrIf}
+			if blockType != blockTypeEmptyCode {
+				vt, ok := decodeValueType(blockType)
+				if !ok {
+					diags.Addf("code[%d]: unsupported if block type 0x%x", funcIdx, blockType)
+					return out
+				}
+				ins.BlockHasResult = true
+				ins.BlockType = vt
+			}
+			out = append(out, ins)
+			depth++
+		case opElseCode:
+			if depth == 0 {
+				diags.Addf("code[%d]: unexpected else", funcIdx)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrElse})
 		case opI32ConstCode:
 			value, err := readS32(r)
 			if err != nil {
@@ -348,6 +373,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
 		case opI64AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
+		case opI64EqzCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Eqz})
 		case opI64SubCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub})
 		case opI64MulCode:
@@ -402,7 +429,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Nearest})
 		case opEndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
-			return out
+			if depth == 0 {
+				return out
+			}
+			depth--
 		default:
 			diags.Addf("code[%d]: unsupported opcode 0x%x", funcIdx, op)
 			return out

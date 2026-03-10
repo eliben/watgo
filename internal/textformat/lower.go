@@ -250,12 +250,123 @@ func (fl *functionLowerer) lowerLocals() {
 // lowerInstrs lowers all instructions in fl.fn into fl.body.
 func (fl *functionLowerer) lowerInstrs() {
 	for _, instr := range fl.fn.Instrs {
-		pi, ok := instr.(*PlainInstr)
-		if !ok {
-			fl.diagf(instr.Loc(), "unsupported instruction type %T", instr)
+		fl.lowerInstruction(instr)
+	}
+}
+
+// lowerInstruction lowers one instruction node (plain or folded).
+func (fl *functionLowerer) lowerInstruction(instr Instruction) {
+	switch in := instr.(type) {
+	case *PlainInstr:
+		fl.lowerPlainInstr(in)
+	case *FoldedInstr:
+		fl.lowerFoldedInstr(in)
+	default:
+		fl.diagf(instr.Loc(), "unsupported instruction type %T", instr)
+	}
+}
+
+// lowerFoldedInstr lowers one folded instruction expression.
+func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
+	if fi == nil {
+		fl.diagf("", "nil folded instruction")
+		return
+	}
+	if fi.Name == "if" {
+		fl.lowerFoldedIf(fi)
+		return
+	}
+
+	var operands []Operand
+	for _, arg := range fi.Args {
+		if arg.Instr != nil {
+			fl.lowerInstruction(arg.Instr)
 			continue
 		}
-		fl.lowerPlainInstr(pi)
+		if arg.Operand != nil {
+			operands = append(operands, arg.Operand)
+			continue
+		}
+		fl.diagf(fi.Loc(), "invalid folded argument in %q", fi.Name)
+	}
+
+	fl.lowerPlainInstr(&PlainInstr{Name: fi.Name, Operands: operands, loc: fi.loc})
+}
+
+// lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
+func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
+	var resultOp Operand
+	var thenClause *FoldedInstr
+	var elseClause *FoldedInstr
+
+	for _, arg := range fi.Args {
+		if arg.Operand != nil {
+			fl.diagf(arg.Operand.Loc(), "if expects nested expressions/clauses")
+			continue
+		}
+
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if !ok {
+			fl.lowerInstruction(arg.Instr)
+			continue
+		}
+
+		switch nested.Name {
+		case "result":
+			if len(nested.Args) != 1 || nested.Args[0].Operand == nil || nested.Args[0].Instr != nil {
+				fl.diagf(nested.Loc(), "invalid if result clause")
+				continue
+			}
+			if resultOp != nil {
+				fl.diagf(nested.Loc(), "duplicate if result clause")
+				continue
+			}
+			resultOp = nested.Args[0].Operand
+		case "then":
+			if thenClause != nil {
+				fl.diagf(nested.Loc(), "duplicate then clause")
+				continue
+			}
+			thenClause = nested
+		case "else":
+			if elseClause != nil {
+				fl.diagf(nested.Loc(), "duplicate else clause")
+				continue
+			}
+			elseClause = nested
+		default:
+			// Condition expressions.
+			fl.lowerInstruction(nested)
+		}
+	}
+
+	if thenClause == nil {
+		fl.diagf(fi.Loc(), "if requires then clause")
+		return
+	}
+
+	var ifOps []Operand
+	if resultOp != nil {
+		ifOps = append(ifOps, resultOp)
+	}
+	fl.lowerPlainInstr(&PlainInstr{Name: "if", Operands: ifOps, loc: fi.loc})
+	fl.lowerFoldedClauseInstrs(thenClause)
+	if elseClause != nil {
+		fl.lowerPlainInstr(&PlainInstr{Name: "else", loc: elseClause.loc})
+		fl.lowerFoldedClauseInstrs(elseClause)
+	}
+	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
+}
+
+// lowerFoldedClauseInstrs lowers all instruction children in a then/else
+// folded clause.
+func (fl *functionLowerer) lowerFoldedClauseInstrs(clause *FoldedInstr) {
+	for _, arg := range clause.Args {
+		if arg.Instr == nil || arg.Operand != nil {
+			fl.diagf(clause.Loc(), "%s clause expects nested instruction expressions", clause.Name)
+			continue
+		}
+		fl.lowerInstruction(arg.Instr)
 	}
 }
 
@@ -286,6 +397,34 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrCall, FuncIndex: funcIndex, SourceLoc: instrLoc})
+	case "if":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "if expects at most 1 operand")
+			return
+		}
+		ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: instrLoc}
+		if len(pi.Operands) == 1 {
+			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0])
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid if result type")
+				return
+			}
+			ins.BlockHasResult = true
+			ins.BlockType = vt
+		}
+		fl.emitInstr(ins)
+	case "else":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "else expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
+	case "end":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "end expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: instrLoc})
 
 	case "i32.const":
 		if len(pi.Operands) != 1 {
@@ -383,6 +522,12 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Add, SourceLoc: instrLoc})
+	case "i64.eqz":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.eqz expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Eqz, SourceLoc: instrLoc})
 
 	case "i64.sub":
 		if len(pi.Operands) != 0 {
@@ -667,6 +812,16 @@ func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, b
 	default:
 		return 0, false
 	}
+}
+
+// lowerBlockResultTypeOperand resolves op as a block/if result type keyword.
+// It returns the lowered type and true on success.
+func lowerBlockResultTypeOperand(op Operand) (wasmir.ValueType, bool) {
+	kw, ok := op.(*KeywordOperand)
+	if !ok {
+		return 0, false
+	}
+	return lowerValueType(&BasicType{Name: kw.Value})
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.

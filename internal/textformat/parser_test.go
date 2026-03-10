@@ -14,6 +14,15 @@ func mustPlainInstr(t *testing.T, instr Instruction) *PlainInstr {
 	return pi
 }
 
+func mustFoldedInstr(t *testing.T, instr Instruction) *FoldedInstr {
+	t.Helper()
+	fi, ok := instr.(*FoldedInstr)
+	if !ok {
+		t.Fatalf("expected *FoldedInstr, got %T", instr)
+	}
+	return fi
+}
+
 func TestParseSmoke(t *testing.T) {
 	// Smoke test for parsing a module, checking the parsed AST without using
 	// its textual/debug representation.
@@ -150,29 +159,29 @@ func TestParseModule_FoldedInstructions(t *testing.T) {
 		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
 	}
 	f := m.Funcs[0]
-	if len(f.Instrs) != 3 {
-		t.Fatalf("got %d instructions, want 3", len(f.Instrs))
+	if len(f.Instrs) != 1 {
+		t.Fatalf("got %d instructions, want 1 folded instruction", len(f.Instrs))
 	}
 
-	i0 := mustPlainInstr(t, f.Instrs[0])
-	if i0.Name != "i32.const" || len(i0.Operands) != 1 {
-		t.Fatalf("instr0=%#v, want i32.const with one operand", i0)
-	}
-	if op, ok := i0.Operands[0].(*IntOperand); !ok || op.Value != "1" {
-		t.Fatalf("instr0 operand=%T(%v), want *IntOperand(\"1\")", i0.Operands[0], i0.Operands[0])
+	root := mustFoldedInstr(t, f.Instrs[0])
+	if root.Name != "i32.add" || len(root.Args) != 2 {
+		t.Fatalf("root=%#v, want i32.add with 2 nested args", root)
 	}
 
-	i1 := mustPlainInstr(t, f.Instrs[1])
-	if i1.Name != "i32.const" || len(i1.Operands) != 1 {
-		t.Fatalf("instr1=%#v, want i32.const with one operand", i1)
+	a0 := mustFoldedInstr(t, root.Args[0].Instr)
+	if a0.Name != "i32.const" || len(a0.Args) != 1 {
+		t.Fatalf("arg0=%#v, want i32.const with one operand", a0)
 	}
-	if op, ok := i1.Operands[0].(*IntOperand); !ok || op.Value != "2" {
-		t.Fatalf("instr1 operand=%T(%v), want *IntOperand(\"2\")", i1.Operands[0], i1.Operands[0])
+	if op, ok := a0.Args[0].Operand.(*IntOperand); !ok || op.Value != "1" {
+		t.Fatalf("arg0 operand=%T(%v), want *IntOperand(\"1\")", a0.Args[0].Operand, a0.Args[0].Operand)
 	}
 
-	i2 := mustPlainInstr(t, f.Instrs[2])
-	if i2.Name != "i32.add" || len(i2.Operands) != 0 {
-		t.Fatalf("instr2=%#v, want i32.add with no operands", i2)
+	a1 := mustFoldedInstr(t, root.Args[1].Instr)
+	if a1.Name != "i32.const" || len(a1.Args) != 1 {
+		t.Fatalf("arg1=%#v, want i32.const with one operand", a1)
+	}
+	if op, ok := a1.Args[0].Operand.(*IntOperand); !ok || op.Value != "2" {
+		t.Fatalf("arg1 operand=%T(%v), want *IntOperand(\"2\")", a1.Args[0].Operand, a1.Args[0].Operand)
 	}
 }
 
@@ -236,16 +245,47 @@ func TestParseModule_FoldedCall(t *testing.T) {
 	if len(f.Instrs) != 1 {
 		t.Fatalf("got %d instructions, want 1", len(f.Instrs))
 	}
-	call := mustPlainInstr(t, f.Instrs[0])
+	call := mustFoldedInstr(t, f.Instrs[0])
 	if call.Name != "call" {
 		t.Fatalf("instruction name=%q, want call", call.Name)
 	}
-	if len(call.Operands) != 1 {
-		t.Fatalf("call has %d operands, want 1", len(call.Operands))
+	if len(call.Args) != 1 {
+		t.Fatalf("call has %d args, want 1", len(call.Args))
 	}
-	op, ok := call.Operands[0].(*IdOperand)
+	op, ok := call.Args[0].Operand.(*IdOperand)
 	if !ok || op.Value != "$callee" {
-		t.Fatalf("call operand=%T(%v), want *IdOperand($callee)", call.Operands[0], call.Operands[0])
+		t.Fatalf("call operand=%T(%v), want *IdOperand($callee)", call.Args[0].Operand, call.Args[0].Operand)
+	}
+}
+
+func TestParseModule_FoldedIf(t *testing.T) {
+	wat := `(module
+  (func (param i64) (result i64)
+    (if (result i64) (i64.eqz (local.get 0))
+      (then (i64.const 1))
+      (else (i64.const 2))
+    )
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+
+	f := m.Funcs[0]
+	if len(f.Instrs) != 1 {
+		t.Fatalf("got %d instructions, want 1 folded if", len(f.Instrs))
+	}
+	ifi := mustFoldedInstr(t, f.Instrs[0])
+	if ifi.Name != "if" {
+		t.Fatalf("root name=%q, want if", ifi.Name)
+	}
+	if len(ifi.Args) != 4 {
+		t.Fatalf("if args=%d, want 4 (result, cond, then, else)", len(ifi.Args))
 	}
 }
 

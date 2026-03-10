@@ -70,18 +70,37 @@
     (call $swap-f64-i32 (f64.const 1) (i32.const 2))
   )
 
+  ;; Composition
+
   (func (export "as-binary-all-operands") (result i32)
-    (call $id-i32 (i32.add (i32.const 3) (i32.const 4)))
+    (i32.add (call $swap-i32-i32 (i32.const 3) (i32.const 4)))
   )
+
   (func (export "as-mixed-operands") (result i32)
-    (call $f32-i32 (f32.const 0) (call $id-i32 (i32.const 32)))
+    (call $swap-i32-i32 (i32.const 3) (i32.const 4))
+    (i32.const 5)
+    (i32.add)
+    (i32.mul)
   )
+
   (func (export "as-call-all-operands") (result i32 i32)
-    (call $swap-i32-i32
-      (call $id-i32 (i32.const 4))
-      (call $id-i32 (i32.const 3))
+    (call $swap-i32-i32 (call $swap-i32-i32 (i32.const 3) (i32.const 4)))
+  )
+
+  ;; Recursion
+
+  (func $fac (export "fac") (param i64) (result i64)
+    (if (result i64) (i64.eqz (local.get 0))
+      (then (i64.const 1))
+      (else
+        (i64.mul
+          (local.get 0)
+          (call $fac (i64.sub (local.get 0) (i64.const 1)))
+        )
+      )
     )
   )
+
 )
 
 (assert_return (invoke "type-i32") (i32.const 0x132))
@@ -108,3 +127,8 @@
 (assert_return (invoke "as-binary-all-operands") (i32.const 7))
 (assert_return (invoke "as-mixed-operands") (i32.const 32))
 (assert_return (invoke "as-call-all-operands") (i32.const 3) (i32.const 4))
+
+(assert_return (invoke "fac" (i64.const 0)) (i64.const 1))
+(assert_return (invoke "fac" (i64.const 1)) (i64.const 1))
+(assert_return (invoke "fac" (i64.const 5)) (i64.const 120))
+(assert_return (invoke "fac" (i64.const 25)) (i64.const 7034535277573963776))

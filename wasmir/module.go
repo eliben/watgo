@@ -14,6 +14,8 @@ type InstrKind uint8
 const (
 	InstrLocalGet InstrKind = iota
 	InstrCall
+	InstrIf
+	InstrElse
 	InstrI32Const
 	InstrI64Const
 	InstrF32Const
@@ -25,6 +27,7 @@ const (
 	InstrI32DivS
 	InstrI32DivU
 	InstrI64Add
+	InstrI64Eqz
 	InstrI64Sub
 	InstrI64Mul
 	InstrI64DivS
@@ -88,12 +91,14 @@ type Export struct {
 }
 
 type Instruction struct {
-	Kind       InstrKind
-	LocalIndex uint32
-	FuncIndex  uint32
-	I32Const   int32
-	I64Const   int64
-	F32Const   uint32
-	F64Const   uint64
-	SourceLoc  string
+	Kind           InstrKind
+	LocalIndex     uint32
+	FuncIndex      uint32
+	BlockType      ValueType
+	BlockHasResult bool
+	I32Const       int32
+	I64Const       int64
+	F32Const       uint32
+	F64Const       uint64
+	SourceLoc      string
 }

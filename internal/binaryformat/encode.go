@@ -37,6 +37,9 @@ const (
 	exportKindFunctionCode byte = 0x00
 
 	// Opcodes for the currently supported instruction subset.
+	opIfCode         byte = 0x04
+	opElseCode       byte = 0x05
+	opEndCode        byte = 0x0b
 	opI32ConstCode   byte = 0x41
 	opI64ConstCode   byte = 0x42
 	opF32ConstCode   byte = 0x43
@@ -50,6 +53,7 @@ const (
 	opI32DivSCode    byte = 0x6d
 	opI32DivUCode    byte = 0x6e
 	opI64AddCode     byte = 0x7c
+	opI64EqzCode     byte = 0x50
 	opI64SubCode     byte = 0x7d
 	opI64MulCode     byte = 0x7e
 	opI64DivSCode    byte = 0x7f
@@ -76,7 +80,9 @@ const (
 	opF64DivCode     byte = 0xa3
 	opF64MinCode     byte = 0xa4
 	opF64MaxCode     byte = 0xa5
-	opEndCode        byte = 0x0b
+
+	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
+	blockTypeEmptyCode byte = 0x40
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -255,6 +261,20 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
+	case wasmir.InstrIf:
+		out.WriteByte(opIfCode)
+		if instr.BlockHasResult {
+			b, ok := valueTypeCode(instr.BlockType)
+			if !ok {
+				diags.Addf("func[%d] instruction[%d]: unsupported if result type %d", funcIdx, instrIdx, instr.BlockType)
+				b = blockTypeEmptyCode
+			}
+			out.WriteByte(b)
+		} else {
+			out.WriteByte(blockTypeEmptyCode)
+		}
+	case wasmir.InstrElse:
+		out.WriteByte(opElseCode)
 	case wasmir.InstrI32Const:
 		out.WriteByte(opI32ConstCode)
 		writeSLEB128(out, int64(instr.I32Const))
@@ -287,6 +307,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32DivUCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
+	case wasmir.InstrI64Eqz:
+		out.WriteByte(opI64EqzCode)
 	case wasmir.InstrI64Sub:
 		out.WriteByte(opI64SubCode)
 	case wasmir.InstrI64Mul:
