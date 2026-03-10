@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -62,6 +63,9 @@ type scriptValue struct {
 	// bits stores the raw IEEE-754/integer bit pattern used for exact
 	// comparisons in assert_return. NaN marker kinds don't use this field.
 	bits uint64
+	// literal preserves the source literal spelling from the .wast file.
+	// It is used for user-facing mismatch formatting.
+	literal string
 }
 
 // invokeAction is an "(invoke ...)" script action.
@@ -321,7 +325,7 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		if err != nil {
 			return scriptValue{}, err
 		}
-		return scriptValue{kind: valueI32Const, bits: bits}, nil
+		return scriptValue{kind: valueI32Const, bits: bits, literal: litValue}, nil
 	case "i64.const":
 		elems := sx.Children()
 		if len(elems) != 2 {
@@ -335,7 +339,7 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		if err != nil {
 			return scriptValue{}, err
 		}
-		return scriptValue{kind: valueI64Const, bits: bits}, nil
+		return scriptValue{kind: valueI64Const, bits: bits, literal: litValue}, nil
 	case "f32.const":
 		elems := sx.Children()
 		if len(elems) != 2 {
@@ -349,10 +353,10 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		// values. Keep these as dedicated kinds so assert_return can apply the
 		// right NaN classification rule.
 		if litValue == "nan:canonical" {
-			return scriptValue{kind: valueF32NaNCanonical}, nil
+			return scriptValue{kind: valueF32NaNCanonical, literal: litValue}, nil
 		}
 		if litValue == "nan:arithmetic" {
-			return scriptValue{kind: valueF32NaNArithmetic}, nil
+			return scriptValue{kind: valueF32NaNArithmetic, literal: litValue}, nil
 		}
 		if litKind != "FLOAT" && litKind != "INT" {
 			return scriptValue{}, fmt.Errorf("f32.const literal must be FLOAT/INT or nan marker")
@@ -361,7 +365,7 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		if err != nil {
 			return scriptValue{}, err
 		}
-		return scriptValue{kind: valueF32Const, bits: uint64(bits)}, nil
+		return scriptValue{kind: valueF32Const, bits: uint64(bits), literal: litValue}, nil
 	case "f64.const":
 		elems := sx.Children()
 		if len(elems) != 2 {
@@ -372,10 +376,10 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("f64.const literal must be token")
 		}
 		if litValue == "nan:canonical" {
-			return scriptValue{kind: valueF64NaNCanonical}, nil
+			return scriptValue{kind: valueF64NaNCanonical, literal: litValue}, nil
 		}
 		if litValue == "nan:arithmetic" {
-			return scriptValue{kind: valueF64NaNArithmetic}, nil
+			return scriptValue{kind: valueF64NaNArithmetic, literal: litValue}, nil
 		}
 		if litKind != "FLOAT" && litKind != "INT" {
 			return scriptValue{}, fmt.Errorf("f64.const literal must be FLOAT/INT or nan marker")
@@ -384,7 +388,7 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		if err != nil {
 			return scriptValue{}, err
 		}
-		return scriptValue{kind: valueF64Const, bits: bits}, nil
+		return scriptValue{kind: valueF64Const, bits: bits, literal: litValue}, nil
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported value kind %q", head)
 	}
@@ -596,14 +600,14 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 			wantBits := uint32(want.bits)
 			if gotBits != wantBits {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, wantBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueI64Const:
 			gotBits := results[i]
 			if gotBits != want.bits {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.bits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF32Const:
@@ -611,42 +615,42 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 			wantBits := uint32(want.bits)
 			if gotBits != wantBits {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, wantBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF32NaNCanonical:
 			gotBits := uint32(results[i])
 			if !isCanonicalNaN32(gotBits) {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want canonical NaN", i, gotBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF32NaNArithmetic:
 			gotBits := uint32(results[i])
 			if !isArithmeticNaN32(gotBits) {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want arithmetic NaN", i, gotBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64Const:
 			gotBits := results[i]
 			if gotBits != want.bits {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want 0x%x", i, gotBits, want.bits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64NaNCanonical:
 			gotBits := results[i]
 			if !isCanonicalNaN64(gotBits) {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want canonical NaN", i, gotBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64NaNArithmetic:
 			gotBits := results[i]
 			if !isArithmeticNaN64(gotBits) {
 				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got 0x%x want arithmetic NaN", i, gotBits)
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		default:
@@ -656,6 +660,238 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 		}
 	}
 	res.status = true
+}
+
+func formatExpectedValue(v scriptValue) string {
+	switch v.kind {
+	case valueI32Const:
+		return fmt.Sprintf("(i32.const %s)", v.literal)
+	case valueI64Const:
+		return fmt.Sprintf("(i64.const %s)", v.literal)
+	case valueF32Const:
+		return fmt.Sprintf("(f32.const %s)", v.literal)
+	case valueF64Const:
+		return fmt.Sprintf("(f64.const %s)", v.literal)
+	case valueF32NaNCanonical:
+		return "(f32.const nan:canonical)"
+	case valueF32NaNArithmetic:
+		return "(f32.const nan:arithmetic)"
+	case valueF64NaNCanonical:
+		return "(f64.const nan:canonical)"
+	case valueF64NaNArithmetic:
+		return "(f64.const nan:arithmetic)"
+	default:
+		return fmt.Sprintf("<%s>", v.kind)
+	}
+}
+
+func formatGotValueLikeExpected(got uint64, want scriptValue) string {
+	switch want.kind {
+	case valueI32Const:
+		return fmt.Sprintf("(i32.const %s)", formatI32Like(uint32(got), want.literal))
+	case valueI64Const:
+		return fmt.Sprintf("(i64.const %s)", formatI64Like(got, want.literal))
+	case valueF32Const:
+		return fmt.Sprintf("(f32.const %s)", formatF32Like(uint32(got), want.literal))
+	case valueF64Const:
+		return fmt.Sprintf("(f64.const %s)", formatF64Like(got, want.literal))
+	case valueF32NaNCanonical, valueF32NaNArithmetic:
+		return fmt.Sprintf("(f32.const %s)", formatF32NaNOrValue(uint32(got), want.literal))
+	case valueF64NaNCanonical, valueF64NaNArithmetic:
+		return fmt.Sprintf("(f64.const %s)", formatF64NaNOrValue(got, want.literal))
+	default:
+		return fmt.Sprintf("0x%x", got)
+	}
+}
+
+func formatI32Like(bits uint32, template string) string {
+	sign, hex := parseNumericStyle(template)
+	if hex {
+		u := uint64(bits)
+		if sign != 0 {
+			s := int64(int32(bits))
+			return formatSignedHex(s, sign)
+		}
+		return fmt.Sprintf("0x%x", u)
+	}
+
+	if sign != 0 {
+		s := int64(int32(bits))
+		if sign == '+' && s >= 0 {
+			return fmt.Sprintf("+%d", s)
+		}
+		return fmt.Sprintf("%d", s)
+	}
+	return fmt.Sprintf("%d", uint64(bits))
+}
+
+func formatI64Like(bits uint64, template string) string {
+	sign, hex := parseNumericStyle(template)
+	if hex {
+		if sign != 0 {
+			return formatSignedHex(int64(bits), sign)
+		}
+		return fmt.Sprintf("0x%x", bits)
+	}
+
+	if sign != 0 {
+		s := int64(bits)
+		if sign == '+' && s >= 0 {
+			return fmt.Sprintf("+%d", s)
+		}
+		return fmt.Sprintf("%d", s)
+	}
+	return fmt.Sprintf("%d", bits)
+}
+
+func formatF32Like(bits uint32, template string) string {
+	f := float64(math.Float32frombits(bits))
+	clean := strings.ReplaceAll(template, "_", "")
+	sign, mag := splitSignString(clean)
+
+	if strings.EqualFold(mag, "inf") {
+		if math.IsInf(f, -1) {
+			return "-inf"
+		}
+		if math.IsInf(f, +1) {
+			return "inf"
+		}
+	}
+	if strings.HasPrefix(mag, "nan") {
+		if math.IsNaN(f) {
+			return formatF32NaNOrValue(bits, template)
+		}
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") && isFiniteInteger(f) {
+			return formatIntegerLikeFloatValue(f, sign, true)
+		}
+		return strconv.FormatFloat(f, 'x', -1, 32)
+	}
+
+	out := strconv.FormatFloat(f, 'g', -1, 32)
+	if sign == '+' && !strings.HasPrefix(out, "-") {
+		return "+" + out
+	}
+	return out
+}
+
+func formatF64Like(bits uint64, template string) string {
+	f := math.Float64frombits(bits)
+	clean := strings.ReplaceAll(template, "_", "")
+	sign, mag := splitSignString(clean)
+
+	if strings.EqualFold(mag, "inf") {
+		if math.IsInf(f, -1) {
+			return "-inf"
+		}
+		if math.IsInf(f, +1) {
+			return "inf"
+		}
+	}
+	if strings.HasPrefix(mag, "nan") {
+		if math.IsNaN(f) {
+			return formatF64NaNOrValue(bits, template)
+		}
+	}
+	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
+		if !strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") && isFiniteInteger(f) {
+			return formatIntegerLikeFloatValue(f, sign, true)
+		}
+		return strconv.FormatFloat(f, 'x', -1, 64)
+	}
+
+	out := strconv.FormatFloat(f, 'g', -1, 64)
+	if sign == '+' && !strings.HasPrefix(out, "-") {
+		return "+" + out
+	}
+	return out
+}
+
+func formatF32NaNOrValue(bits uint32, template string) string {
+	if isCanonicalNaN32(bits) {
+		return "nan:canonical"
+	}
+	if isArithmeticNaN32(bits) {
+		return "nan:arithmetic"
+	}
+	if math.IsNaN(float64(math.Float32frombits(bits))) {
+		payload := bits & 0x007fffff
+		return fmt.Sprintf("nan:0x%x", payload)
+	}
+	return formatF32Like(bits, template)
+}
+
+func formatF64NaNOrValue(bits uint64, template string) string {
+	if isCanonicalNaN64(bits) {
+		return "nan:canonical"
+	}
+	if isArithmeticNaN64(bits) {
+		return "nan:arithmetic"
+	}
+	if math.IsNaN(math.Float64frombits(bits)) {
+		payload := bits & 0x000fffffffffffff
+		return fmt.Sprintf("nan:0x%x", payload)
+	}
+	return formatF64Like(bits, template)
+}
+
+func parseNumericStyle(template string) (sign byte, hex bool) {
+	clean := strings.ReplaceAll(template, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+	if clean[0] == '+' || clean[0] == '-' {
+		sign = clean[0]
+		clean = clean[1:]
+	}
+	hex = strings.HasPrefix(clean, "0x") || strings.HasPrefix(clean, "0X")
+	return sign, hex
+}
+
+func splitSignString(s string) (sign byte, mag string) {
+	if s == "" {
+		return 0, s
+	}
+	switch s[0] {
+	case '+':
+		return '+', s[1:]
+	case '-':
+		return '-', s[1:]
+	default:
+		return 0, s
+	}
+}
+
+func formatSignedHex(v int64, sign byte) string {
+	if v < 0 {
+		return fmt.Sprintf("-0x%x", uint64(-v))
+	}
+	if sign == '+' {
+		return fmt.Sprintf("+0x%x", uint64(v))
+	}
+	return fmt.Sprintf("0x%x", uint64(v))
+}
+
+func isFiniteInteger(f float64) bool {
+	return !math.IsInf(f, 0) && !math.IsNaN(f) && math.Trunc(f) == f
+}
+
+func formatIntegerLikeFloatValue(f float64, sign byte, hex bool) string {
+	if f < math.MinInt64 || f > math.MaxInt64 {
+		if hex {
+			return strconv.FormatFloat(f, 'x', -1, 64)
+		}
+		return strconv.FormatFloat(f, 'g', -1, 64)
+	}
+	i := int64(f)
+	if hex {
+		return formatSignedHex(i, sign)
+	}
+	if sign == '+' && i >= 0 {
+		return fmt.Sprintf("+%d", i)
+	}
+	return fmt.Sprintf("%d", i)
 }
 
 // runAssertTrap handles "(assert_trap (invoke ...) \"...\")".
