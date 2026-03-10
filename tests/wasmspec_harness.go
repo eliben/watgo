@@ -22,17 +22,21 @@ import (
 // Script BNF subset (from WebAssembly spec interpreter docs):
 // https://github.com/WebAssembly/spec/tree/main/interpreter#scripts
 //
-//	cmd: <module> | <assertion>
-//	assertion: (assert_return ...) | (assert_trap ...)
-//	           | (assert_invalid ...) | (assert_malformed ...)
+//		cmd: <module> | <assertion>
+//		assertion: (assert_return ...)
+//	               | (assert_trap ...)
+//		           | (assert_exhaustion ...)
+//		           | (assert_invalid ...)
+//				   | (assert_malformed ...)
 type commandKind string
 
 const (
-	commandModule          commandKind = "module"
-	commandAssertReturn    commandKind = "assert_return"
-	commandAssertTrap      commandKind = "assert_trap"
-	commandAssertInvalid   commandKind = "assert_invalid"
-	commandAssertMalformed commandKind = "assert_malformed"
+	commandModule           commandKind = "module"
+	commandAssertReturn     commandKind = "assert_return"
+	commandAssertTrap       commandKind = "assert_trap"
+	commandAssertExhaustion commandKind = "assert_exhaustion"
+	commandAssertInvalid    commandKind = "assert_invalid"
+	commandAssertMalformed  commandKind = "assert_malformed"
 )
 
 // valueKind identifies one supported script constant form.
@@ -92,6 +96,7 @@ type invokeAction struct {
 //	assertion:
 //	  (assert_return <action> <result>*)
 //	  (assert_trap <action> <failure>)
+//	  (assert_exhaustion <action> <failure>)
 //	  (assert_invalid <module> <failure>)
 //	  (assert_malformed <module> <failure>)
 //
@@ -99,6 +104,7 @@ type invokeAction struct {
 //   - commandModule: moduleExpr
 //   - commandAssertReturn: action + expectValues
 //   - commandAssertTrap: action + expectText
+//   - commandAssertExhaustion: action + expectText
 //   - commandAssertInvalid: moduleExpr + expectText
 //   - commandAssertMalformed: quotedWAT + expectText
 type scriptCommand struct {
@@ -159,6 +165,8 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 		return parseAssertReturn(sx)
 	case "assert_trap":
 		return parseAssertTrap(sx)
+	case "assert_exhaustion":
+		return parseAssertExhaustion(sx)
 	case "assert_invalid":
 		return parseAssertInvalid(sx)
 	case "assert_malformed":
@@ -216,6 +224,30 @@ func parseAssertTrap(sx *textformat.SExpr) (scriptCommand, error) {
 	}
 	return scriptCommand{
 		kind:       commandAssertTrap,
+		loc:        sx.Loc(),
+		action:     &action,
+		expectText: text,
+	}, nil
+}
+
+// parseAssertExhaustion parses "(assert_exhaustion <action> <failure>)".
+// sx is the full assertion expression.
+// It returns a command with invoke action and expected exhaustion text.
+func parseAssertExhaustion(sx *textformat.SExpr) (scriptCommand, error) {
+	elems := sx.Children()
+	if len(elems) != 3 {
+		return scriptCommand{}, fmt.Errorf("assert_exhaustion requires action and text")
+	}
+	action, err := parseInvoke(elems[1])
+	if err != nil {
+		return scriptCommand{}, fmt.Errorf("invalid assert_exhaustion action: %w", err)
+	}
+	text, err := parseStringToken(elems[2])
+	if err != nil {
+		return scriptCommand{}, fmt.Errorf("invalid assert_exhaustion text: %w", err)
+	}
+	return scriptCommand{
+		kind:       commandAssertExhaustion,
 		loc:        sx.Loc(),
 		action:     &action,
 		expectText: text,
@@ -545,6 +577,8 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 			r.runAssertReturn(&res, cmd)
 		case commandAssertTrap:
 			r.runAssertTrap(&res, cmd)
+		case commandAssertExhaustion:
+			r.runAssertExhaustion(&res, cmd)
 		case commandAssertInvalid:
 			r.runAssertInvalid(&res, cmd, opts)
 		case commandAssertMalformed:
@@ -909,6 +943,40 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 		return
 	}
 	res.status = true
+}
+
+// runAssertExhaustion handles "(assert_exhaustion (invoke ...) \"...\")".
+// It requires invocation failure due to resource exhaustion and checks text.
+func (r *scriptRunner) runAssertExhaustion(res *commandResult, cmd scriptCommand) {
+	_, err := r.invoke(cmd.action)
+	if err == nil {
+		res.status = false
+		res.detail = "expected exhaustion, got success"
+		return
+	}
+	if cmd.expectText != "" && !matchesExpectedFailureText(err.Error(), cmd.expectText) {
+		res.status = false
+		res.detail = fmt.Sprintf("exhaustion text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
+		return
+	}
+	res.status = true
+}
+
+func matchesExpectedFailureText(got, want string) bool {
+	if strings.Contains(got, want) {
+		return true
+	}
+
+	// Runtime engines may use different stack-overflow wording for the same
+	// resource exhaustion condition expected by spec scripts.
+	gotLower := strings.ToLower(got)
+	wantLower := strings.ToLower(want)
+	if wantLower == "call stack exhausted" {
+		return strings.Contains(gotLower, "stack overflow") ||
+			strings.Contains(gotLower, "stack exhausted") ||
+			strings.Contains(gotLower, "stack limit")
+	}
+	return false
 }
 
 // runAssertInvalid handles "(assert_invalid (module ...) \"...\")".

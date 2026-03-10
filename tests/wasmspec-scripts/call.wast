@@ -137,6 +137,20 @@
     )
   )
 
+  ;; Stack exhaustion
+
+  ;; Implementations are required to have every call consume some abstract
+  ;; resource towards exhausting some abstract finite limit, such that
+  ;; infinitely recursive test cases reliably trap in finite time. This is
+  ;; because otherwise applications could come to depend on it on those
+  ;; implementations and be incompatible with implementations that don't do
+  ;; it (or don't do it under the same circumstances).
+
+  (func $runaway (export "runaway") (call $runaway))
+
+  (func $mutual-runaway1 (export "mutual-runaway") (call $mutual-runaway2))
+  (func $mutual-runaway2 (call $mutual-runaway1))
+
 )
 
 (assert_return (invoke "type-i32") (i32.const 0x132))
@@ -192,3 +206,5 @@
 (assert_return (invoke "odd" (i64.const 200)) (i32.const 99))
 (assert_return (invoke "odd" (i64.const 77)) (i32.const 44))
 
+(assert_exhaustion (invoke "runaway") "call stack exhausted")
+(assert_exhaustion (invoke "mutual-runaway") "call stack exhausted")
