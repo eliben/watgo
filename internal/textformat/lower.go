@@ -370,9 +370,70 @@ func (fl *functionLowerer) lowerFoldedClauseInstrs(clause *FoldedInstr) {
 	}
 }
 
+// zeroOperandInstrKinds maps plain instruction names that take no operands
+// directly to their semantic wasmir instruction kinds.
+var zeroOperandInstrKinds = map[string]wasmir.InstrKind{
+	"else":        wasmir.InstrElse,
+	"end":         wasmir.InstrEnd,
+	"drop":        wasmir.InstrDrop,
+	"i32.add":     wasmir.InstrI32Add,
+	"i32.sub":     wasmir.InstrI32Sub,
+	"i32.mul":     wasmir.InstrI32Mul,
+	"i32.div_s":   wasmir.InstrI32DivS,
+	"i32.div_u":   wasmir.InstrI32DivU,
+	"i64.add":     wasmir.InstrI64Add,
+	"i64.eqz":     wasmir.InstrI64Eqz,
+	"i64.le_u":    wasmir.InstrI64LeU,
+	"i64.sub":     wasmir.InstrI64Sub,
+	"i64.mul":     wasmir.InstrI64Mul,
+	"i64.div_s":   wasmir.InstrI64DivS,
+	"i64.div_u":   wasmir.InstrI64DivU,
+	"f32.add":     wasmir.InstrF32Add,
+	"f32.sub":     wasmir.InstrF32Sub,
+	"f32.mul":     wasmir.InstrF32Mul,
+	"f32.div":     wasmir.InstrF32Div,
+	"f32.sqrt":    wasmir.InstrF32Sqrt,
+	"f32.min":     wasmir.InstrF32Min,
+	"f32.max":     wasmir.InstrF32Max,
+	"f32.ceil":    wasmir.InstrF32Ceil,
+	"f32.floor":   wasmir.InstrF32Floor,
+	"f32.trunc":   wasmir.InstrF32Trunc,
+	"f32.nearest": wasmir.InstrF32Nearest,
+	"f64.add":     wasmir.InstrF64Add,
+	"f64.sub":     wasmir.InstrF64Sub,
+	"f64.mul":     wasmir.InstrF64Mul,
+	"f64.div":     wasmir.InstrF64Div,
+	"f64.sqrt":    wasmir.InstrF64Sqrt,
+	"f64.min":     wasmir.InstrF64Min,
+	"f64.max":     wasmir.InstrF64Max,
+	"f64.ceil":    wasmir.InstrF64Ceil,
+	"f64.floor":   wasmir.InstrF64Floor,
+	"f64.trunc":   wasmir.InstrF64Trunc,
+	"f64.nearest": wasmir.InstrF64Nearest,
+}
+
+// lowerZeroOperandInstr lowers pi using zeroOperandInstrKinds when applicable.
+// It returns true if pi.Name is recognized as a zero-operand instruction,
+// including operand-count failures that emit diagnostics.
+func (fl *functionLowerer) lowerZeroOperandInstr(pi *PlainInstr, instrLoc string) bool {
+	kind, ok := zeroOperandInstrKinds[pi.Name]
+	if !ok {
+		return false
+	}
+	if len(pi.Operands) != 0 {
+		fl.diagf(instrLoc, "%s expects no operands", pi.Name)
+		return true
+	}
+	fl.emitInstr(wasmir.Instruction{Kind: kind, SourceLoc: instrLoc})
+	return true
+}
+
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
+	if fl.lowerZeroOperandInstr(pi, instrLoc) {
+		return
+	}
 
 	switch pi.Name {
 	case "local.get":
@@ -411,20 +472,8 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			}
 			ins.BlockHasResult = true
 			ins.BlockType = vt
-		}
-		fl.emitInstr(ins)
-	case "else":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "else expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
-	case "end":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "end expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: instrLoc})
+			}
+			fl.emitInstr(ins)
 
 	case "i32.const":
 		if len(pi.Operands) != 1 {
@@ -473,249 +522,6 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm, SourceLoc: instrLoc})
-
-	case "drop":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "drop expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrDrop, SourceLoc: instrLoc})
-
-	case "i32.add":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i32.add expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Add, SourceLoc: instrLoc})
-
-	case "i32.sub":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i32.sub expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Sub, SourceLoc: instrLoc})
-
-	case "i32.mul":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i32.mul expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Mul, SourceLoc: instrLoc})
-
-	case "i32.div_s":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i32.div_s expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32DivS, SourceLoc: instrLoc})
-
-	case "i32.div_u":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i32.div_u expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32DivU, SourceLoc: instrLoc})
-
-	case "i64.add":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.add expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Add, SourceLoc: instrLoc})
-	case "i64.eqz":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.eqz expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Eqz, SourceLoc: instrLoc})
-	case "i64.le_u":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.le_u expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64LeU, SourceLoc: instrLoc})
-
-	case "i64.sub":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.sub expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Sub, SourceLoc: instrLoc})
-
-	case "i64.mul":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.mul expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Mul, SourceLoc: instrLoc})
-
-	case "i64.div_s":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.div_s expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64DivS, SourceLoc: instrLoc})
-
-	case "i64.div_u":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "i64.div_u expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64DivU, SourceLoc: instrLoc})
-
-	case "f32.add":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.add expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Add, SourceLoc: instrLoc})
-
-	case "f32.sub":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.sub expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Sub, SourceLoc: instrLoc})
-
-	case "f32.mul":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.mul expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Mul, SourceLoc: instrLoc})
-
-	case "f32.div":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.div expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Div, SourceLoc: instrLoc})
-
-	case "f32.sqrt":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.sqrt expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Sqrt, SourceLoc: instrLoc})
-
-	case "f32.min":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.min expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Min, SourceLoc: instrLoc})
-
-	case "f32.max":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.max expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Max, SourceLoc: instrLoc})
-
-	case "f32.ceil":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.ceil expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Ceil, SourceLoc: instrLoc})
-
-	case "f32.floor":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.floor expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Floor, SourceLoc: instrLoc})
-
-	case "f32.trunc":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.trunc expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Trunc, SourceLoc: instrLoc})
-
-	case "f32.nearest":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f32.nearest expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Nearest, SourceLoc: instrLoc})
-
-	case "f64.add":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.add expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Add, SourceLoc: instrLoc})
-
-	case "f64.sub":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.sub expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Sub, SourceLoc: instrLoc})
-
-	case "f64.mul":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.mul expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Mul, SourceLoc: instrLoc})
-
-	case "f64.div":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.div expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Div, SourceLoc: instrLoc})
-
-	case "f64.sqrt":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.sqrt expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Sqrt, SourceLoc: instrLoc})
-
-	case "f64.min":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.min expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Min, SourceLoc: instrLoc})
-
-	case "f64.max":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.max expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Max, SourceLoc: instrLoc})
-
-	case "f64.ceil":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.ceil expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Ceil, SourceLoc: instrLoc})
-
-	case "f64.floor":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.floor expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Floor, SourceLoc: instrLoc})
-
-	case "f64.trunc":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.trunc expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Trunc, SourceLoc: instrLoc})
-
-	case "f64.nearest":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "f64.nearest expects no operands")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Nearest, SourceLoc: instrLoc})
 
 	default:
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
