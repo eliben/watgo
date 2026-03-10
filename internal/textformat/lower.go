@@ -2,12 +2,11 @@ package textformat
 
 import (
 	"fmt"
-	"math"
-	"math/big"
 	"strconv"
 	"strings"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/numlit"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -577,8 +576,8 @@ func lowerI32ConstOperand(op Operand) (int32, bool) {
 		return 0, false
 	}
 
-	bits, ok := parseIntLiteralBits(o.Value, 32)
-	if !ok {
+	bits, err := numlit.ParseIntBits(o.Value, 32)
+	if err != nil {
 		return 0, false
 	}
 	return int32(bits), true
@@ -592,8 +591,8 @@ func lowerI64ConstOperand(op Operand) (int64, bool) {
 		return 0, false
 	}
 
-	bits, ok := parseIntLiteralBits(o.Value, 64)
-	if !ok {
+	bits, err := numlit.ParseIntBits(o.Value, 64)
+	if err != nil {
 		return 0, false
 	}
 	return int64(bits), true
@@ -604,9 +603,11 @@ func lowerI64ConstOperand(op Operand) (int64, bool) {
 func lowerF32ConstOperand(op Operand) (uint32, bool) {
 	switch o := op.(type) {
 	case *FloatOperand:
-		return parseF32LiteralBits(o.Value)
+		bits, err := numlit.ParseF32Bits(o.Value)
+		return bits, err == nil
 	case *IntOperand:
-		return parseF32LiteralBits(o.Value)
+		bits, err := numlit.ParseF32Bits(o.Value)
+		return bits, err == nil
 	default:
 		return 0, false
 	}
@@ -617,9 +618,11 @@ func lowerF32ConstOperand(op Operand) (uint32, bool) {
 func lowerF64ConstOperand(op Operand) (uint64, bool) {
 	switch o := op.(type) {
 	case *FloatOperand:
-		return parseF64LiteralBits(o.Value)
+		bits, err := numlit.ParseF64Bits(o.Value)
+		return bits, err == nil
 	case *IntOperand:
-		return parseF64LiteralBits(o.Value)
+		bits, err := numlit.ParseF64Bits(o.Value)
+		return bits, err == nil
 	default:
 		return 0, false
 	}
@@ -651,277 +654,6 @@ func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, b
 	default:
 		return 0, false
 	}
-}
-
-// parseIntLiteralBits parses s as an integer literal and returns its
-// two's-complement bits in the requested width (32 or 64).
-func parseIntLiteralBits(s string, bits int) (uint64, bool) {
-	if bits != 32 && bits != 64 {
-		return 0, false
-	}
-
-	clean := strings.ReplaceAll(s, "_", "")
-	neg := false
-	if len(clean) > 0 {
-		switch clean[0] {
-		case '+':
-			clean = clean[1:]
-		case '-':
-			neg = true
-			clean = clean[1:]
-		}
-	}
-	if clean == "" {
-		return 0, false
-	}
-
-	base := 10
-	if strings.HasPrefix(clean, "0x") || strings.HasPrefix(clean, "0X") {
-		base = 16
-		clean = clean[2:]
-		if clean == "" {
-			return 0, false
-		}
-	}
-
-	u, err := strconv.ParseUint(clean, base, bits)
-	if err != nil {
-		return 0, false
-	}
-	if neg {
-		u = ^u + 1
-	}
-	if bits == 32 {
-		u &= (1 << 32) - 1
-	}
-	return u, true
-}
-
-// parseF32LiteralBits parses s as an f32 literal and returns IEEE-754 bits.
-// It accepts decimal/hex float forms, and integer forms used with f32.const.
-func parseF32LiteralBits(s string) (uint32, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	if clean == "" {
-		return 0, false
-	}
-
-	sign, mag := splitSign(clean)
-	switch mag {
-	case "inf":
-		if sign < 0 {
-			return 0xff800000, true
-		}
-		return 0x7f800000, true
-	case "nan":
-		if sign < 0 {
-			return 0xffc00000, true
-		}
-		return 0x7fc00000, true
-	}
-	if strings.HasPrefix(mag, "nan:0x") {
-		payload, err := strconv.ParseUint(mag[6:], 16, 32)
-		if err != nil || payload == 0 || payload > 0x7fffff {
-			return 0, false
-		}
-		bits := uint32(0x7f800000 | payload)
-		if sign < 0 {
-			bits |= 0x80000000
-		}
-		return bits, true
-	}
-
-	// Fast path: Go supports decimal floats and hex floats with p-exponent.
-	if bits, ok := parseF32WithParseFloat(clean); ok {
-		return bits, true
-	}
-
-	// Fallback path (manual handling): we accept WAT-specific forms that
-	// ParseFloat rejects:
-	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
-	// 2) Arbitrary-size integer literals (decimal and hex), rounded to f32.
-	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
-		// Hex float forms without explicit exponent are valid in WAT.
-		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
-			withExp := clean + "p0"
-			if bits, ok := parseF32WithParseFloat(withExp); ok {
-				return bits, true
-			}
-		}
-	}
-
-	if bits, ok := parseIntegerLiteralF32Bits(clean); ok {
-		return bits, true
-	}
-
-	return 0, false
-}
-
-// parseF64LiteralBits parses s as an f64 literal and returns IEEE-754 bits.
-// It accepts decimal/hex float forms, and integer forms used with f64.const.
-func parseF64LiteralBits(s string) (uint64, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	if clean == "" {
-		return 0, false
-	}
-
-	sign, mag := splitSign(clean)
-	switch mag {
-	case "inf":
-		if sign < 0 {
-			return 0xfff0000000000000, true
-		}
-		return 0x7ff0000000000000, true
-	case "nan":
-		if sign < 0 {
-			return 0xfff8000000000000, true
-		}
-		return 0x7ff8000000000000, true
-	}
-	if strings.HasPrefix(mag, "nan:0x") {
-		payload, err := strconv.ParseUint(mag[6:], 16, 64)
-		if err != nil || payload == 0 || payload > 0x000fffffffffffff {
-			return 0, false
-		}
-		bits := uint64(0x7ff0000000000000 | payload)
-		if sign < 0 {
-			bits |= 0x8000000000000000
-		}
-		return bits, true
-	}
-
-	// Fast path: Go supports decimal floats and hex floats with p-exponent.
-	if bits, ok := parseF64WithParseFloat(clean); ok {
-		return bits, true
-	}
-
-	// Fallback path (manual handling): we accept WAT-specific forms that
-	// ParseFloat rejects:
-	// 1) Hex floats without an explicit p-exponent (we normalize by appending p0).
-	// 2) Arbitrary-size integer literals (decimal and hex), rounded to f64.
-	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
-		// Hex float forms without explicit exponent are valid in WAT.
-		if strings.Contains(mag, ".") && !strings.ContainsAny(mag, "pP") {
-			withExp := clean + "p0"
-			if bits, ok := parseF64WithParseFloat(withExp); ok {
-				return bits, true
-			}
-		}
-	}
-
-	if bits, ok := parseIntegerLiteralF64Bits(clean); ok {
-		return bits, true
-	}
-
-	return 0, false
-}
-
-// parseF32WithParseFloat parses s with strconv.ParseFloat and returns f32 bits.
-func parseF32WithParseFloat(s string) (uint32, bool) {
-	f, err := strconv.ParseFloat(s, 32)
-	if err != nil {
-		return 0, false
-	}
-	return float32bits(float32(f)), true
-}
-
-// parseF64WithParseFloat parses s with strconv.ParseFloat and returns f64 bits.
-func parseF64WithParseFloat(s string) (uint64, bool) {
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return float64bits(f), true
-}
-
-// parseIntegerLiteralF32Bits parses signed decimal/hex integer literals and
-// rounds them to f32 using nearest-even semantics.
-func parseIntegerLiteralF32Bits(s string) (uint32, bool) {
-	sign, mag := splitSign(s)
-	if mag == "" || strings.Contains(mag, ".") {
-		return 0, false
-	}
-	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
-		if strings.ContainsAny(mag, "pP") {
-			return 0, false
-		}
-	} else if strings.ContainsAny(mag, "eE") {
-		return 0, false
-	}
-
-	bi, ok := new(big.Int).SetString(mag, 0)
-	if !ok {
-		return 0, false
-	}
-
-	bf := new(big.Float).SetMode(big.ToNearestEven)
-	bf.SetInt(bi)
-	if sign < 0 {
-		bf.Neg(bf)
-	}
-
-	f, _ := bf.Float32()
-	if math.IsInf(float64(f), 0) {
-		return 0, false
-	}
-	return float32bits(f), true
-}
-
-// parseIntegerLiteralF64Bits parses signed decimal/hex integer literals and
-// rounds them to f64 using nearest-even semantics.
-func parseIntegerLiteralF64Bits(s string) (uint64, bool) {
-	sign, mag := splitSign(s)
-	if mag == "" || strings.Contains(mag, ".") {
-		return 0, false
-	}
-	if strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "0X") {
-		if strings.ContainsAny(mag, "pP") {
-			return 0, false
-		}
-	} else if strings.ContainsAny(mag, "eE") {
-		return 0, false
-	}
-
-	bi, ok := new(big.Int).SetString(mag, 0)
-	if !ok {
-		return 0, false
-	}
-
-	bf := new(big.Float).SetMode(big.ToNearestEven)
-	bf.SetInt(bi)
-	if sign < 0 {
-		bf.Neg(bf)
-	}
-
-	f, _ := bf.Float64()
-	if math.IsInf(f, 0) {
-		return 0, false
-	}
-	return float64bits(f), true
-}
-
-// splitSign splits s into sign (+1/-1) and unsigned magnitude string.
-func splitSign(s string) (float64, string) {
-	if s == "" {
-		return 1, s
-	}
-	switch s[0] {
-	case '+':
-		return 1, s[1:]
-	case '-':
-		return -1, s[1:]
-	default:
-		return 1, s
-	}
-}
-
-// float32bits returns IEEE-754 bits for f.
-func float32bits(f float32) uint32 {
-	return math.Float32bits(f)
-}
-
-// float64bits returns IEEE-754 bits for f.
-func float64bits(f float64) uint64 {
-	return math.Float64bits(f)
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
