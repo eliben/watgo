@@ -54,6 +54,7 @@ const (
 	opI32DivUCode    byte = 0x6e
 	opI64AddCode     byte = 0x7c
 	opI64EqzCode     byte = 0x50
+	opI64LeUCode     byte = 0x58
 	opI64SubCode     byte = 0x7d
 	opI64MulCode     byte = 0x7e
 	opI64DivSCode    byte = 0x7f
@@ -309,6 +310,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI64AddCode)
 	case wasmir.InstrI64Eqz:
 		out.WriteByte(opI64EqzCode)
+	case wasmir.InstrI64LeU:
+		out.WriteByte(opI64LeUCode)
 	case wasmir.InstrI64Sub:
 		out.WriteByte(opI64SubCode)
 	case wasmir.InstrI64Mul:

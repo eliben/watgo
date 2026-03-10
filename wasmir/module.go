@@ -28,6 +28,7 @@ const (
 	InstrI32DivU
 	InstrI64Add
 	InstrI64Eqz
+	InstrI64LeU
 	InstrI64Sub
 	InstrI64Mul
 	InstrI64DivS

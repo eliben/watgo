@@ -197,6 +197,17 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
+		case InstrI64LeU:
+			if len(stack) < 2 {
+				diags.Addf("%s: i64.le_u needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
+				diags.Addf("%s: i64.le_u expects i64 operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
 		case InstrI64Eqz:
 			if len(stack) < 1 {
 				diags.Addf("%s: i64.eqz needs 1 operand", insCtx)
@@ -393,6 +404,8 @@ func instrName(kind InstrKind) string {
 		return "i64.add"
 	case InstrI64Eqz:
 		return "i64.eqz"
+	case InstrI64LeU:
+		return "i64.le_u"
 	case InstrI64Sub:
 		return "i64.sub"
 	case InstrI64Mul:

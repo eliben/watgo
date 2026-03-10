@@ -528,6 +528,12 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Eqz, SourceLoc: instrLoc})
+	case "i64.le_u":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "i64.le_u expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64LeU, SourceLoc: instrLoc})
 
 	case "i64.sub":
 		if len(pi.Operands) != 0 {
