@@ -72,10 +72,13 @@ type FuncType struct {
 }
 
 type Function struct {
-	TypeIdx   uint32
-	Locals    []ValueType
-	Body      []Instruction
-	SourceLoc string
+	TypeIdx    uint32
+	Name       string
+	ParamNames []string
+	LocalNames []string
+	Locals     []ValueType
+	Body       []Instruction
+	SourceLoc  string
 }
 
 type Export struct {

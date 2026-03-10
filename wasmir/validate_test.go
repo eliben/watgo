@@ -165,7 +165,9 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 		},
 		Funcs: []Function{
 			{
-				TypeIdx: 0,
+				TypeIdx:    0,
+				Name:       "$callee",
+				ParamNames: []string{"$x"},
 				Body: []Instruction{
 					{Kind: InstrLocalGet, LocalIndex: 0},
 					{Kind: InstrEnd},
@@ -181,6 +183,7 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 			},
 			{
 				TypeIdx: 2,
+				Name:    "$badcaller",
 				Body: []Instruction{
 					{Kind: InstrLocalGet, LocalIndex: 0},
 					{Kind: InstrCall, FuncIndex: 0},
@@ -195,7 +198,10 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
 	errs := asErrorList(t, err)
-	if !errorListContains(errs, "call expects operand 0") {
+	if !errorListContains(errs, "func[2] $badcaller") {
+		t.Fatalf("got errors %q, want caller function name in context", errs.Error())
+	}
+	if !errorListContains(errs, "call to func[0] $callee expects operand 0 ($x) to be i32") {
 		t.Fatalf("got errors %q, want call operand type mismatch", errs.Error())
 	}
 }

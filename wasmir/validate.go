@@ -1,7 +1,10 @@
 package wasmir
 
-import "fmt"
-import "github.com/eliben/watgo/diag"
+import (
+	"fmt"
+
+	"github.com/eliben/watgo/diag"
+)
 
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function
@@ -14,13 +17,14 @@ func ValidateModule(m *Module) error {
 
 	var diags diag.ErrorList
 	for i, f := range m.Funcs {
+		fnCtx := functionContext(m, i)
 		if int(f.TypeIdx) >= len(m.Types) {
-			diags.Addf("func[%d] has invalid type index %d", i, f.TypeIdx)
+			diags.Addf("%s has invalid type index %d", fnCtx, f.TypeIdx)
 			continue
 		}
 		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f)
 		for _, err := range funcErrs {
-			diags.Addf("func[%d]: %v", i, err)
+			diags.Addf("%s: %v", fnCtx, err)
 		}
 	}
 
@@ -45,17 +49,14 @@ func ValidateModule(m *Module) error {
 // local-index bounds and stack/result typing.
 func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 	var diags diag.ErrorList
-	funcCtx := "function"
-	if f.SourceLoc != "" {
-		funcCtx = "function at " + f.SourceLoc
-	}
+	funcLocCtx := functionLocationContext(f)
 
 	if len(f.Body) == 0 {
-		diags.Addf("%s: empty function body", funcCtx)
+		diags.Addf("%sempty function body", funcLocCtx)
 		return diags
 	}
 	if f.Body[len(f.Body)-1].Kind != InstrEnd {
-		diags.Addf("%s: function body must terminate with end", funcCtx)
+		diags.Addf("%sfunction body must terminate with end", funcLocCtx)
 		return diags
 	}
 
@@ -83,20 +84,21 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 				continue
 			}
 			callee := m.Funcs[ins.FuncIndex]
+			calleeCtx := functionContext(m, int(ins.FuncIndex))
 			if int(callee.TypeIdx) >= len(m.Types) {
-				diags.Addf("%s: call target func[%d] has invalid type index %d", insCtx, ins.FuncIndex, callee.TypeIdx)
+				diags.Addf("%s: call target %s has invalid type index %d", insCtx, calleeCtx, callee.TypeIdx)
 				continue
 			}
 			calleeType := m.Types[callee.TypeIdx]
 			if len(stack) < len(calleeType.Params) {
-				diags.Addf("%s: call needs %d operands", insCtx, len(calleeType.Params))
+				diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
 				continue
 			}
 			base := len(stack) - len(calleeType.Params)
 			ok := true
 			for j, pt := range calleeType.Params {
 				if stack[base+j] != pt {
-					diags.Addf("%s: call expects operand %d to be %d", insCtx, j, pt)
+					diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabel(callee, j), valueTypeName(pt))
 					ok = false
 					break
 				}
@@ -213,16 +215,68 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 	}
 
 	if len(stack) != len(ft.Results) {
-		diags.Addf("%s: result arity mismatch: got %d stack values, want %d", funcCtx, len(stack), len(ft.Results))
+		diags.Addf("%sresult arity mismatch: got %d stack values, want %d", funcLocCtx, len(stack), len(ft.Results))
 		return diags
 	}
 	for i := range stack {
 		if stack[i] != ft.Results[i] {
-			diags.Addf("%s: result type mismatch at %d: got %d want %d", funcCtx, i, stack[i], ft.Results[i])
+			diags.Addf("%sresult type mismatch at %d: got %s want %s", funcLocCtx, i, valueTypeName(stack[i]), valueTypeName(ft.Results[i]))
 		}
 	}
 
 	return diags
+}
+
+func functionContext(m *Module, funcIdx int) string {
+	ctx := fmt.Sprintf("func[%d]", funcIdx)
+	if funcIdx < 0 || funcIdx >= len(m.Funcs) {
+		return ctx
+	}
+	if name := m.Funcs[funcIdx].Name; name != "" {
+		return ctx + " " + name
+	}
+	if exportName, ok := functionExportName(m, uint32(funcIdx)); ok {
+		return fmt.Sprintf(`%s export %q`, ctx, exportName)
+	}
+	return ctx
+}
+
+func functionExportName(m *Module, funcIdx uint32) (string, bool) {
+	for _, exp := range m.Exports {
+		if exp.Kind == ExternalKindFunction && exp.Index == funcIdx {
+			return exp.Name, true
+		}
+	}
+	return "", false
+}
+
+func functionLocationContext(f Function) string {
+	if f.SourceLoc == "" {
+		return ""
+	}
+	return "at " + f.SourceLoc + ": "
+}
+
+func operandLabel(callee Function, operandIndex int) string {
+	if operandIndex < len(callee.ParamNames) && callee.ParamNames[operandIndex] != "" {
+		return fmt.Sprintf("%d (%s)", operandIndex, callee.ParamNames[operandIndex])
+	}
+	return fmt.Sprintf("%d", operandIndex)
+}
+
+func valueTypeName(vt ValueType) string {
+	switch vt {
+	case ValueTypeI32:
+		return "i32"
+	case ValueTypeI64:
+		return "i64"
+	case ValueTypeF32:
+		return "f32"
+	case ValueTypeF64:
+		return "f64"
+	default:
+		return fmt.Sprintf("value_type(%d)", vt)
+	}
 }
 
 func instrName(kind InstrKind) string {

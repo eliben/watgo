@@ -43,11 +43,19 @@ type functionLowerer struct {
 	// params holds lowered parameter value types in declaration order.
 	params []wasmir.ValueType
 
+	// paramNames holds source parameter identifiers aligned 1:1 with params.
+	// Empty entries represent unnamed parameters.
+	paramNames []string
+
 	// results holds lowered result value types in declaration order.
 	results []wasmir.ValueType
 
 	// locals holds lowered local variable value types (excluding params).
 	locals []wasmir.ValueType
+
+	// localNames holds source local identifiers aligned 1:1 with locals.
+	// Empty entries represent unnamed locals.
+	localNames []string
 
 	// body stores lowered semantic instructions as they are produced.
 	body []wasmir.Instruction
@@ -143,10 +151,13 @@ func (fl *functionLowerer) lower() {
 	fl.body = append(fl.body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fl.fn.loc.String()})
 
 	fl.mod.out.Funcs = append(fl.mod.out.Funcs, wasmir.Function{
-		TypeIdx:   typeIdx,
-		Locals:    fl.locals,
-		Body:      fl.body,
-		SourceLoc: fl.fn.loc.String(),
+		TypeIdx:    typeIdx,
+		Name:       fl.fn.Id,
+		ParamNames: fl.paramNames,
+		LocalNames: fl.localNames,
+		Locals:     fl.locals,
+		Body:       fl.body,
+		SourceLoc:  fl.fn.loc.String(),
 	})
 
 	if fl.fn.Export != "" {
@@ -182,6 +193,7 @@ func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
 		}
 
 		fl.params = append(fl.params, vt)
+		fl.paramNames = append(fl.paramNames, pd.Id)
 		if pd.Id != "" {
 			if _, exists := fl.localsByName[pd.Id]; exists {
 				fl.diagf(pd.loc.String(), "duplicate param id %q", pd.Id)
@@ -223,6 +235,7 @@ func (fl *functionLowerer) lowerLocals() {
 		}
 
 		fl.locals = append(fl.locals, vt)
+		fl.localNames = append(fl.localNames, ld.Id)
 		if ld.Id != "" {
 			if _, exists := fl.localsByName[ld.Id]; exists {
 				fl.diagf(ld.loc.String(), "duplicate local id %q", ld.Id)
