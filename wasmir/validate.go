@@ -172,7 +172,8 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = stack[:len(stack)-1]
 
-		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU:
+		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU,
+			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -185,7 +186,21 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
 
-		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU:
+		case InstrI32LtS, InstrI32LtU:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 operands", insCtx, name)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
+
+		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
+			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -197,6 +212,19 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			}
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
+
+		case InstrI64LtS, InstrI64LtU:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
+				diags.Addf("%s: %s expects i64 operands", insCtx, name)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
 		case InstrI64LeU:
 			if len(stack) < 2 {
 				diags.Addf("%s: i64.le_u needs 2 operands", insCtx)
@@ -218,6 +246,29 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 				continue
 			}
 			stack[len(stack)-1] = ValueTypeI32
+
+		case InstrI32WrapI64:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32.wrap_i64 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 {
+				diags.Addf("%s: i32.wrap_i64 expects i64 operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI32
+
+		case InstrI64ExtendI32S, InstrI64ExtendI32U:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 operand", insCtx, name)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI64
 
 		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
 			name := instrName(ins.Kind)
@@ -400,6 +451,20 @@ func instrName(kind InstrKind) string {
 		return "i32.div_s"
 	case InstrI32DivU:
 		return "i32.div_u"
+	case InstrI32RemS:
+		return "i32.rem_s"
+	case InstrI32RemU:
+		return "i32.rem_u"
+	case InstrI32Shl:
+		return "i32.shl"
+	case InstrI32ShrS:
+		return "i32.shr_s"
+	case InstrI32ShrU:
+		return "i32.shr_u"
+	case InstrI32LtS:
+		return "i32.lt_s"
+	case InstrI32LtU:
+		return "i32.lt_u"
 	case InstrI64Add:
 		return "i64.add"
 	case InstrI64Eqz:
@@ -414,6 +479,26 @@ func instrName(kind InstrKind) string {
 		return "i64.div_s"
 	case InstrI64DivU:
 		return "i64.div_u"
+	case InstrI64RemS:
+		return "i64.rem_s"
+	case InstrI64RemU:
+		return "i64.rem_u"
+	case InstrI64Shl:
+		return "i64.shl"
+	case InstrI64ShrS:
+		return "i64.shr_s"
+	case InstrI64ShrU:
+		return "i64.shr_u"
+	case InstrI64LtS:
+		return "i64.lt_s"
+	case InstrI64LtU:
+		return "i64.lt_u"
+	case InstrI32WrapI64:
+		return "i32.wrap_i64"
+	case InstrI64ExtendI32S:
+		return "i64.extend_i32_s"
+	case InstrI64ExtendI32U:
+		return "i64.extend_i32_u"
 	case InstrF32Add:
 		return "f32.add"
 	case InstrF32Sub:

@@ -37,50 +37,67 @@ const (
 	exportKindFunctionCode byte = 0x00
 
 	// Opcodes for the currently supported instruction subset.
-	opIfCode         byte = 0x04
-	opElseCode       byte = 0x05
-	opEndCode        byte = 0x0b
-	opI32ConstCode   byte = 0x41
-	opI64ConstCode   byte = 0x42
-	opF32ConstCode   byte = 0x43
-	opF64ConstCode   byte = 0x44
-	opDropCode       byte = 0x1a
-	opLocalGetCode   byte = 0x20
-	opCallCode       byte = 0x10
-	opI32AddCode     byte = 0x6a
-	opI32SubCode     byte = 0x6b
-	opI32MulCode     byte = 0x6c
-	opI32DivSCode    byte = 0x6d
-	opI32DivUCode    byte = 0x6e
-	opI64AddCode     byte = 0x7c
-	opI64EqzCode     byte = 0x50
-	opI64LeUCode     byte = 0x58
-	opI64SubCode     byte = 0x7d
-	opI64MulCode     byte = 0x7e
-	opI64DivSCode    byte = 0x7f
-	opI64DivUCode    byte = 0x80
-	opF32CeilCode    byte = 0x8d
-	opF32FloorCode   byte = 0x8e
-	opF32TruncCode   byte = 0x8f
-	opF32NearestCode byte = 0x90
-	opF32SqrtCode    byte = 0x91
-	opF32AddCode     byte = 0x92
-	opF32SubCode     byte = 0x93
-	opF32MulCode     byte = 0x94
-	opF32DivCode     byte = 0x95
-	opF32MinCode     byte = 0x96
-	opF32MaxCode     byte = 0x97
-	opF64CeilCode    byte = 0x9b
-	opF64FloorCode   byte = 0x9c
-	opF64TruncCode   byte = 0x9d
-	opF64NearestCode byte = 0x9e
-	opF64SqrtCode    byte = 0x9f
-	opF64AddCode     byte = 0xa0
-	opF64SubCode     byte = 0xa1
-	opF64MulCode     byte = 0xa2
-	opF64DivCode     byte = 0xa3
-	opF64MinCode     byte = 0xa4
-	opF64MaxCode     byte = 0xa5
+	opIfCode            byte = 0x04
+	opElseCode          byte = 0x05
+	opEndCode           byte = 0x0b
+	opI32ConstCode      byte = 0x41
+	opI64ConstCode      byte = 0x42
+	opF32ConstCode      byte = 0x43
+	opF64ConstCode      byte = 0x44
+	opDropCode          byte = 0x1a
+	opLocalGetCode      byte = 0x20
+	opCallCode          byte = 0x10
+	opI32AddCode        byte = 0x6a
+	opI32SubCode        byte = 0x6b
+	opI32MulCode        byte = 0x6c
+	opI32DivSCode       byte = 0x6d
+	opI32DivUCode       byte = 0x6e
+	opI32RemSCode       byte = 0x6f
+	opI32RemUCode       byte = 0x70
+	opI32ShlCode        byte = 0x74
+	opI32ShrSCode       byte = 0x75
+	opI32ShrUCode       byte = 0x76
+	opI32LtSCode        byte = 0x48
+	opI32LtUCode        byte = 0x49
+	opI64AddCode        byte = 0x7c
+	opI64EqzCode        byte = 0x50
+	opI64LeUCode        byte = 0x58
+	opI64SubCode        byte = 0x7d
+	opI64MulCode        byte = 0x7e
+	opI64DivSCode       byte = 0x7f
+	opI64DivUCode       byte = 0x80
+	opI64RemSCode       byte = 0x81
+	opI64RemUCode       byte = 0x82
+	opI64ShlCode        byte = 0x86
+	opI64ShrSCode       byte = 0x87
+	opI64ShrUCode       byte = 0x88
+	opI64LtSCode        byte = 0x53
+	opI64LtUCode        byte = 0x54
+	opI32WrapI64Code    byte = 0xa7
+	opI64ExtendI32SCode byte = 0xac
+	opI64ExtendI32UCode byte = 0xad
+	opF32CeilCode       byte = 0x8d
+	opF32FloorCode      byte = 0x8e
+	opF32TruncCode      byte = 0x8f
+	opF32NearestCode    byte = 0x90
+	opF32SqrtCode       byte = 0x91
+	opF32AddCode        byte = 0x92
+	opF32SubCode        byte = 0x93
+	opF32MulCode        byte = 0x94
+	opF32DivCode        byte = 0x95
+	opF32MinCode        byte = 0x96
+	opF32MaxCode        byte = 0x97
+	opF64CeilCode       byte = 0x9b
+	opF64FloorCode      byte = 0x9c
+	opF64TruncCode      byte = 0x9d
+	opF64NearestCode    byte = 0x9e
+	opF64SqrtCode       byte = 0x9f
+	opF64AddCode        byte = 0xa0
+	opF64SubCode        byte = 0xa1
+	opF64MulCode        byte = 0xa2
+	opF64DivCode        byte = 0xa3
+	opF64MinCode        byte = 0xa4
+	opF64MaxCode        byte = 0xa5
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -306,6 +323,20 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32DivSCode)
 	case wasmir.InstrI32DivU:
 		out.WriteByte(opI32DivUCode)
+	case wasmir.InstrI32RemS:
+		out.WriteByte(opI32RemSCode)
+	case wasmir.InstrI32RemU:
+		out.WriteByte(opI32RemUCode)
+	case wasmir.InstrI32Shl:
+		out.WriteByte(opI32ShlCode)
+	case wasmir.InstrI32ShrS:
+		out.WriteByte(opI32ShrSCode)
+	case wasmir.InstrI32ShrU:
+		out.WriteByte(opI32ShrUCode)
+	case wasmir.InstrI32LtS:
+		out.WriteByte(opI32LtSCode)
+	case wasmir.InstrI32LtU:
+		out.WriteByte(opI32LtUCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
 	case wasmir.InstrI64Eqz:
@@ -320,6 +351,26 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI64DivSCode)
 	case wasmir.InstrI64DivU:
 		out.WriteByte(opI64DivUCode)
+	case wasmir.InstrI64RemS:
+		out.WriteByte(opI64RemSCode)
+	case wasmir.InstrI64RemU:
+		out.WriteByte(opI64RemUCode)
+	case wasmir.InstrI64Shl:
+		out.WriteByte(opI64ShlCode)
+	case wasmir.InstrI64ShrS:
+		out.WriteByte(opI64ShrSCode)
+	case wasmir.InstrI64ShrU:
+		out.WriteByte(opI64ShrUCode)
+	case wasmir.InstrI64LtS:
+		out.WriteByte(opI64LtSCode)
+	case wasmir.InstrI64LtU:
+		out.WriteByte(opI64LtUCode)
+	case wasmir.InstrI32WrapI64:
+		out.WriteByte(opI32WrapI64Code)
+	case wasmir.InstrI64ExtendI32S:
+		out.WriteByte(opI64ExtendI32SCode)
+	case wasmir.InstrI64ExtendI32U:
+		out.WriteByte(opI64ExtendI32UCode)
 	case wasmir.InstrF32Add:
 		out.WriteByte(opF32AddCode)
 	case wasmir.InstrF32Sub:

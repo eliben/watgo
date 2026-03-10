@@ -26,6 +26,13 @@ const (
 	InstrI32Mul
 	InstrI32DivS
 	InstrI32DivU
+	InstrI32RemS
+	InstrI32RemU
+	InstrI32Shl
+	InstrI32ShrS
+	InstrI32ShrU
+	InstrI32LtS
+	InstrI32LtU
 	InstrI64Add
 	InstrI64Eqz
 	InstrI64LeU
@@ -33,6 +40,16 @@ const (
 	InstrI64Mul
 	InstrI64DivS
 	InstrI64DivU
+	InstrI64RemS
+	InstrI64RemU
+	InstrI64Shl
+	InstrI64ShrS
+	InstrI64ShrU
+	InstrI64LtS
+	InstrI64LtU
+	InstrI32WrapI64
+	InstrI64ExtendI32S
+	InstrI64ExtendI32U
 	InstrF32Add
 	InstrF32Sub
 	InstrF32Mul
