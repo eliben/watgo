@@ -370,94 +370,108 @@ func (fl *functionLowerer) lowerFoldedClauseInstrs(clause *FoldedInstr) {
 	}
 }
 
-// zeroOperandInstrKinds maps plain instruction names that take no operands
-// directly to their semantic wasmir instruction kinds.
-var zeroOperandInstrKinds = map[string]wasmir.InstrKind{
-	"else":        wasmir.InstrElse,
-	"end":         wasmir.InstrEnd,
-	"drop":        wasmir.InstrDrop,
-	"i32.add":     wasmir.InstrI32Add,
-	"i32.sub":     wasmir.InstrI32Sub,
-	"i32.mul":     wasmir.InstrI32Mul,
-	"i32.div_s":   wasmir.InstrI32DivS,
-	"i32.div_u":   wasmir.InstrI32DivU,
-	"i64.add":     wasmir.InstrI64Add,
-	"i64.eqz":     wasmir.InstrI64Eqz,
-	"i64.le_u":    wasmir.InstrI64LeU,
-	"i64.sub":     wasmir.InstrI64Sub,
-	"i64.mul":     wasmir.InstrI64Mul,
-	"i64.div_s":   wasmir.InstrI64DivS,
-	"i64.div_u":   wasmir.InstrI64DivU,
-	"f32.add":     wasmir.InstrF32Add,
-	"f32.sub":     wasmir.InstrF32Sub,
-	"f32.mul":     wasmir.InstrF32Mul,
-	"f32.div":     wasmir.InstrF32Div,
-	"f32.sqrt":    wasmir.InstrF32Sqrt,
-	"f32.min":     wasmir.InstrF32Min,
-	"f32.max":     wasmir.InstrF32Max,
-	"f32.ceil":    wasmir.InstrF32Ceil,
-	"f32.floor":   wasmir.InstrF32Floor,
-	"f32.trunc":   wasmir.InstrF32Trunc,
-	"f32.nearest": wasmir.InstrF32Nearest,
-	"f64.add":     wasmir.InstrF64Add,
-	"f64.sub":     wasmir.InstrF64Sub,
-	"f64.mul":     wasmir.InstrF64Mul,
-	"f64.div":     wasmir.InstrF64Div,
-	"f64.sqrt":    wasmir.InstrF64Sqrt,
-	"f64.min":     wasmir.InstrF64Min,
-	"f64.max":     wasmir.InstrF64Max,
-	"f64.ceil":    wasmir.InstrF64Ceil,
-	"f64.floor":   wasmir.InstrF64Floor,
-	"f64.trunc":   wasmir.InstrF64Trunc,
-	"f64.nearest": wasmir.InstrF64Nearest,
+// loweringSpec describes table-driven lowering for one plain instruction.
+type loweringSpec struct {
+	kind         wasmir.InstrKind
+	operandCount int
+	decode       loweringOperandDecoder
 }
 
-// lowerZeroOperandInstr lowers pi using zeroOperandInstrKinds when applicable.
-// It returns true if pi.Name is recognized as a zero-operand instruction,
-// including operand-count failures that emit diagnostics.
-func (fl *functionLowerer) lowerZeroOperandInstr(pi *PlainInstr, instrLoc string) bool {
-	kind, ok := zeroOperandInstrKinds[pi.Name]
+// loweringOperandDecoder decodes instruction operands into ins.
+// It returns true on success and false when operands are invalid.
+type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool
+
+// loweringSpecs maps plain instruction names to table-driven lowering rules.
+var loweringSpecs = map[string]loweringSpec{
+	"else":        {kind: wasmir.InstrElse, operandCount: 0},
+	"end":         {kind: wasmir.InstrEnd, operandCount: 0},
+	"drop":        {kind: wasmir.InstrDrop, operandCount: 0},
+	"i32.add":     {kind: wasmir.InstrI32Add, operandCount: 0},
+	"i32.sub":     {kind: wasmir.InstrI32Sub, operandCount: 0},
+	"i32.mul":     {kind: wasmir.InstrI32Mul, operandCount: 0},
+	"i32.div_s":   {kind: wasmir.InstrI32DivS, operandCount: 0},
+	"i32.div_u":   {kind: wasmir.InstrI32DivU, operandCount: 0},
+	"i64.add":     {kind: wasmir.InstrI64Add, operandCount: 0},
+	"i64.eqz":     {kind: wasmir.InstrI64Eqz, operandCount: 0},
+	"i64.le_u":    {kind: wasmir.InstrI64LeU, operandCount: 0},
+	"i64.sub":     {kind: wasmir.InstrI64Sub, operandCount: 0},
+	"i64.mul":     {kind: wasmir.InstrI64Mul, operandCount: 0},
+	"i64.div_s":   {kind: wasmir.InstrI64DivS, operandCount: 0},
+	"i64.div_u":   {kind: wasmir.InstrI64DivU, operandCount: 0},
+	"f32.add":     {kind: wasmir.InstrF32Add, operandCount: 0},
+	"f32.sub":     {kind: wasmir.InstrF32Sub, operandCount: 0},
+	"f32.mul":     {kind: wasmir.InstrF32Mul, operandCount: 0},
+	"f32.div":     {kind: wasmir.InstrF32Div, operandCount: 0},
+	"f32.sqrt":    {kind: wasmir.InstrF32Sqrt, operandCount: 0},
+	"f32.min":     {kind: wasmir.InstrF32Min, operandCount: 0},
+	"f32.max":     {kind: wasmir.InstrF32Max, operandCount: 0},
+	"f32.ceil":    {kind: wasmir.InstrF32Ceil, operandCount: 0},
+	"f32.floor":   {kind: wasmir.InstrF32Floor, operandCount: 0},
+	"f32.trunc":   {kind: wasmir.InstrF32Trunc, operandCount: 0},
+	"f32.nearest": {kind: wasmir.InstrF32Nearest, operandCount: 0},
+	"f64.add":     {kind: wasmir.InstrF64Add, operandCount: 0},
+	"f64.sub":     {kind: wasmir.InstrF64Sub, operandCount: 0},
+	"f64.mul":     {kind: wasmir.InstrF64Mul, operandCount: 0},
+	"f64.div":     {kind: wasmir.InstrF64Div, operandCount: 0},
+	"f64.sqrt":    {kind: wasmir.InstrF64Sqrt, operandCount: 0},
+	"f64.min":     {kind: wasmir.InstrF64Min, operandCount: 0},
+	"f64.max":     {kind: wasmir.InstrF64Max, operandCount: 0},
+	"f64.ceil":    {kind: wasmir.InstrF64Ceil, operandCount: 0},
+	"f64.floor":   {kind: wasmir.InstrF64Floor, operandCount: 0},
+	"f64.trunc":   {kind: wasmir.InstrF64Trunc, operandCount: 0},
+	"f64.nearest": {kind: wasmir.InstrF64Nearest, operandCount: 0},
+	"local.get":   {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
+	"call":        {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
+	"i32.const":   {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
+	"i64.const":   {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
+	"f32.const":   {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
+	"f64.const":   {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
+}
+
+// lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
+// It returns true when a table entry exists, including validation failures that
+// emit diagnostics.
+func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
+	spec, ok := loweringSpecs[pi.Name]
 	if !ok {
 		return false
 	}
-	if len(pi.Operands) != 0 {
-		fl.diagf(instrLoc, "%s expects no operands", pi.Name)
+	if len(pi.Operands) != spec.operandCount {
+		fl.diagf(instrLoc, "%s expects %s", pi.Name, operandCountText(spec.operandCount))
 		return true
 	}
-	fl.emitInstr(wasmir.Instruction{Kind: kind, SourceLoc: instrLoc})
+
+	ins := wasmir.Instruction{Kind: spec.kind, SourceLoc: instrLoc}
+	if spec.decode != nil && !spec.decode(fl, &ins, pi.Operands) {
+		// Current table-driven entries with decode callbacks all consume exactly
+		// one operand, so report that operand location.
+		fl.diagf(pi.Operands[0].Loc(), "invalid %s operand", pi.Name)
+		return true
+	}
+	fl.emitInstr(ins)
 	return true
+}
+
+// operandCountText formats operand count in lowering diagnostics.
+func operandCountText(count int) string {
+	switch count {
+	case 0:
+		return "no operands"
+	case 1:
+		return "1 operand"
+	default:
+		return fmt.Sprintf("%d operands", count)
+	}
 }
 
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
-	if fl.lowerZeroOperandInstr(pi, instrLoc) {
+	if fl.lowerBySpec(pi, instrLoc) {
 		return
 	}
 
 	switch pi.Name {
-	case "local.get":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "local.get expects 1 operand")
-			return
-		}
-		localIndex, ok := lowerLocalIndexOperand(pi.Operands[0], fl.localsByName)
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid local.get operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex, SourceLoc: instrLoc})
-	case "call":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "call expects 1 operand")
-			return
-		}
-		funcIndex, ok := lowerFuncIndexOperand(pi.Operands[0], fl.mod.funcsByName)
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid call operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrCall, FuncIndex: funcIndex, SourceLoc: instrLoc})
 	case "if":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "if expects at most 1 operand")
@@ -472,60 +486,72 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			}
 			ins.BlockHasResult = true
 			ins.BlockType = vt
-			}
-			fl.emitInstr(ins)
-
-	case "i32.const":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "i32.const expects 1 operand")
-			return
 		}
-		imm, ok := lowerI32ConstOperand(pi.Operands[0])
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid i32.const operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm, SourceLoc: instrLoc})
-
-	case "i64.const":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "i64.const expects 1 operand")
-			return
-		}
-		imm, ok := lowerI64ConstOperand(pi.Operands[0])
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid i64.const operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm, SourceLoc: instrLoc})
-
-	case "f32.const":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "f32.const expects 1 operand")
-			return
-		}
-		imm, ok := lowerF32ConstOperand(pi.Operands[0])
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid f32.const operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm, SourceLoc: instrLoc})
-
-	case "f64.const":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "f64.const expects 1 operand")
-			return
-		}
-		imm, ok := lowerF64ConstOperand(pi.Operands[0])
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid f64.const operand")
-			return
-		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm, SourceLoc: instrLoc})
+		fl.emitInstr(ins)
 
 	default:
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
 	}
+}
+
+// decodeLocalGetOperands decodes operands into ins.LocalIndex for local.get.
+func decodeLocalGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	localIndex, ok := lowerLocalIndexOperand(operands[0], fl.localsByName)
+	if !ok {
+		return false
+	}
+	ins.LocalIndex = localIndex
+	return true
+}
+
+// decodeCallOperands decodes operands into ins.FuncIndex for call.
+func decodeCallOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	funcIndex, ok := lowerFuncIndexOperand(operands[0], fl.mod.funcsByName)
+	if !ok {
+		return false
+	}
+	ins.FuncIndex = funcIndex
+	return true
+}
+
+// decodeI32ConstOperands decodes operands into ins.I32Const for i32.const.
+func decodeI32ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	imm, ok := lowerI32ConstOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.I32Const = imm
+	return true
+}
+
+// decodeI64ConstOperands decodes operands into ins.I64Const for i64.const.
+func decodeI64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	imm, ok := lowerI64ConstOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.I64Const = imm
+	return true
+}
+
+// decodeF32ConstOperands decodes operands into ins.F32Const for f32.const.
+func decodeF32ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	imm, ok := lowerF32ConstOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.F32Const = imm
+	return true
+}
+
+// decodeF64ConstOperands decodes operands into ins.F64Const for f64.const.
+func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	imm, ok := lowerF64ConstOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.F64Const = imm
+	return true
 }
 
 // emitInstr appends one lowered instruction to the current function body.
