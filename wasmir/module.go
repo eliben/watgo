@@ -1,5 +1,6 @@
 package wasmir
 
+// ValueType is a WebAssembly numeric value type.
 type ValueType byte
 
 const (
@@ -9,6 +10,7 @@ const (
 	ValueTypeF64
 )
 
+// InstrKind identifies one supported instruction opcode in semantic IR form.
 type InstrKind uint8
 
 const (
@@ -75,48 +77,113 @@ const (
 	InstrEnd
 )
 
+// ExternalKind identifies the kind of an exported external definition.
 type ExternalKind uint8
 
 const (
 	ExternalKindFunction ExternalKind = iota
 )
 
+// Module is the semantic in-memory representation of a WebAssembly module.
+//
+// Index-based references are resolved through these slices:
+//   - function type indices refer into Types
+//   - function indices refer into Funcs
 type Module struct {
-	Types   []FuncType
-	Funcs   []Function
+	// Types is the module's function type table.
+	Types []FuncType
+
+	// Funcs is the list of function definitions in index order.
+	Funcs []Function
+
+	// Exports is the list of exported definitions.
 	Exports []Export
 }
 
+// FuncType is a WebAssembly function signature.
 type FuncType struct {
-	Params  []ValueType
+	// Params is the ordered parameter type list.
+
+	Params []ValueType
+	// Results is the ordered result type list.
+	// For MVP this is typically length 0 or 1, but multi-value is representable.
 	Results []ValueType
 }
 
+// Function is a function definition with locals and body instructions.
 type Function struct {
-	TypeIdx    uint32
-	Name       string
+	// TypeIdx indexes Module.Types and provides the function signature.
+	TypeIdx uint32
+
+	// Name is an optional source-level identifier (for diagnostics/debugging).
+	Name string
+
+	// ParamNames are optional source parameter identifiers aligned with
+	// FuncType.Params. Empty entries mean the parameter had no identifier in
+	// source.
 	ParamNames []string
+
+	// LocalNames are optional source local identifiers aligned with Locals.
+	// Empty entries mean the local had no identifier in source.
 	LocalNames []string
-	Locals     []ValueType
-	Body       []Instruction
-	SourceLoc  string
+
+	// Locals is the ordered list of non-parameter local variable types.
+	Locals []ValueType
+
+	// Body is the function instruction stream.
+	// Encoders/validators expect it to end with InstrEnd.
+	Body []Instruction
+
+	// SourceLoc is an optional source location string used in diagnostics.
+	SourceLoc string
 }
 
+// Export is one module export entry.
 type Export struct {
-	Name  string
-	Kind  ExternalKind
+	// Name is the exported name visible to module users.
+	Name string
+
+	// Kind is the exported external kind.
+	Kind ExternalKind
+
+	// Index is the index into the corresponding module index space.
+	// For ExternalKindFunction this indexes Module.Funcs.
 	Index uint32
 }
 
+// Instruction is one semantic instruction.
+//
+// Kind selects which operand/immediate fields are meaningful. Fields not used
+// by a given Kind are expected to be left at their zero value.
 type Instruction struct {
-	Kind           InstrKind
-	LocalIndex     uint32
-	FuncIndex      uint32
-	BlockType      ValueType
+	// Kind is the opcode of this instruction.
+	Kind InstrKind
+
+	// LocalIndex is the local index immediate used by InstrLocalGet.
+	LocalIndex uint32
+
+	// FuncIndex is the function index immediate used by InstrCall.
+	FuncIndex uint32
+
+	// BlockType is the if block result type for InstrIf when BlockHasResult is
+	// true.
+	BlockType ValueType
+
+	// BlockHasResult reports whether InstrIf has an explicit result type.
 	BlockHasResult bool
-	I32Const       int32
-	I64Const       int64
-	F32Const       uint32
-	F64Const       uint64
-	SourceLoc      string
+
+	// I32Const is the immediate for InstrI32Const.
+	I32Const int32
+
+	// I64Const is the immediate for InstrI64Const.
+	I64Const int64
+
+	// F32Const is the raw IEEE-754 bits immediate for InstrF32Const.
+	F32Const uint32
+
+	// F64Const is the raw IEEE-754 bits immediate for InstrF64Const.
+	F64Const uint64
+
+	// SourceLoc is an optional source location string used in diagnostics.
+	SourceLoc string
 }
