@@ -40,6 +40,7 @@ const (
 	InstrI32Shl
 	InstrI32ShrS
 	InstrI32ShrU
+	InstrI32Eqz
 	InstrI32LtS
 	InstrI32LtU
 	InstrI64Add
@@ -67,6 +68,7 @@ const (
 	InstrF32Mul
 	InstrF32Div
 	InstrF32Sqrt
+	InstrF32Neg
 	InstrF32Min
 	InstrF32Max
 	InstrF32Ceil
@@ -78,6 +80,7 @@ const (
 	InstrF64Mul
 	InstrF64Div
 	InstrF64Sqrt
+	InstrF64Neg
 	InstrF64Min
 	InstrF64Max
 	InstrF64Ceil

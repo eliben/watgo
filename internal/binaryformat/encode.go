@@ -64,6 +64,7 @@ const (
 	opI32ShlCode        byte = 0x74
 	opI32ShrSCode       byte = 0x75
 	opI32ShrUCode       byte = 0x76
+	opI32EqzCode        byte = 0x45
 	opI32LtSCode        byte = 0x48
 	opI32LtUCode        byte = 0x49
 	opI64AddCode        byte = 0x7c
@@ -91,6 +92,7 @@ const (
 	opF32TruncCode      byte = 0x8f
 	opF32NearestCode    byte = 0x90
 	opF32SqrtCode       byte = 0x91
+	opF32NegCode        byte = 0x8c
 	opF32AddCode        byte = 0x92
 	opF32SubCode        byte = 0x93
 	opF32MulCode        byte = 0x94
@@ -102,6 +104,7 @@ const (
 	opF64TruncCode      byte = 0x9d
 	opF64NearestCode    byte = 0x9e
 	opF64SqrtCode       byte = 0x9f
+	opF64NegCode        byte = 0x9a
 	opF64AddCode        byte = 0xa0
 	opF64SubCode        byte = 0xa1
 	opF64MulCode        byte = 0xa2
@@ -353,6 +356,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32ShrSCode)
 	case wasmir.InstrI32ShrU:
 		out.WriteByte(opI32ShrUCode)
+	case wasmir.InstrI32Eqz:
+		out.WriteByte(opI32EqzCode)
 	case wasmir.InstrI32LtS:
 		out.WriteByte(opI32LtSCode)
 	case wasmir.InstrI32LtU:
@@ -407,6 +412,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF32DivCode)
 	case wasmir.InstrF32Sqrt:
 		out.WriteByte(opF32SqrtCode)
+	case wasmir.InstrF32Neg:
+		out.WriteByte(opF32NegCode)
 	case wasmir.InstrF32Min:
 		out.WriteByte(opF32MinCode)
 	case wasmir.InstrF32Max:
@@ -429,6 +436,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64DivCode)
 	case wasmir.InstrF64Sqrt:
 		out.WriteByte(opF64SqrtCode)
+	case wasmir.InstrF64Neg:
+		out.WriteByte(opF64NegCode)
 	case wasmir.InstrF64Min:
 		out.WriteByte(opF64MinCode)
 	case wasmir.InstrF64Max:

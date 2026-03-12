@@ -397,6 +397,16 @@ instrLoop:
 			}
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
+		case InstrI32Eqz:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32.eqz needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: i32.eqz expects i32 operand", insCtx)
+				continue
+			}
+			// i32.eqz replaces i32 with i32 at top-of-stack.
 
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
@@ -482,7 +492,7 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeF32)
 
-		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest:
+		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest, InstrF32Neg:
 			name := instrName(ins.Kind)
 			if len(stack) < 1 {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
@@ -507,7 +517,7 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeF64)
 
-		case InstrF64Sqrt, InstrF64Ceil, InstrF64Floor, InstrF64Trunc, InstrF64Nearest:
+		case InstrF64Sqrt, InstrF64Ceil, InstrF64Floor, InstrF64Trunc, InstrF64Nearest, InstrF64Neg:
 			name := instrName(ins.Kind)
 			if len(stack) < 1 {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
@@ -673,6 +683,8 @@ func instrName(kind InstrKind) string {
 		return "i32.shr_s"
 	case InstrI32ShrU:
 		return "i32.shr_u"
+	case InstrI32Eqz:
+		return "i32.eqz"
 	case InstrI32LtS:
 		return "i32.lt_s"
 	case InstrI32LtU:
@@ -727,6 +739,8 @@ func instrName(kind InstrKind) string {
 		return "f32.div"
 	case InstrF32Sqrt:
 		return "f32.sqrt"
+	case InstrF32Neg:
+		return "f32.neg"
 	case InstrF32Min:
 		return "f32.min"
 	case InstrF32Max:
@@ -749,6 +763,8 @@ func instrName(kind InstrKind) string {
 		return "f64.div"
 	case InstrF64Sqrt:
 		return "f64.sqrt"
+	case InstrF64Neg:
+		return "f64.neg"
 	case InstrF64Min:
 		return "f64.min"
 	case InstrF64Max:

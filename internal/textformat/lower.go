@@ -163,6 +163,24 @@ func (l *moduleLowerer) collectFunctionNames(astm *Module) {
 	}
 }
 
+// internFuncType returns the index of a function type with the given signature.
+//
+// If an identical signature already exists in l.out.Types, its existing index is
+// returned. Otherwise a new type is appended and its new index is returned.
+func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasmir.ValueType) uint32 {
+	for i, ft := range l.out.Types {
+		if equalValueTypeSlices(ft.Params, params) && equalValueTypeSlices(ft.Results, results) {
+			return uint32(i)
+		}
+	}
+	typeIdx := uint32(len(l.out.Types))
+	l.out.Types = append(l.out.Types, wasmir.FuncType{
+		Params:  params,
+		Results: results,
+	})
+	return typeIdx
+}
+
 // lowerFunction lowers one text-format function f as function number funcIdx
 // into the output module.
 func (l *moduleLowerer) lowerFunction(funcIdx int, f *Function) {
@@ -222,23 +240,13 @@ func (fl *functionLowerer) lowerTypeUse() uint32 {
 	fl.lowerResults(fl.fn.TyUse.Results)
 
 	if fl.fn.TyUse.Id == "" {
-		typeIdx := uint32(len(fl.mod.out.Types))
-		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
-			Params:  fl.params,
-			Results: fl.results,
-		})
-		return typeIdx
+		return fl.mod.internFuncType(fl.params, fl.results)
 	}
 
 	refIdx, refType, ok := fl.resolveTypeRef(fl.fn.TyUse.Id)
 	if !ok {
 		fl.diagf(fl.fn.loc.String(), "unknown type use %q", fl.fn.TyUse.Id)
-		typeIdx := uint32(len(fl.mod.out.Types))
-		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
-			Params:  fl.params,
-			Results: fl.results,
-		})
-		return typeIdx
+		return fl.mod.internFuncType(fl.params, fl.results)
 	}
 
 	// If no inline param/result declarations exist, inherit signature directly
@@ -634,6 +642,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.shl":          {kind: wasmir.InstrI32Shl, operandCount: 0},
 	"i32.shr_s":        {kind: wasmir.InstrI32ShrS, operandCount: 0},
 	"i32.shr_u":        {kind: wasmir.InstrI32ShrU, operandCount: 0},
+	"i32.eqz":          {kind: wasmir.InstrI32Eqz, operandCount: 0},
 	"i32.lt_s":         {kind: wasmir.InstrI32LtS, operandCount: 0},
 	"i32.lt_u":         {kind: wasmir.InstrI32LtU, operandCount: 0},
 	"i64.add":          {kind: wasmir.InstrI64Add, operandCount: 0},
@@ -661,6 +670,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"f32.mul":          {kind: wasmir.InstrF32Mul, operandCount: 0},
 	"f32.div":          {kind: wasmir.InstrF32Div, operandCount: 0},
 	"f32.sqrt":         {kind: wasmir.InstrF32Sqrt, operandCount: 0},
+	"f32.neg":          {kind: wasmir.InstrF32Neg, operandCount: 0},
 	"f32.min":          {kind: wasmir.InstrF32Min, operandCount: 0},
 	"f32.max":          {kind: wasmir.InstrF32Max, operandCount: 0},
 	"f32.ceil":         {kind: wasmir.InstrF32Ceil, operandCount: 0},
@@ -672,6 +682,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"f64.mul":          {kind: wasmir.InstrF64Mul, operandCount: 0},
 	"f64.div":          {kind: wasmir.InstrF64Div, operandCount: 0},
 	"f64.sqrt":         {kind: wasmir.InstrF64Sqrt, operandCount: 0},
+	"f64.neg":          {kind: wasmir.InstrF64Neg, operandCount: 0},
 	"f64.min":          {kind: wasmir.InstrF64Min, operandCount: 0},
 	"f64.max":          {kind: wasmir.InstrF64Max, operandCount: 0},
 	"f64.ceil":         {kind: wasmir.InstrF64Ceil, operandCount: 0},
