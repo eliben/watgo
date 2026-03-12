@@ -1,7 +1,6 @@
 package textformat
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -68,55 +67,4 @@ func (sx *SExpr) Token() (kind string, value string, ok bool) {
 // Loc returns sx's source location as "line:column".
 func (sx *SExpr) Loc() string {
 	return sx.loc.String()
-}
-
-// ParseTopLevelSExprs parses all top-level s-expressions in buf.
-func ParseTopLevelSExprs(buf string) ([]*SExpr, error) {
-	lex := newLexer(buf)
-	return sexprifyAll(lex)
-}
-
-// sexprifyAll parses all top-level s-expressions from lex until EOF.
-func sexprifyAll(lex *lexer) ([]*SExpr, error) {
-	var out []*SExpr
-	for {
-		tok := lex.nextToken()
-		if tok.name == EOF {
-			return out, nil
-		}
-		if tok.name != LPAREN {
-			return nil, fmt.Errorf("at %s: %v: expected '('", tok.loc, tok.value)
-		}
-
-		sx, err := sexprify(lex, tok)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sx)
-	}
-}
-
-// sexprify is a helper for a single s-expression; it's called when '(' is
-// encountered and consumed, and returns a new sexpr. lparen is the consumed
-// '(' token.
-func sexprify(lex *lexer, lparen token) (*SExpr, error) {
-	// list non-nil distinguishes list nodes from token nodes.
-	sx := &SExpr{loc: lparen.loc, list: make([]*SExpr, 0)}
-
-	for {
-		tok := lex.nextToken()
-		if tok.name == LPAREN {
-			list, err := sexprify(lex, tok)
-			if err != nil {
-				return nil, err
-			}
-			sx.list = append(sx.list, list)
-		} else if tok.name == RPAREN {
-			return sx, nil
-		} else if tok.name == EOF {
-			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
-		} else {
-			sx.list = append(sx.list, &SExpr{tok: tok, loc: tok.loc})
-		}
-	}
 }
