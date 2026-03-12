@@ -193,6 +193,16 @@ func (p *Parser) parseResultDecl(sx *SExpr) []*ResultDecl {
 	return out
 }
 
+// parseLocalDecl parses one "(local ...)" clause and returns one or more
+// LocalDecl entries.
+//
+// Supported forms are:
+//   - named single local: "(local $x i64)" -> one LocalDecl {Id: "$x", Ty: i64}
+//   - anonymous multi local: "(local i64 i64)" -> two LocalDecl entries
+//
+// The parser first checks for the named-single form because otherwise a simple
+// token loop would try to parse "$x" as a type. If no leading ID exists, all
+// remaining items are treated as anonymous local types.
 func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
 		return []*LocalDecl{{
