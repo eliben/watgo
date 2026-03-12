@@ -16,13 +16,17 @@ type InstrKind uint8
 const (
 	InstrLocalGet InstrKind = iota
 	InstrLocalSet
+	InstrLocalTee
 	InstrCall
+	InstrCallIndirect
 	InstrBlock
 	InstrLoop
 	InstrIf
 	InstrElse
 	InstrBr
 	InstrBrIf
+	InstrBrTable
+	InstrNop
 	InstrUnreachable
 	InstrReturn
 	InstrI32Const
@@ -30,9 +34,17 @@ const (
 	InstrF32Const
 	InstrF64Const
 	InstrDrop
+	InstrSelect
+	InstrGlobalGet
+	InstrGlobalSet
+	InstrI32Load
+	InstrI32Store
+	InstrMemoryGrow
 	InstrI32Add
 	InstrI32Sub
 	InstrI32Mul
+	InstrI32Eq
+	InstrI32Ctz
 	InstrI32DivS
 	InstrI32DivU
 	InstrI32RemS
@@ -69,6 +81,7 @@ const (
 	InstrF32Div
 	InstrF32Sqrt
 	InstrF32Neg
+	InstrF32Gt
 	InstrF32Min
 	InstrF32Max
 	InstrF32Ceil
@@ -109,8 +122,20 @@ type Module struct {
 	// Funcs is the list of function definitions in index order.
 	Funcs []Function
 
+	// Tables is the table definition list in index order.
+	Tables []Table
+
+	// Memories is the linear memory definition list in index order.
+	Memories []Memory
+
+	// Globals is the global definition list in index order.
+	Globals []Global
+
 	// Exports is the list of exported definitions.
 	Exports []Export
+
+	// Elements is the list of active element segments used to initialize tables.
+	Elements []ElementSegment
 }
 
 // FuncType is a WebAssembly function signature.
@@ -164,6 +189,46 @@ type Export struct {
 	Index uint32
 }
 
+// Table is one table definition.
+type Table struct {
+	// Min is the minimum table size in elements.
+	Min uint32
+}
+
+// Memory is one linear memory definition.
+type Memory struct {
+	// Min is the minimum memory size in 64KiB pages.
+	Min uint32
+}
+
+// Global is one global definition.
+type Global struct {
+	// Name is an optional source-level identifier (for diagnostics/debugging).
+	Name string
+
+	// Type is the value type stored in this global.
+	Type ValueType
+
+	// Mutable reports whether this global can be written by global.set.
+	Mutable bool
+
+	// Init is the initializer constant expression for this global.
+	// It is expected to be one of: i32.const, i64.const, f32.const, f64.const.
+	Init Instruction
+}
+
+// ElementSegment is one active table element segment.
+type ElementSegment struct {
+	// TableIndex is the target table index.
+	TableIndex uint32
+
+	// OffsetI32 is the i32.const offset used by the active segment.
+	OffsetI32 int32
+
+	// FuncIndices are function indices written into the table.
+	FuncIndices []uint32
+}
+
 // Instruction is one semantic instruction.
 //
 // Kind selects which operand/immediate fields are meaningful. Fields not used
@@ -178,8 +243,32 @@ type Instruction struct {
 	// FuncIndex is the function index immediate used by InstrCall.
 	FuncIndex uint32
 
+	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
+	CallTypeIndex uint32
+
+	// TableIndex is the table index immediate used by InstrCallIndirect.
+	TableIndex uint32
+
 	// BranchDepth is the label depth immediate used by InstrBr and InstrBrIf.
 	BranchDepth uint32
+
+	// BranchTable is the label depth table immediate used by InstrBrTable.
+	BranchTable []uint32
+
+	// BranchDefault is the default label depth immediate used by InstrBrTable.
+	BranchDefault uint32
+
+	// GlobalIndex is the global index immediate used by global.{get,set}.
+	GlobalIndex uint32
+
+	// MemoryAlign is the alignment immediate used by memory load/store ops.
+	MemoryAlign uint32
+
+	// MemoryOffset is the offset immediate used by memory load/store ops.
+	MemoryOffset uint32
+
+	// MemoryIndex is the memory index immediate used by memory.grow.
+	MemoryIndex uint32
 
 	// BlockType is the if block result type for InstrIf when BlockHasResult is
 	// true.

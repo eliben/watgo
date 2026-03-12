@@ -18,7 +18,11 @@ const (
 	// Section IDs follow the core binary spec's section id table.
 	sectionTypeID     byte = 1
 	sectionFunctionID byte = 3
+	sectionTableID    byte = 4
+	sectionMemoryID   byte = 5
+	sectionGlobalID   byte = 6
 	sectionExportID   byte = 7
+	sectionElementID  byte = 9
 	sectionCodeID     byte = 10
 
 	// typeCodeFunc tags a function type entry in the type section.
@@ -36,6 +40,9 @@ const (
 	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
 
+	// refTypeFuncRefCode encodes funcref in table types.
+	refTypeFuncRefCode byte = 0x70
+
 	// Opcodes for the currently supported instruction subset.
 	opBlockCode         byte = 0x02
 	opLoopCode          byte = 0x03
@@ -43,7 +50,9 @@ const (
 	opElseCode          byte = 0x05
 	opBrCode            byte = 0x0c
 	opBrIfCode          byte = 0x0d
+	opBrTableCode       byte = 0x0e
 	opUnreachableCode   byte = 0x00
+	opNopCode           byte = 0x01
 	opReturnCode        byte = 0x0f
 	opEndCode           byte = 0x0b
 	opI32ConstCode      byte = 0x41
@@ -51,12 +60,23 @@ const (
 	opF32ConstCode      byte = 0x43
 	opF64ConstCode      byte = 0x44
 	opDropCode          byte = 0x1a
+	opSelectCode        byte = 0x1b
 	opLocalGetCode      byte = 0x20
 	opLocalSetCode      byte = 0x21
+	opLocalTeeCode      byte = 0x22
+	opGlobalGetCode     byte = 0x23
+	opGlobalSetCode     byte = 0x24
 	opCallCode          byte = 0x10
+	opCallIndirectCode  byte = 0x11
+	opI32LoadCode       byte = 0x28
+	opI32StoreCode      byte = 0x36
+	opMemoryGrowCode    byte = 0x40
+	opI32EqCode         byte = 0x46
+	opF32GtCode         byte = 0x5e
 	opI32AddCode        byte = 0x6a
 	opI32SubCode        byte = 0x6b
 	opI32MulCode        byte = 0x6c
+	opI32CtzCode        byte = 0x68
 	opI32DivSCode       byte = 0x6d
 	opI32DivUCode       byte = 0x6e
 	opI32RemSCode       byte = 0x6f
@@ -114,6 +134,11 @@ const (
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
+
+	// globalMutabilityConstCode marks an immutable global type.
+	globalMutabilityConstCode byte = 0x00
+	// globalMutabilityVarCode marks a mutable global type.
+	globalMutabilityVarCode byte = 0x01
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -142,9 +167,29 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 		writeSection(&out, sectionFunctionID, functionSection)
 	}
 
+	tableSection := encodeTableSection(m.Tables, &diags)
+	if len(tableSection) > 0 {
+		writeSection(&out, sectionTableID, tableSection)
+	}
+
+	memorySection := encodeMemorySection(m.Memories, &diags)
+	if len(memorySection) > 0 {
+		writeSection(&out, sectionMemoryID, memorySection)
+	}
+
+	globalSection := encodeGlobalSection(m.Globals, &diags)
+	if len(globalSection) > 0 {
+		writeSection(&out, sectionGlobalID, globalSection)
+	}
+
 	exportSection := encodeExportSection(m.Exports, &diags)
 	if len(exportSection) > 0 {
 		writeSection(&out, sectionExportID, exportSection)
+	}
+
+	elementSection := encodeElementSection(m.Elements, &diags)
+	if len(elementSection) > 0 {
+		writeSection(&out, sectionElementID, elementSection)
 	}
 
 	codeSection := encodeCodeSection(m.Funcs, &diags)
@@ -215,6 +260,88 @@ func encodeFunctionSection(funcs []wasmir.Function) []byte {
 	writeULEB128(&payload, uint32(len(funcs)))
 	for _, fn := range funcs {
 		writeULEB128(&payload, fn.TypeIdx)
+	}
+	return payload.Bytes()
+}
+
+// encodeTableSection emits section 4 as a vector of table definitions.
+// This encoder currently supports funcref tables with min-only limits.
+func encodeTableSection(tables []wasmir.Table, _ *diag.ErrorList) []byte {
+	if len(tables) == 0 {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(tables)))
+	for _, tb := range tables {
+		payload.WriteByte(refTypeFuncRefCode)
+		// limits: flags=0x00 (min only), then min.
+		payload.WriteByte(0x00)
+		writeULEB128(&payload, tb.Min)
+	}
+	return payload.Bytes()
+}
+
+// encodeMemorySection emits section 5 as a vector of memory definitions.
+// This encoder currently supports min-only limits.
+func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
+	if len(memories) == 0 {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(memories)))
+	for _, mem := range memories {
+		// limits: flags=0x00 (min only), then min.
+		payload.WriteByte(0x00)
+		writeULEB128(&payload, mem.Min)
+	}
+	return payload.Bytes()
+}
+
+// encodeGlobalSection emits section 6 as a vector of global definitions.
+func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte {
+	if len(globals) == 0 {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(globals)))
+	for i, g := range globals {
+		vt, ok := valueTypeCode(g.Type)
+		if !ok {
+			diags.Addf("global[%d]: unsupported value type %d", i, g.Type)
+			vt = valueTypeI32Code
+		}
+		payload.WriteByte(vt)
+		if g.Mutable {
+			payload.WriteByte(globalMutabilityVarCode)
+		} else {
+			payload.WriteByte(globalMutabilityConstCode)
+		}
+		encodeConstExpr(&payload, i, g.Init, diags)
+	}
+	return payload.Bytes()
+}
+
+// encodeElementSection emits section 9 as active element segments.
+// This encoder currently supports only active segments with i32.const offsets.
+func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorList) []byte {
+	if len(elements) == 0 {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(elements)))
+	for i, elem := range elements {
+		if elem.TableIndex != 0 {
+			diags.Addf("element[%d]: only table index 0 is supported", i)
+		}
+		// flags=0x00 => active segment for table 0 with const offset expression.
+		payload.WriteByte(0x00)
+		payload.WriteByte(opI32ConstCode)
+		writeSLEB128(&payload, int64(elem.OffsetI32))
+		payload.WriteByte(opEndCode)
+		writeULEB128(&payload, uint32(len(elem.FuncIndices)))
+		for _, idx := range elem.FuncIndices {
+			writeULEB128(&payload, idx)
+		}
 	}
 	return payload.Bytes()
 }
@@ -292,6 +419,8 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
+	case wasmir.InstrNop:
+		out.WriteByte(opNopCode)
 	case wasmir.InstrBlock:
 		out.WriteByte(opBlockCode)
 		encodeBlockType(out, funcIdx, instrIdx, "block", instr, diags)
@@ -309,6 +438,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBrIf:
 		out.WriteByte(opBrIfCode)
 		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrBrTable:
+		out.WriteByte(opBrTableCode)
+		writeULEB128(out, uint32(len(instr.BranchTable)))
+		for _, depth := range instr.BranchTable {
+			writeULEB128(out, depth)
+		}
+		writeULEB128(out, instr.BranchDefault)
 	case wasmir.InstrUnreachable:
 		out.WriteByte(opUnreachableCode)
 	case wasmir.InstrReturn:
@@ -327,15 +463,53 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeU64LE(out, instr.F64Const)
 	case wasmir.InstrDrop:
 		out.WriteByte(opDropCode)
+	case wasmir.InstrSelect:
+		out.WriteByte(opSelectCode)
 	case wasmir.InstrLocalGet:
 		out.WriteByte(opLocalGetCode)
 		writeULEB128(out, instr.LocalIndex)
 	case wasmir.InstrLocalSet:
 		out.WriteByte(opLocalSetCode)
 		writeULEB128(out, instr.LocalIndex)
+	case wasmir.InstrLocalTee:
+		out.WriteByte(opLocalTeeCode)
+		writeULEB128(out, instr.LocalIndex)
+	case wasmir.InstrGlobalGet:
+		out.WriteByte(opGlobalGetCode)
+		writeULEB128(out, instr.GlobalIndex)
+	case wasmir.InstrGlobalSet:
+		out.WriteByte(opGlobalSetCode)
+		writeULEB128(out, instr.GlobalIndex)
 	case wasmir.InstrCall:
 		out.WriteByte(opCallCode)
 		writeULEB128(out, instr.FuncIndex)
+	case wasmir.InstrCallIndirect:
+		out.WriteByte(opCallIndirectCode)
+		writeULEB128(out, instr.CallTypeIndex)
+		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrI32Load:
+		out.WriteByte(opI32LoadCode)
+		align := instr.MemoryAlign
+		if align == 0 {
+			align = 2
+		}
+		writeULEB128(out, align)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Store:
+		out.WriteByte(opI32StoreCode)
+		align := instr.MemoryAlign
+		if align == 0 {
+			align = 2
+		}
+		writeULEB128(out, align)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrMemoryGrow:
+		out.WriteByte(opMemoryGrowCode)
+		writeULEB128(out, instr.MemoryIndex)
+	case wasmir.InstrI32Eq:
+		out.WriteByte(opI32EqCode)
+	case wasmir.InstrI32Ctz:
+		out.WriteByte(opI32CtzCode)
 	case wasmir.InstrI32Add:
 		out.WriteByte(opI32AddCode)
 	case wasmir.InstrI32Sub:
@@ -414,6 +588,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF32SqrtCode)
 	case wasmir.InstrF32Neg:
 		out.WriteByte(opF32NegCode)
+	case wasmir.InstrF32Gt:
+		out.WriteByte(opF32GtCode)
 	case wasmir.InstrF32Min:
 		out.WriteByte(opF32MinCode)
 	case wasmir.InstrF32Max:
@@ -455,6 +631,29 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	default:
 		diags.Addf("func[%d] instruction[%d]: unsupported instruction kind %d", funcIdx, instrIdx, instr.Kind)
 	}
+}
+
+// encodeConstExpr emits a constant initializer expression terminated by end.
+func encodeConstExpr(out *bytes.Buffer, globalIdx int, init wasmir.Instruction, diags *diag.ErrorList) {
+	switch init.Kind {
+	case wasmir.InstrI32Const:
+		out.WriteByte(opI32ConstCode)
+		writeSLEB128(out, int64(init.I32Const))
+	case wasmir.InstrI64Const:
+		out.WriteByte(opI64ConstCode)
+		writeSLEB128(out, init.I64Const)
+	case wasmir.InstrF32Const:
+		out.WriteByte(opF32ConstCode)
+		writeU32LE(out, init.F32Const)
+	case wasmir.InstrF64Const:
+		out.WriteByte(opF64ConstCode)
+		writeU64LE(out, init.F64Const)
+	default:
+		diags.Addf("global[%d]: unsupported initializer instruction kind %d", globalIdx, init.Kind)
+		out.WriteByte(opI32ConstCode)
+		writeSLEB128(out, 0)
+	}
+	out.WriteByte(opEndCode)
 }
 
 func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string, instr wasmir.Instruction, diags *diag.ErrorList) {

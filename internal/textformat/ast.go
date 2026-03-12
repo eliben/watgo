@@ -18,10 +18,65 @@ type Module struct {
 	// Types contains parsed type declarations in source order.
 	Types []*TypeDecl
 
+	// Tables contains parsed table declarations in source order.
+	Tables []*TableDecl
+
+	// Memories contains parsed memory declarations in source order.
+	Memories []*MemoryDecl
+
+	// Globals contains parsed global declarations in source order.
+	Globals []*GlobalDecl
+
 	// Funcs contains parsed function declarations in source order.
 	Funcs []*Function
 
 	// loc is the source location of the module form head.
+	loc location
+}
+
+// TableDecl is one module-level table declaration "(table ...)".
+//
+// This parser currently supports inline elem syntax like:
+//   - (table funcref (elem $f))
+type TableDecl struct {
+	// Id is the optional table identifier (for example "$t").
+	Id string
+
+	// ElemRefs are parsed function references from the inline "(elem ...)" list.
+	// Each entry is raw source text (identifier or numeric index literal).
+	ElemRefs []string
+
+	// loc is the source location of the table declaration form head.
+	loc location
+}
+
+// MemoryDecl is one module-level memory declaration "(memory ...)".
+type MemoryDecl struct {
+	// Id is the optional memory identifier (for example "$m").
+	Id string
+
+	// Min is the minimum memory size in pages.
+	Min uint32
+
+	// loc is the source location of the memory declaration form head.
+	loc location
+}
+
+// GlobalDecl is one module-level global declaration "(global ...)".
+type GlobalDecl struct {
+	// Id is the optional global identifier (for example "$g").
+	Id string
+
+	// Mutable reports whether this global declaration uses "(mut ...)".
+	Mutable bool
+
+	// Ty is the declared global value type.
+	Ty Type
+
+	// Init is the parsed initializer expression.
+	Init Instruction
+
+	// loc is the source location of the global declaration form head.
 	loc location
 }
 

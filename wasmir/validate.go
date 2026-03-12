@@ -28,6 +28,29 @@ func ValidateModule(m *Module) error {
 		}
 	}
 
+	for i, g := range m.Globals {
+		initType, ok := globalInitType(g.Init)
+		if !ok {
+			diags.Addf("global[%d]: unsupported initializer instruction kind %d", i, g.Init.Kind)
+			continue
+		}
+		if initType != g.Type {
+			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, valueTypeName(initType), valueTypeName(g.Type))
+		}
+	}
+
+	for i, elem := range m.Elements {
+		if int(elem.TableIndex) >= len(m.Tables) {
+			diags.Addf("element[%d] has invalid table index %d", i, elem.TableIndex)
+			continue
+		}
+		for j, funcIdx := range elem.FuncIndices {
+			if int(funcIdx) >= len(m.Funcs) {
+				diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
+			}
+		}
+	}
+
 	for i, exp := range m.Exports {
 		if exp.Kind != ExternalKindFunction {
 			diags.Addf("export[%d] has unsupported kind %d", i, exp.Kind)
@@ -126,6 +149,13 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 		stack = stack[:target.entryHeight+targetLen]
 	}
 
+	branchTargetTypes := func(target controlFrame) []ValueType {
+		if target.kind == controlKindLoop {
+			return target.paramTypes
+		}
+		return target.resultTypes
+	}
+
 	controlSignature := func(ins Instruction, insCtx, opname string) ([]ValueType, []ValueType, bool) {
 		if ins.BlockTypeUsesIndex {
 			if int(ins.BlockTypeIndex) >= len(m.Types) {
@@ -149,6 +179,8 @@ instrLoop:
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
 		}
 		switch ins.Kind {
+		case InstrNop:
+			// No stack effect.
 		case InstrBlock:
 			params, results, ok := controlSignature(ins, insCtx, "block")
 			if !ok {
@@ -278,6 +310,46 @@ instrLoop:
 				continue
 			}
 			stack = stack[:len(stack)-1]
+		case InstrLocalTee:
+			if int(ins.LocalIndex) >= len(locals) {
+				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: local.tee needs 1 operand", insCtx)
+				continue
+			}
+			want := locals[ins.LocalIndex]
+			if stack[len(stack)-1] != want {
+				diags.Addf("%s: local.tee expects %s operand", insCtx, valueTypeName(want))
+				continue
+			}
+			// local.tee writes local and preserves operand on stack.
+		case InstrGlobalGet:
+			if int(ins.GlobalIndex) >= len(m.Globals) {
+				diags.Addf("%s: global index %d out of range", insCtx, ins.GlobalIndex)
+				continue
+			}
+			stack = append(stack, m.Globals[ins.GlobalIndex].Type)
+		case InstrGlobalSet:
+			if int(ins.GlobalIndex) >= len(m.Globals) {
+				diags.Addf("%s: global index %d out of range", insCtx, ins.GlobalIndex)
+				continue
+			}
+			g := m.Globals[ins.GlobalIndex]
+			if !g.Mutable {
+				diags.Addf("%s: global.set on immutable global %d", insCtx, ins.GlobalIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: global.set needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != g.Type {
+				diags.Addf("%s: global.set expects %s operand", insCtx, valueTypeName(g.Type))
+				continue
+			}
+			stack = stack[:len(stack)-1]
 		case InstrCall:
 			if int(ins.FuncIndex) >= len(m.Funcs) {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -308,6 +380,39 @@ instrLoop:
 			}
 			stack = stack[:base]
 			stack = append(stack, calleeType.Results...)
+		case InstrCallIndirect:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: call_indirect table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if int(ins.CallTypeIndex) >= len(m.Types) {
+				diags.Addf("%s: call_indirect type index %d out of range", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			calleeType := m.Types[ins.CallTypeIndex]
+			need := len(calleeType.Params) + 1 // +1 for table element index
+			if len(stack) < need {
+				diags.Addf("%s: call_indirect needs %d operands", insCtx, need)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: call_indirect expects i32 table index operand", insCtx)
+				continue
+			}
+			base := len(stack) - 1 - len(calleeType.Params)
+			ok := true
+			for j, pt := range calleeType.Params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: call_indirect expects operand %d to be %s", insCtx, j, valueTypeName(pt))
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			stack = stack[:base]
+			stack = append(stack, calleeType.Results...)
 
 		case InstrI32Const:
 			stack = append(stack, ValueTypeI32)
@@ -327,6 +432,69 @@ instrLoop:
 				continue
 			}
 			stack = stack[:len(stack)-1]
+		case InstrSelect:
+			if len(stack) < 3 {
+				diags.Addf("%s: select needs 3 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: select expects i32 condition operand", insCtx)
+				continue
+			}
+			v2 := stack[len(stack)-2]
+			v1 := stack[len(stack)-3]
+			if v1 != v2 {
+				diags.Addf("%s: select expects same-typed value operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-3]
+			stack = append(stack, v1)
+		case InstrI32Load:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: i32.load requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: i32.load needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: i32.load expects i32 address operand", insCtx)
+				continue
+			}
+			// i32 address replaced by loaded i32 value.
+		case InstrI32Store:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: i32.store requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: i32.store needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: i32.store expects i32 value and i32 address operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrMemoryGrow:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: memory.grow requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.grow memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: memory.grow needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: memory.grow expects i32 operand", insCtx)
+				continue
+			}
+			// i32 pages operand replaced by i32 previous-size result.
 		case InstrBr:
 			target, ok := validateBranchTarget(insCtx, ins.BranchDepth, "br")
 			if !ok {
@@ -344,6 +512,50 @@ instrLoop:
 			}
 			stack = stack[:len(stack)-1]
 			_, _ = validateBranchTarget(insCtx, ins.BranchDepth, "br_if")
+		case InstrBrTable:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: br_table expects i32 selector operand", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-1]
+
+			targetDepths := make([]uint32, 0, len(ins.BranchTable)+1)
+			targetDepths = append(targetDepths, ins.BranchTable...)
+			targetDepths = append(targetDepths, ins.BranchDefault)
+			if len(targetDepths) == 0 {
+				diags.Addf("%s: br_table requires at least default target", insCtx)
+				continue
+			}
+			var refTypes []ValueType
+			for j, depth := range targetDepths {
+				target, ok := validateBranchTarget(insCtx, depth, "br_table")
+				if !ok {
+					continue
+				}
+				types := branchTargetTypes(target)
+				if j == 0 {
+					refTypes = append([]ValueType(nil), types...)
+					continue
+				}
+				if len(types) != len(refTypes) {
+					diags.Addf("%s: br_table target arity mismatch", insCtx)
+					continue
+				}
+				for k := range types {
+					if types[k] != refTypes[k] {
+						diags.Addf("%s: br_table target type mismatch", insCtx)
+						break
+					}
+				}
+			}
+			target, ok := validateBranchTarget(insCtx, targetDepths[0], "br_table")
+			if ok {
+				applyBranchTarget(target)
+			}
 		case InstrUnreachable:
 			// `unreachable` is stack-polymorphic and marks the current path as
 			// non-returning for this simple validator.
@@ -385,7 +597,7 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
 
-		case InstrI32LtS, InstrI32LtU:
+		case InstrI32Eq, InstrI32LtS, InstrI32LtU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -407,6 +619,16 @@ instrLoop:
 				continue
 			}
 			// i32.eqz replaces i32 with i32 at top-of-stack.
+		case InstrI32Ctz:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32.ctz needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: i32.ctz expects i32 operand", insCtx)
+				continue
+			}
+			// i32.ctz preserves i32 on stack.
 
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
@@ -503,6 +725,17 @@ instrLoop:
 				continue
 			}
 			// Unary f32 operators preserve top-of-stack type.
+		case InstrF32Gt:
+			if len(stack) < 2 {
+				diags.Addf("%s: f32.gt needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
+				diags.Addf("%s: f32.gt expects f32 operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
 
 		case InstrF64Add, InstrF64Sub, InstrF64Mul, InstrF64Div, InstrF64Min, InstrF64Max:
 			name := instrName(ins.Kind)
@@ -629,14 +862,35 @@ func valueTypeName(vt ValueType) string {
 	}
 }
 
+func globalInitType(init Instruction) (ValueType, bool) {
+	switch init.Kind {
+	case InstrI32Const:
+		return ValueTypeI32, true
+	case InstrI64Const:
+		return ValueTypeI64, true
+	case InstrF32Const:
+		return ValueTypeF32, true
+	case InstrF64Const:
+		return ValueTypeF64, true
+	default:
+		return 0, false
+	}
+}
+
 func instrName(kind InstrKind) string {
 	switch kind {
+	case InstrNop:
+		return "nop"
 	case InstrLocalGet:
 		return "local.get"
 	case InstrLocalSet:
 		return "local.set"
+	case InstrLocalTee:
+		return "local.tee"
 	case InstrCall:
 		return "call"
+	case InstrCallIndirect:
+		return "call_indirect"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:
@@ -649,6 +903,8 @@ func instrName(kind InstrKind) string {
 		return "br"
 	case InstrBrIf:
 		return "br_if"
+	case InstrBrTable:
+		return "br_table"
 	case InstrUnreachable:
 		return "unreachable"
 	case InstrReturn:
@@ -663,6 +919,22 @@ func instrName(kind InstrKind) string {
 		return "f64.const"
 	case InstrDrop:
 		return "drop"
+	case InstrSelect:
+		return "select"
+	case InstrGlobalGet:
+		return "global.get"
+	case InstrGlobalSet:
+		return "global.set"
+	case InstrI32Load:
+		return "i32.load"
+	case InstrI32Store:
+		return "i32.store"
+	case InstrMemoryGrow:
+		return "memory.grow"
+	case InstrI32Eq:
+		return "i32.eq"
+	case InstrI32Ctz:
+		return "i32.ctz"
 	case InstrI32Add:
 		return "i32.add"
 	case InstrI32Sub:
@@ -741,6 +1013,8 @@ func instrName(kind InstrKind) string {
 		return "f32.sqrt"
 	case InstrF32Neg:
 		return "f32.neg"
+	case InstrF32Gt:
+		return "f32.gt"
 	case InstrF32Min:
 		return "f32.min"
 	case InstrF32Max:

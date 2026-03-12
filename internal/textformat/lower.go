@@ -29,6 +29,9 @@ type moduleLowerer struct {
 
 	// typesByName maps type identifiers to type indices in out.Types.
 	typesByName map[string]uint32
+
+	// globalsByName maps global identifiers to their indices in out.Globals.
+	globalsByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -103,9 +106,10 @@ func LowerModule(astm *Module) (*wasmir.Module, error) {
 // newModuleLowerer creates a module lowerer with an empty output module.
 func newModuleLowerer() *moduleLowerer {
 	return &moduleLowerer{
-		out:         &wasmir.Module{},
-		funcsByName: map[string]uint32{},
-		typesByName: map[string]uint32{},
+		out:           &wasmir.Module{},
+		funcsByName:   map[string]uint32{},
+		typesByName:   map[string]uint32{},
+		globalsByName: map[string]uint32{},
 	}
 }
 
@@ -114,6 +118,9 @@ func newModuleLowerer() *moduleLowerer {
 func (l *moduleLowerer) lowerModule(astm *Module) {
 	l.collectTypeDecls(astm)
 	l.collectFunctionNames(astm)
+	l.collectTableDecls(astm)
+	l.collectMemoryDecls(astm)
+	l.collectGlobalDecls(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
 			l.diags.Addf("func[%d]: nil function", i)
@@ -147,6 +154,90 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 		}
 		l.typesByName[td.Id] = typeIdx
 	}
+}
+
+// collectTableDecls lowers table declarations and their inline element lists.
+func (l *moduleLowerer) collectTableDecls(astm *Module) {
+	for i, td := range astm.Tables {
+		if td == nil {
+			l.diags.Addf("table[%d]: nil table declaration", i)
+			continue
+		}
+		tableIdx := uint32(len(l.out.Tables))
+		min := uint32(len(td.ElemRefs))
+		l.out.Tables = append(l.out.Tables, wasmir.Table{Min: min})
+
+		if len(td.ElemRefs) == 0 {
+			continue
+		}
+		seg := wasmir.ElementSegment{
+			TableIndex:  tableIdx,
+			OffsetI32:   0,
+			FuncIndices: make([]uint32, 0, len(td.ElemRefs)),
+		}
+		for _, ref := range td.ElemRefs {
+			idx, ok := l.resolveFunctionRef(ref)
+			if !ok {
+				l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
+				continue
+			}
+			seg.FuncIndices = append(seg.FuncIndices, idx)
+		}
+		l.out.Elements = append(l.out.Elements, seg)
+	}
+}
+
+// collectMemoryDecls lowers memory declarations.
+func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
+	for i, md := range astm.Memories {
+		if md == nil {
+			l.diags.Addf("memory[%d]: nil memory declaration", i)
+			continue
+		}
+		l.out.Memories = append(l.out.Memories, wasmir.Memory{Min: md.Min})
+	}
+}
+
+// collectGlobalDecls lowers global declarations and records named globals.
+func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
+	for i, gd := range astm.Globals {
+		if gd == nil {
+			l.diags.Addf("global[%d]: nil global declaration", i)
+			continue
+		}
+		vt, ok := lowerValueType(gd.Ty)
+		if !ok {
+			l.diags.Addf("global[%d]: unsupported value type %q", i, gd.Ty)
+			continue
+		}
+		init, ok := lowerGlobalInit(gd.Init)
+		if !ok {
+			l.diags.Addf("global[%d]: unsupported initializer", i)
+			continue
+		}
+		globalIdx := uint32(len(l.out.Globals))
+		l.out.Globals = append(l.out.Globals, wasmir.Global{
+			Name:    gd.Id,
+			Type:    vt,
+			Mutable: gd.Mutable,
+			Init:    init,
+		})
+		if gd.Id == "" {
+			continue
+		}
+		if prev, exists := l.globalsByName[gd.Id]; exists {
+			l.diags.Addf("global[%d] %s: duplicate global id (first seen at global[%d])", i, gd.Id, prev)
+			continue
+		}
+		l.globalsByName[gd.Id] = globalIdx
+	}
+}
+
+func (l *moduleLowerer) resolveFunctionRef(ref string) (uint32, bool) {
+	if idx, ok := l.funcsByName[ref]; ok {
+		return idx, true
+	}
+	return parseU32Literal(ref)
 }
 
 // collectFunctionNames pre-scans astm and records named function indices.
@@ -373,6 +464,10 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.lowerFoldedBlock(fi, true)
 		return
 	}
+	if fi.Name == "call_indirect" {
+		fl.lowerFoldedCallIndirect(fi)
+		return
+	}
 
 	var operands []Operand
 	for _, arg := range fi.Args {
@@ -388,6 +483,52 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 	}
 
 	fl.lowerPlainInstr(&PlainInstr{Name: fi.Name, Operands: operands, loc: fi.loc})
+}
+
+// lowerFoldedCallIndirect lowers folded "(call_indirect ...)" preserving
+// operand evaluation order for nested argument expressions.
+func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
+	var typeRef string
+	for _, arg := range fi.Args {
+		if arg.Operand != nil {
+			fl.diagf(arg.Operand.Loc(), "call_indirect expects nested expressions/clauses")
+			continue
+		}
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if !ok {
+			fl.lowerInstruction(arg.Instr)
+			continue
+		}
+		if nested.Name == "type" {
+			if typeRef != "" {
+				fl.diagf(nested.Loc(), "duplicate call_indirect type clause")
+				continue
+			}
+			ref, ok := parseFoldedTypeClauseRef(nested)
+			if !ok {
+				fl.diagf(nested.Loc(), "invalid call_indirect type clause")
+				continue
+			}
+			typeRef = ref
+			continue
+		}
+		fl.lowerInstruction(nested)
+	}
+	if typeRef == "" {
+		fl.diagf(fi.Loc(), "call_indirect requires a (type ...) clause")
+		return
+	}
+	typeIdx, _, ok := fl.resolveTypeRef(typeRef)
+	if !ok {
+		fl.diagf(fi.Loc(), "unknown call_indirect type use %q", typeRef)
+		return
+	}
+	fl.emitInstr(wasmir.Instruction{
+		Kind:          wasmir.InstrCallIndirect,
+		CallTypeIndex: typeIdx,
+		TableIndex:    0,
+		SourceLoc:     fi.loc.String(),
+	})
 }
 
 // lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
@@ -486,6 +627,9 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 	var paramTypes []wasmir.ValueType
 	var resultTypes []wasmir.ValueType
 	var bodyInstrs []Instruction
+	var typeRef string
+	seenResultClause := false
+	seenBody := false
 
 	for i, arg := range fi.Args {
 		if arg.Operand != nil {
@@ -507,21 +651,33 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		nested, ok := arg.Instr.(*FoldedInstr)
 		if !ok {
 			bodyInstrs = append(bodyInstrs, arg.Instr)
+			seenBody = true
 			continue
 		}
 
 		switch nested.Name {
+		case "type":
+			if seenBody || len(paramTypes) > 0 || len(resultTypes) > 0 || typeRef != "" {
+				fl.diagf(nested.Loc(), "unexpected token in %s signature", fi.Name)
+				continue
+			}
+			ref, ok := parseFoldedTypeClauseRef(nested)
+			if !ok {
+				fl.diagf(nested.Loc(), "invalid %s type clause", fi.Name)
+				continue
+			}
+			typeRef = ref
 		case "result":
+			if seenBody {
+				fl.diagf(nested.Loc(), "unexpected token in %s body", fi.Name)
+				continue
+			}
 			// Result annotation in text:
 			//   (result t1 t2 ...)
 			// For this lowering pass we allow at most one explicit result
 			// clause and collect all listed result value types.
 			if len(nested.Args) == 0 {
 				fl.diagf(nested.Loc(), "invalid %s result clause", fi.Name)
-				continue
-			}
-			if len(resultTypes) > 0 {
-				fl.diagf(nested.Loc(), "duplicate %s result clause", fi.Name)
 				continue
 			}
 			for _, resultArg := range nested.Args {
@@ -536,7 +692,12 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 				}
 				resultTypes = append(resultTypes, vt)
 			}
+			seenResultClause = true
 		case "param":
+			if seenBody || seenResultClause {
+				fl.diagf(nested.Loc(), "unexpected token in %s signature", fi.Name)
+				continue
+			}
 			// Parameter annotation in text:
 			//   (param t1 t2 ...)
 			// Loop parameters are important for branch-to-loop typing and
@@ -545,6 +706,10 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 			for _, paramArg := range nested.Args {
 				if paramArg.Operand == nil || paramArg.Instr != nil {
 					fl.diagf(nested.Loc(), "invalid %s param clause", fi.Name)
+					continue
+				}
+				if _, isID := paramArg.Operand.(*IdOperand); isID {
+					fl.diagf(paramArg.Operand.Loc(), "named %s params are not supported", fi.Name)
 					continue
 				}
 				vt, ok := lowerBlockResultTypeOperand(paramArg.Operand)
@@ -557,6 +722,7 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		default:
 			// Any other nested list is treated as a normal body instruction.
 			bodyInstrs = append(bodyInstrs, nested)
+			seenBody = true
 		}
 	}
 
@@ -565,28 +731,54 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		kind = wasmir.InstrLoop
 	}
 
+	finalParams := paramTypes
+	finalResults := resultTypes
+	useTypeIndex := false
+	var typeIdx uint32
+
+	if typeRef != "" {
+		refIdx, refType, ok := fl.resolveTypeRef(typeRef)
+		if !ok {
+			fl.diagf(fi.Loc(), "unknown %s type use %q", fi.Name, typeRef)
+		} else {
+			useTypeIndex = true
+			typeIdx = refIdx
+			if len(paramTypes) > 0 || len(resultTypes) > 0 {
+				if !equalValueTypeSlices(paramTypes, refType.Params) || !equalValueTypeSlices(resultTypes, refType.Results) {
+					fl.diagf(fi.Loc(), "inline function type mismatch in %s", fi.Name)
+				}
+			} else {
+				finalParams = append([]wasmir.ValueType(nil), refType.Params...)
+				finalResults = append([]wasmir.ValueType(nil), refType.Results...)
+			}
+		}
+	}
+
 	switch {
-	case len(paramTypes) > 0 || len(resultTypes) > 1:
-		// Multi-value signatures (or any explicit params) require a type-index
-		// blocktype per the binary format. We append a synthetic function type
-		// to Module.Types and reference it from the instruction.
-		typeIdx := uint32(len(fl.mod.out.Types))
-		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
-			Params:  paramTypes,
-			Results: resultTypes,
-		})
+	case useTypeIndex:
 		fl.emitInstr(wasmir.Instruction{
 			Kind:               kind,
 			BlockTypeUsesIndex: true,
 			BlockTypeIndex:     typeIdx,
 			SourceLoc:          fi.loc.String(),
 		})
-	case len(resultTypes) == 1:
+	case len(finalParams) > 0 || len(finalResults) > 1:
+		// Multi-value signatures (or any explicit params) require a type-index
+		// blocktype per the binary format. We append a synthetic function type
+		// to Module.Types and reference it from the instruction.
+		typeIdx := fl.mod.internFuncType(finalParams, finalResults)
+		fl.emitInstr(wasmir.Instruction{
+			Kind:               kind,
+			BlockTypeUsesIndex: true,
+			BlockTypeIndex:     typeIdx,
+			SourceLoc:          fi.loc.String(),
+		})
+	case len(finalResults) == 1:
 		// Single-result blocktype can be encoded directly as a value type.
 		fl.emitInstr(wasmir.Instruction{
 			Kind:           kind,
 			BlockHasResult: true,
-			BlockType:      resultTypes[0],
+			BlockType:      finalResults[0],
 			SourceLoc:      fi.loc.String(),
 		})
 	default:
@@ -602,6 +794,23 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 	}
 	fl.popLabel()
 	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
+}
+
+func parseFoldedTypeClauseRef(fi *FoldedInstr) (string, bool) {
+	if fi == nil || fi.Name != "type" || len(fi.Args) != 1 {
+		return "", false
+	}
+	if fi.Args[0].Instr != nil || fi.Args[0].Operand == nil {
+		return "", false
+	}
+	switch op := fi.Args[0].Operand.(type) {
+	case *IdOperand:
+		return op.Value, true
+	case *IntOperand:
+		return op.Value, true
+	default:
+		return "", false
+	}
 }
 
 // lowerFoldedClauseInstrs lowers all instruction children in a then/else
@@ -629,9 +838,11 @@ type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, o
 
 // loweringSpecs maps plain instruction names to table-driven lowering rules.
 var loweringSpecs = map[string]loweringSpec{
+	"nop":              {kind: wasmir.InstrNop, operandCount: 0},
 	"else":             {kind: wasmir.InstrElse, operandCount: 0},
 	"end":              {kind: wasmir.InstrEnd, operandCount: 0},
 	"drop":             {kind: wasmir.InstrDrop, operandCount: 0},
+	"select":           {kind: wasmir.InstrSelect, operandCount: 0},
 	"i32.add":          {kind: wasmir.InstrI32Add, operandCount: 0},
 	"i32.sub":          {kind: wasmir.InstrI32Sub, operandCount: 0},
 	"i32.mul":          {kind: wasmir.InstrI32Mul, operandCount: 0},
@@ -691,11 +902,20 @@ var loweringSpecs = map[string]loweringSpec{
 	"f64.nearest":      {kind: wasmir.InstrF64Nearest, operandCount: 0},
 	"local.get":        {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
 	"local.set":        {kind: wasmir.InstrLocalSet, operandCount: 1, decode: decodeLocalSetOperands},
+	"local.tee":        {kind: wasmir.InstrLocalTee, operandCount: 1, decode: decodeLocalTeeOperands},
 	"call":             {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
 	"br":               {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
 	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
+	"global.get":       {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
+	"global.set":       {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
+	"i32.load":         {kind: wasmir.InstrI32Load, operandCount: 0},
+	"i32.store":        {kind: wasmir.InstrI32Store, operandCount: 0},
+	"memory.grow":      {kind: wasmir.InstrMemoryGrow, operandCount: 0},
 	"unreachable":      {kind: wasmir.InstrUnreachable, operandCount: 0},
 	"return":           {kind: wasmir.InstrReturn, operandCount: 0},
+	"i32.eq":           {kind: wasmir.InstrI32Eq, operandCount: 0},
+	"i32.ctz":          {kind: wasmir.InstrI32Ctz, operandCount: 0},
+	"f32.gt":           {kind: wasmir.InstrF32Gt, operandCount: 0},
 	"i32.const":        {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
 	"i64.const":        {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
 	"f32.const":        {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
@@ -746,6 +966,30 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "br_table":
+		if len(pi.Operands) == 0 {
+			fl.diagf(instrLoc, "br_table expects at least 1 label operand")
+			return
+		}
+		depths := make([]uint32, 0, len(pi.Operands))
+		for i, op := range pi.Operands {
+			depth, ok := fl.lowerLabelOperand(op)
+			if !ok {
+				fl.diagf(op.Loc(), "invalid br_table label operand %d", i)
+				return
+			}
+			depths = append(depths, depth)
+		}
+		ins := wasmir.Instruction{
+			Kind:          wasmir.InstrBrTable,
+			BranchDefault: depths[len(depths)-1],
+			SourceLoc:     instrLoc,
+		}
+		if len(depths) > 1 {
+			ins.BranchTable = append(ins.BranchTable, depths[:len(depths)-1]...)
+		}
+		fl.emitInstr(ins)
+		return
 	case "if":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "if expects at most 1 operand")
@@ -808,6 +1052,16 @@ func decodeLocalSetOperands(fl *functionLowerer, ins *wasmir.Instruction, operan
 	return true
 }
 
+// decodeLocalTeeOperands decodes operands into ins.LocalIndex for local.tee.
+func decodeLocalTeeOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	localIndex, ok := lowerLocalIndexOperand(operands[0], fl.localsByName)
+	if !ok {
+		return false
+	}
+	ins.LocalIndex = localIndex
+	return true
+}
+
 // decodeBrOperands decodes operands into ins.BranchDepth for br and br_if.
 func decodeBrOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	depth, ok := fl.lowerLabelOperand(operands[0])
@@ -825,6 +1079,26 @@ func decodeCallOperands(fl *functionLowerer, ins *wasmir.Instruction, operands [
 		return false
 	}
 	ins.FuncIndex = funcIndex
+	return true
+}
+
+// decodeGlobalGetOperands decodes operands into ins.GlobalIndex for global.get.
+func decodeGlobalGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	globalIndex, ok := lowerGlobalIndexOperand(operands[0], fl.mod.globalsByName)
+	if !ok {
+		return false
+	}
+	ins.GlobalIndex = globalIndex
+	return true
+}
+
+// decodeGlobalSetOperands decodes operands into ins.GlobalIndex for global.set.
+func decodeGlobalSetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	globalIndex, ok := lowerGlobalIndexOperand(operands[0], fl.mod.globalsByName)
+	if !ok {
+		return false
+	}
+	ins.GlobalIndex = globalIndex
 	return true
 }
 
@@ -951,6 +1225,58 @@ func lowerF64ConstOperand(op Operand) (uint64, bool) {
 	}
 }
 
+// lowerGlobalInit lowers a global initializer expression to a semantic const
+// instruction.
+func lowerGlobalInit(init Instruction) (wasmir.Instruction, bool) {
+	var name string
+	var op Operand
+	switch in := init.(type) {
+	case *PlainInstr:
+		if len(in.Operands) != 1 {
+			return wasmir.Instruction{}, false
+		}
+		name = in.Name
+		op = in.Operands[0]
+	case *FoldedInstr:
+		if len(in.Args) != 1 || in.Args[0].Instr != nil || in.Args[0].Operand == nil {
+			return wasmir.Instruction{}, false
+		}
+		name = in.Name
+		op = in.Args[0].Operand
+	default:
+		return wasmir.Instruction{}, false
+	}
+
+	switch name {
+	case "i32.const":
+		imm, ok := lowerI32ConstOperand(op)
+		if !ok {
+			return wasmir.Instruction{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm}, true
+	case "i64.const":
+		imm, ok := lowerI64ConstOperand(op)
+		if !ok {
+			return wasmir.Instruction{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm}, true
+	case "f32.const":
+		imm, ok := lowerF32ConstOperand(op)
+		if !ok {
+			return wasmir.Instruction{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm}, true
+	case "f64.const":
+		imm, ok := lowerF64ConstOperand(op)
+		if !ok {
+			return wasmir.Instruction{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm}, true
+	default:
+		return wasmir.Instruction{}, false
+	}
+}
+
 // lowerLocalIndexOperand resolves op as a local index using localsByName.
 // It returns the resolved index and true on success, or 0/false otherwise.
 func lowerLocalIndexOperand(op Operand, localsByName map[string]uint32) (uint32, bool) {
@@ -971,6 +1297,20 @@ func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, b
 	switch o := op.(type) {
 	case *IdOperand:
 		idx, ok := funcsByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerGlobalIndexOperand resolves op as a global index using globalsByName.
+// It returns the resolved index and true on success, or 0/false otherwise.
+func lowerGlobalIndexOperand(op Operand, globalsByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := globalsByName[o.Value]
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)

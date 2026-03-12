@@ -2,6 +2,8 @@ package textformat
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/eliben/watgo/diag"
 )
@@ -149,6 +151,12 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		sub := sx.list[i]
 		if sub.HeadKeyword() == "type" {
 			m.Types = append(m.Types, p.parseTypeDecl(sub))
+		} else if sub.HeadKeyword() == "table" {
+			m.Tables = append(m.Tables, p.parseTableDecl(sub))
+		} else if sub.HeadKeyword() == "memory" {
+			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
+		} else if sub.HeadKeyword() == "global" {
+			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
 		} else if sub.HeadKeyword() == "func" {
 			m.Funcs = append(m.Funcs, p.parseFunction(sub))
 		}
@@ -222,6 +230,118 @@ func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 	}
 	td.TyUse = p.parseFuncTypeUse(sx.list[cursor])
 	return td
+}
+
+// parseTableDecl parses one module-level "(table ...)" declaration.
+//
+// Supported form in the current parser:
+//   - (table funcref (elem $f ...))
+//   - (table $t funcref (elem $f ...))
+func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
+	td := &TableDecl{loc: sx.loc}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		td.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "table declaration missing element type")
+		return td
+	}
+	if !sx.list[cursor].IsToken() || sx.list[cursor].tok.name != KEYWORD || sx.list[cursor].tok.value != "funcref" {
+		p.emitError(sx.list[cursor].loc, `table declaration expects "funcref"`)
+		return td
+	}
+	cursor++
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "table declaration missing inline elem clause")
+		return td
+	}
+	elemClause := sx.list[cursor]
+	if elemClause.HeadKeyword() != "elem" {
+		p.emitError(elemClause.loc, `table declaration expects "(elem ...)"`)
+		return td
+	}
+	for i := 1; i < len(elemClause.list); i++ {
+		elem := elemClause.list[i]
+		if !elem.IsToken() || (elem.tok.name != ID && elem.tok.name != INT) {
+			p.emitError(elem.loc, "elem entry must be function ID or INT")
+			continue
+		}
+		td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+	}
+	return td
+}
+
+// parseMemoryDecl parses one module-level "(memory ...)" declaration.
+//
+// Supported forms:
+//   - (memory 1)
+//   - (memory $m 1)
+func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
+	md := &MemoryDecl{loc: sx.loc}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		md.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "memory declaration missing minimum size")
+		return md
+	}
+	minTok := sx.list[cursor]
+	if !minTok.IsToken() || minTok.tok.name != INT {
+		p.emitError(minTok.loc, "memory minimum must be INT")
+		return md
+	}
+	min, ok := parseU32Token(minTok.tok.value)
+	if !ok {
+		p.emitError(minTok.loc, "invalid memory minimum size")
+		return md
+	}
+	md.Min = min
+	return md
+}
+
+// parseGlobalDecl parses one module-level "(global ...)" declaration.
+//
+// Supported forms:
+//   - (global $g i32 (i32.const 0))
+//   - (global $g (mut i32) (i32.const 0))
+func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
+	gd := &GlobalDecl{loc: sx.loc}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		gd.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "global declaration missing type")
+		return gd
+	}
+	tySx := sx.list[cursor]
+	if tySx.IsList() && tySx.HeadKeyword() == "mut" {
+		if len(tySx.list) != 2 {
+			p.emitError(tySx.loc, "invalid mutable global type")
+		} else {
+			gd.Mutable = true
+			gd.Ty = p.parseType(tySx.list[1])
+		}
+	} else {
+		gd.Ty = p.parseType(tySx)
+	}
+	cursor++
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "global declaration missing initializer")
+		return gd
+	}
+	initSx := sx.list[cursor]
+	if !initSx.IsList() {
+		p.emitError(initSx.loc, "global initializer must be instruction expression")
+		return gd
+	}
+	gd.Init = p.parseFoldedInstr(initSx)
+	return gd
 }
 
 // parseFuncTypeUse parses a "(func ...)" signature nested inside a type
@@ -515,4 +635,13 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 	default:
 		return nil
 	}
+}
+
+func parseU32Token(s string) (uint32, bool) {
+	clean := strings.ReplaceAll(s, "_", "")
+	n, err := strconv.ParseInt(clean, 0, 64)
+	if err != nil || n < 0 || n > (1<<32-1) {
+		return 0, false
+	}
+	return uint32(n), true
 }

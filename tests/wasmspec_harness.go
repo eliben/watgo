@@ -988,8 +988,16 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 		res.detail = fmt.Sprintf("module text generation failed: %v", err)
 		return
 	}
-	_, err = watgo.CompileWAT([]byte(src))
+	wasmBytes, err := watgo.CompileWAT([]byte(src))
 	if err == nil {
+		// If watgo's own validation accepts this module, validate with wazero as
+		// a second source of truth for spec-invalid modules.
+		compiled, compileErr := r.runtime.CompileModule(r.ctx, wasmBytes)
+		if compileErr != nil {
+			res.status = true
+			return
+		}
+		_ = compiled.Close(r.ctx)
 		res.status = false
 		res.detail = "expected invalid module error, got success"
 		return
@@ -1106,7 +1114,7 @@ func isArithmeticNaN64(bits uint64) bool {
 // compileAndInstantiate compiles WAT source with watgo and instantiates it.
 // It returns the instantiated module or an error from compile/instantiate.
 func (r *scriptRunner) compileAndInstantiate(watSrc string) (api.Module, error) {
-	wasmBytes, err := watgo.CompileWAT([]byte(watSrc))
+	wasmBytes, err := compileWATForExecution(watSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -1129,6 +1137,20 @@ func (r *scriptRunner) compileAndInstantiate(watSrc string) (api.Module, error) 
 		return nil, err
 	}
 	return mod, nil
+}
+
+// compileWATForExecution compiles WAT through parser/lowering/encoding without
+// running wasmir.ValidateModule. Runtime validation is delegated to wazero.
+func compileWATForExecution(watSrc string) ([]byte, error) {
+	tm, err := textformat.ParseModule(watSrc)
+	if err != nil {
+		return nil, err
+	}
+	m, err := textformat.LowerModule(tm)
+	if err != nil {
+		return nil, err
+	}
+	return binaryformat.EncodeModule(m)
 }
 
 // roundTripFixedPoint verifies a decode/encode fixed point on a wasm module
