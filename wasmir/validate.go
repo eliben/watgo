@@ -65,21 +65,149 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 	locals = append(locals, f.Locals...)
 
 	stack := make([]ValueType, 0)
-	type ifFrame struct {
+	type controlKind uint8
+	const (
+		controlKindBlock controlKind = iota
+		controlKindLoop
+		controlKindIf
+	)
+	type controlFrame struct {
+		kind        controlKind
 		entryHeight int
-		hasResult   bool
-		resultType  ValueType
+		paramTypes  []ValueType
+		resultTypes []ValueType
 		sawElse     bool
 	}
-	var ifStack []ifFrame
+	var controlStack []controlFrame
 
+	validateFrameResult := func(insCtx string, frame controlFrame, context string) {
+		wantHeight := frame.entryHeight + len(frame.resultTypes)
+		if len(stack) != wantHeight {
+			diags.Addf("%s: %s stack height mismatch: got %d want %d", insCtx, context, len(stack), wantHeight)
+			return
+		}
+		for i, rt := range frame.resultTypes {
+			if stack[frame.entryHeight+i] != rt {
+				diags.Addf("%s: %s result type mismatch at %d: got %s want %s", insCtx, context, i, valueTypeName(stack[frame.entryHeight+i]), valueTypeName(rt))
+				return
+			}
+		}
+	}
+
+	validateBranchTarget := func(insCtx string, depth uint32, opName string) (controlFrame, bool) {
+		if int(depth) >= len(controlStack) {
+			diags.Addf("%s: %s depth %d out of range", insCtx, opName, depth)
+			return controlFrame{}, false
+		}
+		target := controlStack[len(controlStack)-1-int(depth)]
+		targetTypes := target.resultTypes
+		if target.kind == controlKindLoop {
+			targetTypes = target.paramTypes
+		}
+		wantHeight := target.entryHeight + len(targetTypes)
+		if len(stack) < wantHeight {
+			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opName, depth)
+			return controlFrame{}, false
+		}
+		for i, tt := range targetTypes {
+			if stack[target.entryHeight+i] != tt {
+				diags.Addf("%s: %s depth %d target type mismatch at %d: got %s want %s", insCtx, opName, depth, i, valueTypeName(stack[target.entryHeight+i]), valueTypeName(tt))
+				return controlFrame{}, false
+			}
+		}
+		return target, true
+	}
+
+	applyBranchTarget := func(target controlFrame) {
+		targetLen := len(target.resultTypes)
+		if target.kind == controlKindLoop {
+			targetLen = len(target.paramTypes)
+		}
+		stack = stack[:target.entryHeight+targetLen]
+	}
+
+	controlSignature := func(ins Instruction, insCtx, opname string) ([]ValueType, []ValueType, bool) {
+		if ins.BlockTypeUsesIndex {
+			if int(ins.BlockTypeIndex) >= len(m.Types) {
+				diags.Addf("%s: %s has invalid block type index %d", insCtx, opname, ins.BlockTypeIndex)
+				return nil, nil, false
+			}
+			ft := m.Types[ins.BlockTypeIndex]
+			return ft.Params, ft.Results, true
+		}
+		if ins.BlockHasResult {
+			return nil, []ValueType{ins.BlockType}, true
+		}
+		return nil, nil, true
+	}
+
+	returned := false
+instrLoop:
 	for i, ins := range f.Body {
 		insCtx := fmt.Sprintf("instruction %d", i)
 		if ins.SourceLoc != "" {
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
 		}
 		switch ins.Kind {
+		case InstrBlock:
+			params, results, ok := controlSignature(ins, insCtx, "block")
+			if !ok {
+				continue
+			}
+			if len(stack) < len(params) {
+				diags.Addf("%s: block needs %d parameter operands", insCtx, len(params))
+				continue
+			}
+			base := len(stack) - len(params)
+			matched := true
+			for j, pt := range params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: block parameter %d expects %s", insCtx, j, valueTypeName(pt))
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			controlStack = append(controlStack, controlFrame{
+				kind:        controlKindBlock,
+				entryHeight: len(stack) - len(params),
+				paramTypes:  params,
+				resultTypes: results,
+			})
+		case InstrLoop:
+			params, results, ok := controlSignature(ins, insCtx, "loop")
+			if !ok {
+				continue
+			}
+			if len(stack) < len(params) {
+				diags.Addf("%s: loop needs %d parameter operands", insCtx, len(params))
+				continue
+			}
+			base := len(stack) - len(params)
+			matched := true
+			for j, pt := range params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: loop parameter %d expects %s", insCtx, j, valueTypeName(pt))
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			controlStack = append(controlStack, controlFrame{
+				kind:        controlKindLoop,
+				entryHeight: len(stack) - len(params),
+				paramTypes:  params,
+				resultTypes: results,
+			})
 		case InstrIf:
+			params, results, ok := controlSignature(ins, insCtx, "if")
+			if !ok {
+				continue
+			}
 			if len(stack) < 1 {
 				diags.Addf("%s: if needs 1 i32 condition operand", insCtx)
 				continue
@@ -88,40 +216,68 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 				diags.Addf("%s: if expects i32 condition operand", insCtx)
 				continue
 			}
-			stack = stack[:len(stack)-1]
-			ifStack = append(ifStack, ifFrame{
-				entryHeight: len(stack),
-				hasResult:   ins.BlockHasResult,
-				resultType:  ins.BlockType,
+			stack = stack[:len(stack)-1] // pop condition
+			if len(stack) < len(params) {
+				diags.Addf("%s: if needs %d parameter operands", insCtx, len(params))
+				continue
+			}
+			base := len(stack) - len(params)
+			matched := true
+			for j, pt := range params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: if parameter %d expects %s", insCtx, j, valueTypeName(pt))
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			controlStack = append(controlStack, controlFrame{
+				kind:        controlKindIf,
+				entryHeight: len(stack) - len(params),
+				paramTypes:  params,
+				resultTypes: results,
 			})
 		case InstrElse:
-			if len(ifStack) == 0 {
+			if len(controlStack) == 0 {
 				diags.Addf("%s: else without matching if", insCtx)
 				continue
 			}
-			frame := ifStack[len(ifStack)-1]
+			frame := controlStack[len(controlStack)-1]
+			if frame.kind != controlKindIf {
+				diags.Addf("%s: else without matching if", insCtx)
+				continue
+			}
 			if frame.sawElse {
 				diags.Addf("%s: duplicate else for if", insCtx)
 				continue
 			}
-			wantHeight := frame.entryHeight
-			if frame.hasResult {
-				wantHeight++
-			}
-			if len(stack) != wantHeight {
-				diags.Addf("%s: then-branch stack height mismatch: got %d want %d", insCtx, len(stack), wantHeight)
-			} else if frame.hasResult && stack[frame.entryHeight] != frame.resultType {
-				diags.Addf("%s: then-branch result type mismatch: got %s want %s", insCtx, valueTypeName(stack[frame.entryHeight]), valueTypeName(frame.resultType))
-			}
-			stack = stack[:frame.entryHeight]
+			validateFrameResult(insCtx, frame, "then-branch")
+			stack = stack[:frame.entryHeight+len(frame.paramTypes)]
 			frame.sawElse = true
-			ifStack[len(ifStack)-1] = frame
+			controlStack[len(controlStack)-1] = frame
 		case InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
 			stack = append(stack, locals[ins.LocalIndex])
+		case InstrLocalSet:
+			if int(ins.LocalIndex) >= len(locals) {
+				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: local.set needs 1 operand", insCtx)
+				continue
+			}
+			want := locals[ins.LocalIndex]
+			if stack[len(stack)-1] != want {
+				diags.Addf("%s: local.set expects %s operand", insCtx, valueTypeName(want))
+				continue
+			}
+			stack = stack[:len(stack)-1]
 		case InstrCall:
 			if int(ins.FuncIndex) >= len(m.Funcs) {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -171,6 +327,43 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 				continue
 			}
 			stack = stack[:len(stack)-1]
+		case InstrBr:
+			target, ok := validateBranchTarget(insCtx, ins.BranchDepth, "br")
+			if !ok {
+				continue
+			}
+			applyBranchTarget(target)
+		case InstrBrIf:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_if needs 1 i32 condition operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: br_if expects i32 condition operand", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-1]
+			_, _ = validateBranchTarget(insCtx, ins.BranchDepth, "br_if")
+		case InstrReturn:
+			if len(stack) < len(ft.Results) {
+				diags.Addf("%s: return needs %d operands", insCtx, len(ft.Results))
+				continue
+			}
+			base := len(stack) - len(ft.Results)
+			ok := true
+			for j, rt := range ft.Results {
+				if stack[base+j] != rt {
+					diags.Addf("%s: return expects result %d to be %s", insCtx, j, valueTypeName(rt))
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			stack = append(stack[:0], ft.Results...)
+			returned = true
+			break instrLoop
 
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU,
 			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU:
@@ -213,7 +406,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
 
-		case InstrI64LtS, InstrI64LtU:
+		case InstrI64Eq, InstrI64LtS, InstrI64LtU, InstrI64GtS, InstrI64GtU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -321,27 +514,23 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			// Unary f64 operators preserve top-of-stack type.
 
 		case InstrEnd:
-			if len(ifStack) > 0 {
-				frame := ifStack[len(ifStack)-1]
-				ifStack = ifStack[:len(ifStack)-1]
-
-				wantHeight := frame.entryHeight
-				if frame.hasResult {
-					wantHeight++
-				}
-				if len(stack) != wantHeight {
-					diags.Addf("%s: if-branch stack height mismatch: got %d want %d", insCtx, len(stack), wantHeight)
-				} else if frame.hasResult && stack[frame.entryHeight] != frame.resultType {
-					diags.Addf("%s: if-branch result type mismatch: got %s want %s", insCtx, valueTypeName(stack[frame.entryHeight]), valueTypeName(frame.resultType))
-				}
-				if frame.hasResult && !frame.sawElse {
-					diags.Addf("%s: if with result requires else branch", insCtx)
+			if len(controlStack) > 0 {
+				frame := controlStack[len(controlStack)-1]
+				controlStack = controlStack[:len(controlStack)-1]
+				switch frame.kind {
+				case controlKindIf:
+					validateFrameResult(insCtx, frame, "if-branch")
+					if len(frame.resultTypes) > 0 && !frame.sawElse {
+						diags.Addf("%s: if with result requires else branch", insCtx)
+					}
+				case controlKindBlock:
+					validateFrameResult(insCtx, frame, "block")
+				case controlKindLoop:
+					validateFrameResult(insCtx, frame, "loop")
 				}
 
 				stack = stack[:frame.entryHeight]
-				if frame.hasResult {
-					stack = append(stack, frame.resultType)
-				}
+				stack = append(stack, frame.resultTypes...)
 				continue
 			}
 			if i != len(f.Body)-1 {
@@ -352,8 +541,11 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 			diags.Addf("%s: unsupported instruction kind %d", insCtx, ins.Kind)
 		}
 	}
-	if len(ifStack) > 0 {
-		diags.Addf("%sunterminated if: missing end", funcLocCtx)
+	if returned {
+		return diags
+	}
+	if len(controlStack) > 0 {
+		diags.Addf("%sunterminated control construct: missing end", funcLocCtx)
 	}
 
 	if len(stack) != len(ft.Results) {
@@ -425,12 +617,24 @@ func instrName(kind InstrKind) string {
 	switch kind {
 	case InstrLocalGet:
 		return "local.get"
+	case InstrLocalSet:
+		return "local.set"
 	case InstrCall:
 		return "call"
+	case InstrBlock:
+		return "block"
+	case InstrLoop:
+		return "loop"
 	case InstrIf:
 		return "if"
 	case InstrElse:
 		return "else"
+	case InstrBr:
+		return "br"
+	case InstrBrIf:
+		return "br_if"
+	case InstrReturn:
+		return "return"
 	case InstrI32Const:
 		return "i32.const"
 	case InstrI64Const:
@@ -467,8 +671,14 @@ func instrName(kind InstrKind) string {
 		return "i32.lt_u"
 	case InstrI64Add:
 		return "i64.add"
+	case InstrI64Eq:
+		return "i64.eq"
 	case InstrI64Eqz:
 		return "i64.eqz"
+	case InstrI64GtS:
+		return "i64.gt_s"
+	case InstrI64GtU:
+		return "i64.gt_u"
 	case InstrI64LeU:
 		return "i64.le_u"
 	case InstrI64Sub:

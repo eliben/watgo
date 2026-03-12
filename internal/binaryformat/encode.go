@@ -37,8 +37,13 @@ const (
 	exportKindFunctionCode byte = 0x00
 
 	// Opcodes for the currently supported instruction subset.
+	opBlockCode         byte = 0x02
+	opLoopCode          byte = 0x03
 	opIfCode            byte = 0x04
 	opElseCode          byte = 0x05
+	opBrCode            byte = 0x0c
+	opBrIfCode          byte = 0x0d
+	opReturnCode        byte = 0x0f
 	opEndCode           byte = 0x0b
 	opI32ConstCode      byte = 0x41
 	opI64ConstCode      byte = 0x42
@@ -46,6 +51,7 @@ const (
 	opF64ConstCode      byte = 0x44
 	opDropCode          byte = 0x1a
 	opLocalGetCode      byte = 0x20
+	opLocalSetCode      byte = 0x21
 	opCallCode          byte = 0x10
 	opI32AddCode        byte = 0x6a
 	opI32SubCode        byte = 0x6b
@@ -60,7 +66,10 @@ const (
 	opI32LtSCode        byte = 0x48
 	opI32LtUCode        byte = 0x49
 	opI64AddCode        byte = 0x7c
+	opI64EqCode         byte = 0x51
 	opI64EqzCode        byte = 0x50
+	opI64GtSCode        byte = 0x55
+	opI64GtUCode        byte = 0x56
 	opI64LeUCode        byte = 0x58
 	opI64SubCode        byte = 0x7d
 	opI64MulCode        byte = 0x7e
@@ -279,20 +288,25 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
+	case wasmir.InstrBlock:
+		out.WriteByte(opBlockCode)
+		encodeBlockType(out, funcIdx, instrIdx, "block", instr, diags)
+	case wasmir.InstrLoop:
+		out.WriteByte(opLoopCode)
+		encodeBlockType(out, funcIdx, instrIdx, "loop", instr, diags)
 	case wasmir.InstrIf:
 		out.WriteByte(opIfCode)
-		if instr.BlockHasResult {
-			b, ok := valueTypeCode(instr.BlockType)
-			if !ok {
-				diags.Addf("func[%d] instruction[%d]: unsupported if result type %d", funcIdx, instrIdx, instr.BlockType)
-				b = blockTypeEmptyCode
-			}
-			out.WriteByte(b)
-		} else {
-			out.WriteByte(blockTypeEmptyCode)
-		}
+		encodeBlockType(out, funcIdx, instrIdx, "if", instr, diags)
 	case wasmir.InstrElse:
 		out.WriteByte(opElseCode)
+	case wasmir.InstrBr:
+		out.WriteByte(opBrCode)
+		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrBrIf:
+		out.WriteByte(opBrIfCode)
+		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrReturn:
+		out.WriteByte(opReturnCode)
 	case wasmir.InstrI32Const:
 		out.WriteByte(opI32ConstCode)
 		writeSLEB128(out, int64(instr.I32Const))
@@ -309,6 +323,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opDropCode)
 	case wasmir.InstrLocalGet:
 		out.WriteByte(opLocalGetCode)
+		writeULEB128(out, instr.LocalIndex)
+	case wasmir.InstrLocalSet:
+		out.WriteByte(opLocalSetCode)
 		writeULEB128(out, instr.LocalIndex)
 	case wasmir.InstrCall:
 		out.WriteByte(opCallCode)
@@ -339,8 +356,14 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32LtUCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
+	case wasmir.InstrI64Eq:
+		out.WriteByte(opI64EqCode)
 	case wasmir.InstrI64Eqz:
 		out.WriteByte(opI64EqzCode)
+	case wasmir.InstrI64GtS:
+		out.WriteByte(opI64GtSCode)
+	case wasmir.InstrI64GtU:
+		out.WriteByte(opI64GtUCode)
 	case wasmir.InstrI64LeU:
 		out.WriteByte(opI64LeUCode)
 	case wasmir.InstrI64Sub:
@@ -420,6 +443,23 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	default:
 		diags.Addf("func[%d] instruction[%d]: unsupported instruction kind %d", funcIdx, instrIdx, instr.Kind)
 	}
+}
+
+func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string, instr wasmir.Instruction, diags *diag.ErrorList) {
+	if instr.BlockTypeUsesIndex {
+		writeSLEB128(out, int64(instr.BlockTypeIndex))
+		return
+	}
+	if instr.BlockHasResult {
+		b, ok := valueTypeCode(instr.BlockType)
+		if !ok {
+			diags.Addf("func[%d] instruction[%d]: unsupported %s result type %d", funcIdx, instrIdx, opname, instr.BlockType)
+			b = blockTypeEmptyCode
+		}
+		out.WriteByte(b)
+		return
+	}
+	out.WriteByte(blockTypeEmptyCode)
 }
 
 func valueTypeCode(vt wasmir.ValueType) (byte, bool) {

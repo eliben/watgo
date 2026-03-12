@@ -15,9 +15,15 @@ type InstrKind uint8
 
 const (
 	InstrLocalGet InstrKind = iota
+	InstrLocalSet
 	InstrCall
+	InstrBlock
+	InstrLoop
 	InstrIf
 	InstrElse
+	InstrBr
+	InstrBrIf
+	InstrReturn
 	InstrI32Const
 	InstrI64Const
 	InstrF32Const
@@ -36,7 +42,10 @@ const (
 	InstrI32LtS
 	InstrI32LtU
 	InstrI64Add
+	InstrI64Eq
 	InstrI64Eqz
+	InstrI64GtS
+	InstrI64GtU
 	InstrI64LeU
 	InstrI64Sub
 	InstrI64Mul
@@ -165,12 +174,23 @@ type Instruction struct {
 	// FuncIndex is the function index immediate used by InstrCall.
 	FuncIndex uint32
 
+	// BranchDepth is the label depth immediate used by InstrBr and InstrBrIf.
+	BranchDepth uint32
+
 	// BlockType is the if block result type for InstrIf when BlockHasResult is
 	// true.
 	BlockType ValueType
 
 	// BlockHasResult reports whether InstrIf has an explicit result type.
 	BlockHasResult bool
+
+	// BlockTypeUsesIndex reports that structured control block type is encoded
+	// as a type index into Module.Types (multi-value block signature).
+	BlockTypeUsesIndex bool
+
+	// BlockTypeIndex is the Module.Types index used when BlockTypeUsesIndex is
+	// true.
+	BlockTypeIndex uint32
 
 	// I32Const is the immediate for InstrI32Const.
 	I32Const int32

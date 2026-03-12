@@ -125,7 +125,7 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 		} else if elem.HeadKeyword() == "result" {
 			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem)...)
 		} else if elem.HeadKeyword() == "local" {
-			f.Locals = append(f.Locals, p.parseLocalDecl(elem))
+			f.Locals = append(f.Locals, p.parseLocalDecl(elem)...)
 		} else {
 			// Neither of these, so the instruction sequence started. Parse the
 			// entire instruction sequence.
@@ -193,19 +193,28 @@ func (p *Parser) parseResultDecl(sx *SExpr) []*ResultDecl {
 	return out
 }
 
-func (p *Parser) parseLocalDecl(sx *SExpr) *LocalDecl {
-	ld := &LocalDecl{loc: sx.loc}
+func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
+	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
+		return []*LocalDecl{{
+			Id:  p.matchElement(sx, 1, ID),
+			Ty:  p.parseType(sx.list[2]),
+			loc: sx.loc,
+		}}
+	}
 
-	if len(sx.list) == 3 {
-		ld.Id = p.matchElement(sx, 1, ID)
-		ld.Ty = p.parseType(sx.list[2])
-	} else if len(sx.list) == 2 {
-		ld.Ty = p.parseType(sx.list[1])
-	} else {
+	if len(sx.list) < 2 {
 		p.emitError(sx.loc, "invalid '(local' declaration")
 		return nil
 	}
-	return ld
+
+	out := make([]*LocalDecl, 0, len(sx.list)-1)
+	for i := 1; i < len(sx.list); i++ {
+		out = append(out, &LocalDecl{
+			Ty:  p.parseType(sx.list[i]),
+			loc: sx.loc,
+		})
+	}
+	return out
 }
 
 func (p *Parser) parseType(sx *SExpr) Type {

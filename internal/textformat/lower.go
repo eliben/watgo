@@ -67,6 +67,17 @@ type functionLowerer struct {
 	// nextLocalIndex tracks the next available local index while processing
 	// params and locals.
 	nextLocalIndex uint32
+
+	// labelStack tracks active structured control labels from innermost to
+	// outermost for lowering branch operands (br/br_if).
+	labelStack []labelScope
+}
+
+// labelScope describes one active structured control label.
+type labelScope struct {
+	// name is the optional textual label identifier (for example "$loop").
+	// Empty means anonymous label used for numeric depths only.
+	name string
 }
 
 // LowerModule lowers astm (a parsed text-format module) into a semantic
@@ -136,6 +147,7 @@ func newFunctionLowerer(mod *moduleLowerer, funcIdx int, fn *Function) *function
 		fn:           fn,
 		localsByName: map[string]uint32{},
 		body:         make([]wasmir.Instruction, 0, len(fn.Instrs)+1),
+		labelStack:   make([]labelScope, 0, 8),
 	}
 }
 
@@ -276,6 +288,14 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.lowerFoldedIf(fi)
 		return
 	}
+	if fi.Name == "block" {
+		fl.lowerFoldedBlock(fi, false)
+		return
+	}
+	if fi.Name == "loop" {
+		fl.lowerFoldedBlock(fi, true)
+		return
+	}
 
 	var operands []Operand
 	for _, arg := range fi.Args {
@@ -350,11 +370,160 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 		ifOps = append(ifOps, resultOp)
 	}
 	fl.lowerPlainInstr(&PlainInstr{Name: "if", Operands: ifOps, loc: fi.loc})
+	fl.pushLabel("")
 	fl.lowerFoldedClauseInstrs(thenClause)
 	if elseClause != nil {
 		fl.lowerPlainInstr(&PlainInstr{Name: "else", loc: elseClause.loc})
 		fl.lowerFoldedClauseInstrs(elseClause)
 	}
+	fl.popLabel()
+	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
+}
+
+// lowerFoldedBlock lowers folded structured control forms "(block ...)" and
+// "(loop ...)" while preserving their nested instruction bodies.
+//
+// Examples this handles:
+//
+//	(block
+//	  (i64.const 1)
+//	  (br 0))
+//
+//	(loop $l (param i64 i64) (result i64)
+//	  (br_if $l)
+//	  (return))
+//
+//	(block $done (result i64)
+//	  (i64.const 7))
+//
+// Parsing/shape comes from the folded text forms in the core text format
+// grammar (see "folded instruction" conventions in the spec text syntax). We
+// also map block signatures to the binary blocktype model:
+//   - empty blocktype (no params/results),
+//   - valtype blocktype (single result),
+//   - type-index blocktype (multi-value signature).
+//
+// This follows the core binary blocktype rules.
+func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
+	var labelName string
+	var paramTypes []wasmir.ValueType
+	var resultTypes []wasmir.ValueType
+	var bodyInstrs []Instruction
+
+	for i, arg := range fi.Args {
+		if arg.Operand != nil {
+			// The first operand in folded block/loop may be a label identifier:
+			//   (block $name ...)
+			//   (loop $name ...)
+			// All other raw operands are invalid for these forms; everything
+			// else should be nested instruction/annotation lists.
+			if i == 0 {
+				if id, ok := arg.Operand.(*IdOperand); ok {
+					labelName = id.Value
+					continue
+				}
+			}
+			fl.diagf(arg.Operand.Loc(), "%s expects nested instructions/clauses", fi.Name)
+			continue
+		}
+
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if !ok {
+			bodyInstrs = append(bodyInstrs, arg.Instr)
+			continue
+		}
+
+		switch nested.Name {
+		case "result":
+			// Result annotation in text:
+			//   (result t1 t2 ...)
+			// For this lowering pass we allow at most one explicit result
+			// clause and collect all listed result value types.
+			if len(nested.Args) == 0 {
+				fl.diagf(nested.Loc(), "invalid %s result clause", fi.Name)
+				continue
+			}
+			if len(resultTypes) > 0 {
+				fl.diagf(nested.Loc(), "duplicate %s result clause", fi.Name)
+				continue
+			}
+			for _, resultArg := range nested.Args {
+				if resultArg.Operand == nil || resultArg.Instr != nil {
+					fl.diagf(nested.Loc(), "invalid %s result clause", fi.Name)
+					continue
+				}
+				vt, ok := lowerBlockResultTypeOperand(resultArg.Operand)
+				if !ok {
+					fl.diagf(resultArg.Operand.Loc(), "unsupported %s result type", fi.Name)
+					continue
+				}
+				resultTypes = append(resultTypes, vt)
+			}
+		case "param":
+			// Parameter annotation in text:
+			//   (param t1 t2 ...)
+			// Loop parameters are important for branch-to-loop typing and
+			// become part of the blocktype signature when we select a
+			// type-index blocktype.
+			for _, paramArg := range nested.Args {
+				if paramArg.Operand == nil || paramArg.Instr != nil {
+					fl.diagf(nested.Loc(), "invalid %s param clause", fi.Name)
+					continue
+				}
+				vt, ok := lowerBlockResultTypeOperand(paramArg.Operand)
+				if !ok {
+					fl.diagf(paramArg.Operand.Loc(), "unsupported %s param type", fi.Name)
+					continue
+				}
+				paramTypes = append(paramTypes, vt)
+			}
+		default:
+			// Any other nested list is treated as a normal body instruction.
+			bodyInstrs = append(bodyInstrs, nested)
+		}
+	}
+
+	kind := wasmir.InstrBlock
+	if isLoop {
+		kind = wasmir.InstrLoop
+	}
+
+	switch {
+	case len(paramTypes) > 0 || len(resultTypes) > 1:
+		// Multi-value signatures (or any explicit params) require a type-index
+		// blocktype per the binary format. We append a synthetic function type
+		// to Module.Types and reference it from the instruction.
+		typeIdx := uint32(len(fl.mod.out.Types))
+		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
+			Params:  paramTypes,
+			Results: resultTypes,
+		})
+		fl.emitInstr(wasmir.Instruction{
+			Kind:               kind,
+			BlockTypeUsesIndex: true,
+			BlockTypeIndex:     typeIdx,
+			SourceLoc:          fi.loc.String(),
+		})
+	case len(resultTypes) == 1:
+		// Single-result blocktype can be encoded directly as a value type.
+		fl.emitInstr(wasmir.Instruction{
+			Kind:           kind,
+			BlockHasResult: true,
+			BlockType:      resultTypes[0],
+			SourceLoc:      fi.loc.String(),
+		})
+	default:
+		// No signature annotation => empty blocktype.
+		fl.emitInstr(wasmir.Instruction{Kind: kind, SourceLoc: fi.loc.String()})
+	}
+
+	// The label scope is active only for this structured body. Branch labels
+	// resolve from innermost to outermost against this stack.
+	fl.pushLabel(labelName)
+	for _, body := range bodyInstrs {
+		fl.lowerInstruction(body)
+	}
+	fl.popLabel()
 	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
 }
 
@@ -399,7 +568,10 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.lt_s":         {kind: wasmir.InstrI32LtS, operandCount: 0},
 	"i32.lt_u":         {kind: wasmir.InstrI32LtU, operandCount: 0},
 	"i64.add":          {kind: wasmir.InstrI64Add, operandCount: 0},
+	"i64.eq":           {kind: wasmir.InstrI64Eq, operandCount: 0},
 	"i64.eqz":          {kind: wasmir.InstrI64Eqz, operandCount: 0},
+	"i64.gt_s":         {kind: wasmir.InstrI64GtS, operandCount: 0},
+	"i64.gt_u":         {kind: wasmir.InstrI64GtU, operandCount: 0},
 	"i64.le_u":         {kind: wasmir.InstrI64LeU, operandCount: 0},
 	"i64.sub":          {kind: wasmir.InstrI64Sub, operandCount: 0},
 	"i64.mul":          {kind: wasmir.InstrI64Mul, operandCount: 0},
@@ -438,7 +610,11 @@ var loweringSpecs = map[string]loweringSpec{
 	"f64.trunc":        {kind: wasmir.InstrF64Trunc, operandCount: 0},
 	"f64.nearest":      {kind: wasmir.InstrF64Nearest, operandCount: 0},
 	"local.get":        {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
+	"local.set":        {kind: wasmir.InstrLocalSet, operandCount: 1, decode: decodeLocalSetOperands},
 	"call":             {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
+	"br":               {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
+	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
+	"return":           {kind: wasmir.InstrReturn, operandCount: 0},
 	"i32.const":        {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
 	"i64.const":        {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
 	"f32.const":        {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
@@ -489,16 +665,6 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
-	case "return":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "return expects no operands")
-			return
-		}
-		// In the currently supported subset, folded forms like
-		// "(return (i32.const ...))" are lowered by emitting the nested value
-		// expression first. A trailing plain "return" at function tail is then
-		// equivalent to falling through to the implicit function end.
-		return
 	case "if":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "if expects at most 1 operand")
@@ -509,6 +675,26 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0])
 			if !ok {
 				fl.diagf(pi.Operands[0].Loc(), "invalid if result type")
+				return
+			}
+			ins.BlockHasResult = true
+			ins.BlockType = vt
+		}
+		fl.emitInstr(ins)
+	case "block", "loop":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
+			return
+		}
+		kind := wasmir.InstrBlock
+		if pi.Name == "loop" {
+			kind = wasmir.InstrLoop
+		}
+		ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
+		if len(pi.Operands) == 1 {
+			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0])
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid %s result type", pi.Name)
 				return
 			}
 			ins.BlockHasResult = true
@@ -528,6 +714,26 @@ func decodeLocalGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operan
 		return false
 	}
 	ins.LocalIndex = localIndex
+	return true
+}
+
+// decodeLocalSetOperands decodes operands into ins.LocalIndex for local.set.
+func decodeLocalSetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	localIndex, ok := lowerLocalIndexOperand(operands[0], fl.localsByName)
+	if !ok {
+		return false
+	}
+	ins.LocalIndex = localIndex
+	return true
+}
+
+// decodeBrOperands decodes operands into ins.BranchDepth for br and br_if.
+func decodeBrOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	depth, ok := fl.lowerLabelOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.BranchDepth = depth
 	return true
 }
 
@@ -584,6 +790,19 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 // emitInstr appends one lowered instruction to the current function body.
 func (fl *functionLowerer) emitInstr(instr wasmir.Instruction) {
 	fl.body = append(fl.body, instr)
+}
+
+// pushLabel pushes one active structured control label.
+func (fl *functionLowerer) pushLabel(name string) {
+	fl.labelStack = append(fl.labelStack, labelScope{name: name})
+}
+
+// popLabel pops one active structured control label.
+func (fl *functionLowerer) popLabel() {
+	if len(fl.labelStack) == 0 {
+		return
+	}
+	fl.labelStack = fl.labelStack[:len(fl.labelStack)-1]
 }
 
 // diagf adds one lowering diagnostic for the current function.
@@ -674,6 +893,25 @@ func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, b
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerLabelOperand resolves op as a branch label depth.
+// Numeric labels are interpreted directly as depths.
+// Identifier labels are resolved from innermost to outermost active labels.
+func (fl *functionLowerer) lowerLabelOperand(op Operand) (uint32, bool) {
+	switch o := op.(type) {
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	case *IdOperand:
+		for i := len(fl.labelStack) - 1; i >= 0; i-- {
+			if fl.labelStack[i].name == o.Value {
+				return uint32(len(fl.labelStack) - 1 - i), true
+			}
+		}
+		return 0, false
 	default:
 		return 0, false
 	}

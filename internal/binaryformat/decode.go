@@ -293,21 +293,27 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		}
 
 		switch op {
+		case opBlockCode:
+			ins, err := readControlBlockType(r, wasmir.InstrBlock)
+			if err != nil {
+				diags.Addf("code[%d]: block missing/invalid block type: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+			depth++
+		case opLoopCode:
+			ins, err := readControlBlockType(r, wasmir.InstrLoop)
+			if err != nil {
+				diags.Addf("code[%d]: loop missing/invalid block type: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+			depth++
 		case opIfCode:
-			blockType, err := readByte(r)
+			ins, err := readControlBlockType(r, wasmir.InstrIf)
 			if err != nil {
 				diags.Addf("code[%d]: if missing/invalid block type: %v", funcIdx, err)
 				return out
-			}
-			ins := wasmir.Instruction{Kind: wasmir.InstrIf}
-			if blockType != blockTypeEmptyCode {
-				vt, ok := decodeValueType(blockType)
-				if !ok {
-					diags.Addf("code[%d]: unsupported if block type 0x%x", funcIdx, blockType)
-					return out
-				}
-				ins.BlockHasResult = true
-				ins.BlockType = vt
 			}
 			out = append(out, ins)
 			depth++
@@ -317,6 +323,22 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrElse})
+		case opBrCode:
+			depthImm, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: br missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBr, BranchDepth: depthImm})
+		case opBrIfCode:
+			depthImm, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: br_if missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrIf, BranchDepth: depthImm})
+		case opReturnCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrReturn})
 		case opI32ConstCode:
 			value, err := readS32(r)
 			if err != nil {
@@ -354,6 +376,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
+		case opLocalSetCode:
+			localIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: local.set missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalSet, LocalIndex: localIndex})
 		case opCallCode:
 			funcIndex, err := readU32(r)
 			if err != nil {
@@ -387,8 +416,14 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtU})
 		case opI64AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
+		case opI64EqCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Eq})
 		case opI64EqzCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Eqz})
+		case opI64GtSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GtS})
+		case opI64GtUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GtU})
 		case opI64LeUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64LeU})
 		case opI64SubCode:
@@ -477,6 +512,47 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 
 	diags.Addf("code[%d]: unterminated instruction expression (missing end)", funcIdx)
 	return out
+}
+
+func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
+	v, err := readS64(r)
+	if err != nil {
+		return wasmir.Instruction{}, err
+	}
+	ins := wasmir.Instruction{Kind: kind}
+
+	// 0x40 signed-LEB is -64 and represents an empty block type.
+	if v == -64 {
+		return ins, nil
+	}
+	// Negative signed values -1..-4 represent valtypes i32/i64/f32/f64.
+	switch v {
+	case -1:
+		ins.BlockHasResult = true
+		ins.BlockType = wasmir.ValueTypeI32
+		return ins, nil
+	case -2:
+		ins.BlockHasResult = true
+		ins.BlockType = wasmir.ValueTypeI64
+		return ins, nil
+	case -3:
+		ins.BlockHasResult = true
+		ins.BlockType = wasmir.ValueTypeF32
+		return ins, nil
+	case -4:
+		ins.BlockHasResult = true
+		ins.BlockType = wasmir.ValueTypeF64
+		return ins, nil
+	}
+	if v < 0 {
+		return wasmir.Instruction{}, fmt.Errorf("unsupported signed block type %d", v)
+	}
+	if v > (1<<32 - 1) {
+		return wasmir.Instruction{}, fmt.Errorf("block type index out of range: %d", v)
+	}
+	ins.BlockTypeUsesIndex = true
+	ins.BlockTypeIndex = uint32(v)
+	return ins, nil
 }
 
 func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) []wasmir.ValueType {
