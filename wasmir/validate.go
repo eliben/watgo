@@ -100,6 +100,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 		paramTypes  []ValueType
 		resultTypes []ValueType
 		sawElse     bool
+		unreachable bool
 	}
 	var controlStack []controlFrame
 
@@ -141,19 +142,21 @@ func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
 		return target, true
 	}
 
-	applyBranchTarget := func(target controlFrame) {
-		targetLen := len(target.resultTypes)
-		if target.kind == controlKindLoop {
-			targetLen = len(target.paramTypes)
-		}
-		stack = stack[:target.entryHeight+targetLen]
-	}
-
 	branchTargetTypes := func(target controlFrame) []ValueType {
 		if target.kind == controlKindLoop {
 			return target.paramTypes
 		}
 		return target.resultTypes
+	}
+
+	markCurrentFrameUnreachable := func() {
+		if len(controlStack) == 0 {
+			return
+		}
+		frame := controlStack[len(controlStack)-1]
+		stack = stack[:frame.entryHeight]
+		frame.unreachable = true
+		controlStack[len(controlStack)-1] = frame
 	}
 
 	controlSignature := func(ins Instruction, insCtx, opname string) ([]ValueType, []ValueType, bool) {
@@ -177,6 +180,57 @@ instrLoop:
 		insCtx := fmt.Sprintf("instruction %d", i)
 		if ins.SourceLoc != "" {
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
+		}
+
+		if len(controlStack) > 0 && controlStack[len(controlStack)-1].unreachable {
+			switch ins.Kind {
+			case InstrBlock, InstrLoop, InstrIf:
+				opname := instrName(ins.Kind)
+				params, results, ok := controlSignature(ins, insCtx, opname)
+				if !ok {
+					continue
+				}
+				kind := controlKindBlock
+				switch ins.Kind {
+				case InstrLoop:
+					kind = controlKindLoop
+				case InstrIf:
+					kind = controlKindIf
+				}
+				controlStack = append(controlStack, controlFrame{
+					kind:        kind,
+					entryHeight: len(stack),
+					paramTypes:  params,
+					resultTypes: results,
+					unreachable: true,
+				})
+				continue
+			case InstrElse:
+				frame := controlStack[len(controlStack)-1]
+				if frame.kind != controlKindIf {
+					diags.Addf("%s: else without matching if", insCtx)
+					continue
+				}
+				if frame.sawElse {
+					diags.Addf("%s: duplicate else for if", insCtx)
+					continue
+				}
+				stack = stack[:frame.entryHeight+len(frame.paramTypes)]
+				frame.sawElse = true
+				// Else branch is reachable even if then branch was unreachable.
+				frame.unreachable = false
+				controlStack[len(controlStack)-1] = frame
+				continue
+			case InstrEnd:
+				frame := controlStack[len(controlStack)-1]
+				controlStack = controlStack[:len(controlStack)-1]
+				stack = stack[:frame.entryHeight]
+				stack = append(stack, frame.resultTypes...)
+				continue
+			default:
+				// Unreachable code is stack-polymorphic; ignore non-structural ops.
+				continue
+			}
 		}
 		switch ins.Kind {
 		case InstrNop:
@@ -285,9 +339,12 @@ instrLoop:
 				diags.Addf("%s: duplicate else for if", insCtx)
 				continue
 			}
-			validateFrameResult(insCtx, frame, "then-branch")
+			if !frame.unreachable {
+				validateFrameResult(insCtx, frame, "then-branch")
+			}
 			stack = stack[:frame.entryHeight+len(frame.paramTypes)]
 			frame.sawElse = true
+			frame.unreachable = false
 			controlStack[len(controlStack)-1] = frame
 		case InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
@@ -500,7 +557,8 @@ instrLoop:
 			if !ok {
 				continue
 			}
-			applyBranchTarget(target)
+			_ = target
+			markCurrentFrameUnreachable()
 		case InstrBrIf:
 			if len(stack) < 1 {
 				diags.Addf("%s: br_if needs 1 i32 condition operand", insCtx)
@@ -554,14 +612,17 @@ instrLoop:
 			}
 			target, ok := validateBranchTarget(insCtx, targetDepths[0], "br_table")
 			if ok {
-				applyBranchTarget(target)
+				_ = target
+				markCurrentFrameUnreachable()
 			}
 		case InstrUnreachable:
-			// `unreachable` is stack-polymorphic and marks the current path as
-			// non-returning for this simple validator.
-			stack = append(stack[:0], ft.Results...)
-			returned = true
-			break instrLoop
+			if len(controlStack) == 0 {
+				// Top-level unreachable makes the rest of the function unreachable.
+				stack = append(stack[:0], ft.Results...)
+				returned = true
+				break instrLoop
+			}
+			markCurrentFrameUnreachable()
 		case InstrReturn:
 			if len(stack) < len(ft.Results) {
 				diags.Addf("%s: return needs %d operands", insCtx, len(ft.Results))
@@ -766,16 +827,18 @@ instrLoop:
 			if len(controlStack) > 0 {
 				frame := controlStack[len(controlStack)-1]
 				controlStack = controlStack[:len(controlStack)-1]
-				switch frame.kind {
-				case controlKindIf:
-					validateFrameResult(insCtx, frame, "if-branch")
-					if len(frame.resultTypes) > 0 && !frame.sawElse {
-						diags.Addf("%s: if with result requires else branch", insCtx)
+				if !frame.unreachable {
+					switch frame.kind {
+					case controlKindIf:
+						validateFrameResult(insCtx, frame, "if-branch")
+						if len(frame.resultTypes) > 0 && !frame.sawElse {
+							diags.Addf("%s: if with result requires else branch", insCtx)
+						}
+					case controlKindBlock:
+						validateFrameResult(insCtx, frame, "block")
+					case controlKindLoop:
+						validateFrameResult(insCtx, frame, "loop")
 					}
-				case controlKindBlock:
-					validateFrameResult(insCtx, frame, "block")
-				case controlKindLoop:
-					validateFrameResult(insCtx, frame, "loop")
 				}
 
 				stack = stack[:frame.entryHeight]
