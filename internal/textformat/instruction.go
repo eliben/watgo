@@ -1,10 +1,24 @@
 package textformat
 
+// Instruction is one text-format instruction node in the parser AST.
+//
+// The text AST preserves source syntax shape, so instructions may be either:
+//   - PlainInstr: linear token form like "local.get 0" / "i32.add"
+//   - FoldedInstr: folded S-expression form like "(i32.add (local.get 0) ...)"
+//
+// Lowering is the phase that normalizes both forms into canonical wasmir
+// instructions.
 type Instruction interface {
 	isInstr()
 	Loc() string
 }
 
+// PlainInstr represents one linear instruction in token sequence form.
+// Examples:
+//
+//	local.get 0
+//	call $f
+//	i64.add
 type PlainInstr struct {
 	Name     string
 	Operands []Operand
@@ -37,8 +51,14 @@ func (fa FoldedArg) Loc() string {
 	return ""
 }
 
-// FoldedInstr preserves folded instruction syntax in the text AST.
-// Example: (i32.add (i32.const 1) (i32.const 2))
+// FoldedInstr represents one folded instruction in S-expression form.
+// Examples:
+//
+//	(i32.add (i32.const 1) (i32.const 2))
+//	(if (result i64) (i64.eqz (local.get 0)) (then ...) (else ...))
+//
+// This is kept distinct from PlainInstr to preserve source-level syntax
+// fidelity in the text AST.
 type FoldedInstr struct {
 	Name string
 	Args []FoldedArg
@@ -53,6 +73,7 @@ func (fi *FoldedInstr) Loc() string {
 	return fi.loc.String()
 }
 
+// Operand is one operand in plain or folded instruction forms.
 type Operand interface {
 	isOperand()
 	Loc() string
