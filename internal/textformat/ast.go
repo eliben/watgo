@@ -15,6 +15,9 @@ type Module struct {
 	// It is empty when the source module is anonymous.
 	Id string
 
+	// Types contains parsed type declarations in source order.
+	Types []*TypeDecl
+
 	// Funcs contains parsed function declarations in source order.
 	Funcs []*Function
 
@@ -50,8 +53,9 @@ type Function struct {
 //
 // It may carry an optional type identifier and inline param/result lists.
 type TypeUse struct {
-	// Id is the optional referenced type identifier from a "(type ...)" use.
-	// It is currently parsed as text metadata and may be empty.
+	// Id is the optional referenced type identifier/index from a "(type ...)"
+	// use. It may be an identifier (for example "$t") or numeric text
+	// (for example "0"). It is empty when no explicit type reference appears.
 	Id string
 
 	// Params contains parsed parameter declarations in declaration order.
@@ -61,6 +65,18 @@ type TypeUse struct {
 	Results []*ResultDecl
 
 	// loc is the source location of the enclosing type-use form.
+	loc location
+}
+
+// TypeDecl is one module-level type declaration "(type ...)".
+type TypeDecl struct {
+	// Id is the optional type identifier (for example "$sig").
+	Id string
+
+	// TyUse carries the declared function signature for this type.
+	TyUse *TypeUse
+
+	// loc is the source location of the type declaration form head.
 	loc location
 }
 

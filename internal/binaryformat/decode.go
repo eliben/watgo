@@ -293,6 +293,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		}
 
 		switch op {
+		case opUnreachableCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrUnreachable})
 		case opBlockCode:
 			ins, err := readControlBlockType(r, wasmir.InstrBlock)
 			if err != nil {

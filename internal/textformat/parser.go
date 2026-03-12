@@ -147,7 +147,9 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 
 	for i := cursor; i < len(sx.list); i++ {
 		sub := sx.list[i]
-		if sub.HeadKeyword() == "func" {
+		if sub.HeadKeyword() == "type" {
+			m.Types = append(m.Types, p.parseTypeDecl(sub))
+		} else if sub.HeadKeyword() == "func" {
 			m.Funcs = append(m.Funcs, p.parseFunction(sub))
 		}
 		// TODO: check all other types too
@@ -179,7 +181,9 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 	for ; cursor < len(sx.list); cursor++ {
 		// TODO: enforce order on param/result/local clauses?
 		elem := sx.list[cursor]
-		if elem.HeadKeyword() == "param" {
+		if elem.HeadKeyword() == "type" {
+			f.TyUse.Id = p.parseTypeUseClause(elem)
+		} else if elem.HeadKeyword() == "param" {
 			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem)...)
 		} else if elem.HeadKeyword() == "result" {
 			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem)...)
@@ -196,6 +200,74 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 	return f
 }
 
+// parseTypeDecl parses one module-level "(type ...)" declaration.
+//
+// Expected forms:
+//   - (type (func ...))
+//   - (type $name (func ...))
+//
+// It returns a TypeDecl even on malformed input so parsing can continue; errors
+// are reported through parser diagnostics.
+func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
+	td := &TypeDecl{loc: sx.loc}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		td.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "type declaration missing function signature")
+		td.TyUse = &TypeUse{}
+		return td
+	}
+	td.TyUse = p.parseFuncTypeUse(sx.list[cursor])
+	return td
+}
+
+// parseFuncTypeUse parses a "(func ...)" signature nested inside a type
+// declaration and returns the collected param/result declarations.
+//
+// Example:
+//
+//	(type $t (func (param i32 i32) (result i32)))
+func (p *Parser) parseFuncTypeUse(sx *SExpr) *TypeUse {
+	tu := &TypeUse{loc: sx.loc}
+	if sx.HeadKeyword() != "func" {
+		p.emitError(sx.loc, "type declaration expects (func ...)")
+		return tu
+	}
+	for i := 1; i < len(sx.list); i++ {
+		elem := sx.list[i]
+		switch elem.HeadKeyword() {
+		case "param":
+			tu.Params = append(tu.Params, p.parseParamDecl(elem)...)
+		case "result":
+			tu.Results = append(tu.Results, p.parseResultDecl(elem)...)
+		default:
+			p.emitError(elem.loc, "unsupported type declaration clause")
+		}
+	}
+	return tu
+}
+
+// parseTypeUseClause parses a function type-use clause "(type X)" where X is
+// either an identifier (for example "$t") or a numeric type index.
+//
+// It returns the raw reference text as it appears in source. Invalid clauses
+// emit diagnostics and return an empty string.
+func (p *Parser) parseTypeUseClause(sx *SExpr) string {
+	if len(sx.list) != 2 {
+		p.emitError(sx.loc, "invalid '(type' use")
+		return ""
+	}
+	ref := sx.list[1]
+	if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
+		p.emitError(ref.loc, "type use expects ID or INT")
+		return ""
+	}
+	return ref.tok.value
+}
+
 // parseParamDecl parses one "(param ...)" clause and returns one or more
 // ParamDecl entries.
 //
@@ -205,6 +277,9 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 //
 // On malformed input it emits a parser error and returns nil.
 func (p *Parser) parseParamDecl(sx *SExpr) []*ParamDecl {
+	if len(sx.list) == 1 {
+		return nil
+	}
 	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
 		return []*ParamDecl{{
 			Id:  p.matchElement(sx, 1, ID),
@@ -237,6 +312,9 @@ func (p *Parser) parseParamDecl(sx *SExpr) []*ParamDecl {
 //
 // On malformed input it emits a parser error and returns nil.
 func (p *Parser) parseResultDecl(sx *SExpr) []*ResultDecl {
+	if len(sx.list) == 1 {
+		return nil
+	}
 	if len(sx.list) < 2 {
 		p.emitError(sx.loc, "invalid '(result' declaration")
 		return nil
@@ -263,6 +341,9 @@ func (p *Parser) parseResultDecl(sx *SExpr) []*ResultDecl {
 // token loop would try to parse "$x" as a type. If no leading ID exists, all
 // remaining items are treated as anonymous local types.
 func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
+	if len(sx.list) == 1 {
+		return nil
+	}
 	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
 		return []*LocalDecl{{
 			Id:  p.matchElement(sx, 1, ID),

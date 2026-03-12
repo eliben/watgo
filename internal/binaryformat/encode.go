@@ -43,6 +43,7 @@ const (
 	opElseCode          byte = 0x05
 	opBrCode            byte = 0x0c
 	opBrIfCode          byte = 0x0d
+	opUnreachableCode   byte = 0x00
 	opReturnCode        byte = 0x0f
 	opEndCode           byte = 0x0b
 	opI32ConstCode      byte = 0x41
@@ -305,6 +306,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBrIf:
 		out.WriteByte(opBrIfCode)
 		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrUnreachable:
+		out.WriteByte(opUnreachableCode)
 	case wasmir.InstrReturn:
 		out.WriteByte(opReturnCode)
 	case wasmir.InstrI32Const:

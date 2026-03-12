@@ -26,6 +26,9 @@ type moduleLowerer struct {
 	// source module. It is used to resolve call operands like "$f" to concrete
 	// function indices.
 	funcsByName map[string]uint32
+
+	// typesByName maps type identifiers to type indices in out.Types.
+	typesByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -102,12 +105,14 @@ func newModuleLowerer() *moduleLowerer {
 	return &moduleLowerer{
 		out:         &wasmir.Module{},
 		funcsByName: map[string]uint32{},
+		typesByName: map[string]uint32{},
 	}
 }
 
 // lowerModule lowers all functions in astm into l.out and accumulates
 // diagnostics in l.diags.
 func (l *moduleLowerer) lowerModule(astm *Module) {
+	l.collectTypeDecls(astm)
 	l.collectFunctionNames(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
@@ -115,6 +120,32 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 			continue
 		}
 		l.lowerFunction(i, f)
+	}
+}
+
+// collectTypeDecls lowers module-level type declarations and records named
+// type indices for later function type-use resolution.
+func (l *moduleLowerer) collectTypeDecls(astm *Module) {
+	for i, td := range astm.Types {
+		if td == nil || td.TyUse == nil {
+			l.diags.Addf("type[%d]: nil type declaration", i)
+			continue
+		}
+		params := lowerTypeParams(td.TyUse.Params, i, &l.diags)
+		results := lowerTypeResults(td.TyUse.Results, i, &l.diags)
+		typeIdx := uint32(len(l.out.Types))
+		l.out.Types = append(l.out.Types, wasmir.FuncType{
+			Params:  params,
+			Results: results,
+		})
+		if td.Id == "" {
+			continue
+		}
+		if prev, exists := l.typesByName[td.Id]; exists {
+			l.diags.Addf("type[%d] %s: duplicate type id (first seen at type[%d])", i, td.Id, prev)
+			continue
+		}
+		l.typesByName[td.Id] = typeIdx
 	}
 }
 
@@ -153,11 +184,8 @@ func newFunctionLowerer(mod *moduleLowerer, funcIdx int, fn *Function) *function
 
 // lower lowers fl.fn into fl.mod.out and records any diagnostics.
 func (fl *functionLowerer) lower() {
-	fl.lowerTypeUse()
+	typeIdx := fl.lowerTypeUse()
 	fl.lowerLocals()
-
-	typeIdx := uint32(len(fl.mod.out.Types))
-	fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{Params: fl.params, Results: fl.results})
 
 	fl.lowerInstrs()
 	fl.body = append(fl.body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fl.fn.loc.String()})
@@ -182,13 +210,54 @@ func (fl *functionLowerer) lower() {
 }
 
 // lowerTypeUse lowers params/results from fl.fn.TyUse.
-func (fl *functionLowerer) lowerTypeUse() {
+func (fl *functionLowerer) lowerTypeUse() uint32 {
 	if fl.fn.TyUse == nil {
 		fl.diagf(fl.fn.loc.String(), "missing function type use")
-		return
+		typeIdx := uint32(len(fl.mod.out.Types))
+		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{})
+		return typeIdx
 	}
+
 	fl.lowerParams(fl.fn.TyUse.Params)
 	fl.lowerResults(fl.fn.TyUse.Results)
+
+	if fl.fn.TyUse.Id == "" {
+		typeIdx := uint32(len(fl.mod.out.Types))
+		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
+			Params:  fl.params,
+			Results: fl.results,
+		})
+		return typeIdx
+	}
+
+	refIdx, refType, ok := fl.resolveTypeRef(fl.fn.TyUse.Id)
+	if !ok {
+		fl.diagf(fl.fn.loc.String(), "unknown type use %q", fl.fn.TyUse.Id)
+		typeIdx := uint32(len(fl.mod.out.Types))
+		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{
+			Params:  fl.params,
+			Results: fl.results,
+		})
+		return typeIdx
+	}
+
+	// If no inline param/result declarations exist, inherit signature directly
+	// from the referenced type for validation and local-index accounting.
+	if len(fl.params) == 0 && len(fl.results) == 0 {
+		fl.params = append(fl.params, refType.Params...)
+		fl.results = append(fl.results, refType.Results...)
+		fl.paramNames = make([]string, len(refType.Params))
+		fl.nextLocalIndex = uint32(len(refType.Params))
+		return refIdx
+	}
+
+	if !equalValueTypeSlices(fl.params, refType.Params) {
+		fl.diagf(fl.fn.loc.String(), "type use %q parameter types mismatch referenced type", fl.fn.TyUse.Id)
+	}
+	if !equalValueTypeSlices(fl.results, refType.Results) {
+		fl.diagf(fl.fn.loc.String(), "type use %q result types mismatch referenced type", fl.fn.TyUse.Id)
+	}
+	return refIdx
 }
 
 // lowerParams lowers parameter declarations and updates the local index space.
@@ -614,6 +683,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"call":             {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
 	"br":               {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
 	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
+	"unreachable":      {kind: wasmir.InstrUnreachable, operandCount: 0},
 	"return":           {kind: wasmir.InstrReturn, operandCount: 0},
 	"i32.const":        {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
 	"i64.const":        {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
@@ -898,6 +968,31 @@ func lowerFuncIndexOperand(op Operand, funcsByName map[string]uint32) (uint32, b
 	}
 }
 
+// resolveTypeRef resolves a text type-use reference by identifier or index.
+func (fl *functionLowerer) resolveTypeRef(ref string) (uint32, wasmir.FuncType, bool) {
+	if idx, ok := fl.mod.typesByName[ref]; ok {
+		return idx, fl.mod.out.Types[idx], true
+	}
+	if idx, ok := parseU32Literal(ref); ok {
+		if int(idx) < len(fl.mod.out.Types) {
+			return idx, fl.mod.out.Types[idx], true
+		}
+	}
+	return 0, wasmir.FuncType{}, false
+}
+
+func equalValueTypeSlices(a, b []wasmir.ValueType) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // lowerLabelOperand resolves op as a branch label depth.
 // Numeric labels are interpreted directly as depths.
 // Identifier labels are resolved from innermost to outermost active labels.
@@ -960,6 +1055,40 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func lowerTypeParams(params []*ParamDecl, typeIdx int, diags *diag.ErrorList) []wasmir.ValueType {
+	out := make([]wasmir.ValueType, 0, len(params))
+	for i, pd := range params {
+		if pd == nil {
+			diags.Addf("type[%d] param[%d]: nil param declaration", typeIdx, i)
+			continue
+		}
+		vt, ok := lowerValueType(pd.Ty)
+		if !ok {
+			diags.Addf("type[%d] param[%d]: unsupported param type %q", typeIdx, i, pd.Ty)
+			continue
+		}
+		out = append(out, vt)
+	}
+	return out
+}
+
+func lowerTypeResults(results []*ResultDecl, typeIdx int, diags *diag.ErrorList) []wasmir.ValueType {
+	out := make([]wasmir.ValueType, 0, len(results))
+	for i, rd := range results {
+		if rd == nil {
+			diags.Addf("type[%d] result[%d]: nil result declaration", typeIdx, i)
+			continue
+		}
+		vt, ok := lowerValueType(rd.Ty)
+		if !ok {
+			diags.Addf("type[%d] result[%d]: unsupported result type %q", typeIdx, i, rd.Ty)
+			continue
+		}
+		out = append(out, vt)
+	}
+	return out
 }
 
 // addLowerDiag appends one lowering diagnostic prefixed with function context

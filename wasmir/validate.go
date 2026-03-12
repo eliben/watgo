@@ -344,6 +344,12 @@ instrLoop:
 			}
 			stack = stack[:len(stack)-1]
 			_, _ = validateBranchTarget(insCtx, ins.BranchDepth, "br_if")
+		case InstrUnreachable:
+			// `unreachable` is stack-polymorphic and marks the current path as
+			// non-returning for this simple validator.
+			stack = append(stack[:0], ft.Results...)
+			returned = true
+			break instrLoop
 		case InstrReturn:
 			if len(stack) < len(ft.Results) {
 				diags.Addf("%s: return needs %d operands", insCtx, len(ft.Results))
@@ -633,6 +639,8 @@ func instrName(kind InstrKind) string {
 		return "br"
 	case InstrBrIf:
 		return "br_if"
+	case InstrUnreachable:
+		return "unreachable"
 	case InstrReturn:
 		return "return"
 	case InstrI32Const:

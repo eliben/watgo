@@ -23,6 +23,7 @@ const (
 	InstrElse
 	InstrBr
 	InstrBrIf
+	InstrUnreachable
 	InstrReturn
 	InstrI32Const
 	InstrI64Const
