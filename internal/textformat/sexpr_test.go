@@ -43,13 +43,13 @@ func TestEmptyList(t *testing.T) {
 	sx := mustParseSingleSExpr(t, s)
 
 	elem1 := sx.list[1]
-	if !(elem1.IsToken() && !elem1.IsList() && elem1.tok.name == EMPTY && elem1.loc.String() == "1:6") {
-		t.Errorf("got at 1: %v (loc %s), want EMPTY", elem1, elem1.loc)
+	if !(elem1.IsList() && !elem1.IsToken() && len(elem1.list) == 0 && elem1.loc.String() == "1:6") {
+		t.Errorf("got at 1: %v (loc %s), want empty list", elem1, elem1.loc)
 	}
 }
 
 func showForTest(sx *SExpr) string {
-	if len(sx.list) > 0 {
+	if sx.IsList() {
 		var parts []string
 		for _, sub := range sx.list {
 			parts = append(parts, showForTest(sub))
@@ -69,7 +69,7 @@ func TestSexprLists(t *testing.T) {
 		{`(  foo ($id "str")  )`, "(KEYWORD (ID STRING))"},
 		{`(25 (1.5 "str") foo ($id "str"))`, "(INT (FLOAT STRING) KEYWORD (ID STRING))"},
 		{`(((foo)))`, "(((KEYWORD)))"},
-		{`(x () (()) y)`, "(KEYWORD EMPTY (EMPTY) KEYWORD)"},
+		{`(x () (()) y)`, "(KEYWORD () (()) KEYWORD)"},
 	}
 
 	for _, tt := range tests {

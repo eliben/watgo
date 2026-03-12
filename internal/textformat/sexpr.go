@@ -8,8 +8,7 @@ import (
 // SExpr represents textformat source as an s-expression with tokens.
 // Each s-expression is either a single token (IsToken returns true) or a list
 // of s-expressions (IsList returns true).
-// For an empty list (), IsList will be false and IsToken will be true; the
-// token name will be EMPTY.
+// An empty list () is represented as a list with zero children.
 type SExpr struct {
 	tok  token
 	list []*SExpr
@@ -17,18 +16,18 @@ type SExpr struct {
 }
 
 func (sx *SExpr) IsToken() bool {
-	return len(sx.list) == 0
+	return sx.list == nil
 }
 
 func (sx *SExpr) IsList() bool {
-	return len(sx.list) > 0
+	return sx.list != nil
 }
 
 // HeadKeyword returns the keyword value at the head of the SExpr; for SExprs
 // of the form (head foo bar ...), where `head` is a KEYWORD token, this returns
 // the value of the token. For other sexprs it returns ""
 func (sx *SExpr) HeadKeyword() string {
-	if !sx.IsList() {
+	if !sx.IsList() || len(sx.list) == 0 {
 		return ""
 	}
 	head := sx.list[0]
@@ -40,7 +39,7 @@ func (sx *SExpr) HeadKeyword() string {
 }
 
 func (sx *SExpr) String() string {
-	if len(sx.list) > 0 {
+	if sx.IsList() {
 		var parts []string
 		for _, sub := range sx.list {
 			parts = append(parts, sub.String())
@@ -101,7 +100,8 @@ func sexprifyAll(lex *lexer) ([]*SExpr, error) {
 // encountered and consumed, and returns a new sexpr. lparen is the consumed
 // '(' token.
 func sexprify(lex *lexer, lparen token) (*SExpr, error) {
-	sx := &SExpr{loc: lparen.loc}
+	// list non-nil distinguishes list nodes from token nodes.
+	sx := &SExpr{loc: lparen.loc, list: make([]*SExpr, 0)}
 
 	for {
 		tok := lex.nextToken()

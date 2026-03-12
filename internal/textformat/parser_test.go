@@ -364,3 +364,60 @@ func TestParseModuleSExpr(t *testing.T) {
 		t.Fatalf("func export=%q, want add", got)
 	}
 }
+
+func TestParseModule_EmptyListInstructionReportsError(t *testing.T) {
+	wat := `(module
+  (func
+    ()
+  )
+)`
+
+	_, err := ParseModule(wat)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "expected folded instruction list") {
+		t.Fatalf("got error %q, want empty-instruction-list error", err.Error())
+	}
+}
+
+func TestParseModule_EmptyListTypeReportsError(t *testing.T) {
+	wat := `(module
+  (func (param ()))
+)`
+
+	_, err := ParseModule(wat)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid type") {
+		t.Fatalf("got error %q, want invalid type error", err.Error())
+	}
+}
+
+func TestParseModule_EmptyListInstructionDoesNotStopParsing(t *testing.T) {
+	wat := `(module
+  (func (result i32)
+    ()
+    (i32.const 1)
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "expected folded instruction list") {
+		t.Fatalf("got error %q, want empty-instruction-list error", err.Error())
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	if len(m.Funcs[0].Instrs) != 1 {
+		t.Fatalf("got %d instructions, want 1 parsed instruction after empty list", len(m.Funcs[0].Instrs))
+	}
+	fi := mustFoldedInstr(t, m.Funcs[0].Instrs[0])
+	if fi.Name != "i32.const" {
+		t.Fatalf("instruction name=%q, want i32.const", fi.Name)
+	}
+}
