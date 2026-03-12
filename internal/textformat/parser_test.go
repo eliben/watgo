@@ -522,3 +522,70 @@ func TestParseModule_EmptyListInstructionDoesNotStopParsing(t *testing.T) {
 		t.Fatalf("instruction name=%q, want i32.const", fi.Name)
 	}
 }
+
+func TestParseModule_TypeUseFormsFromSpec(t *testing.T) {
+	// Snippet adapted from WebAssembly spec tests (test/core/func.wast).
+	wat := `(module
+  (type $sig-1 (func))
+  (type $sig-2 (func (param i32) (result i32)))
+
+  (func (export "type-use-1") (type $sig-1))
+  (func (export "type-use-idx") (type 1))
+  (func (export "inline-only") (param i32) (result i32) (local.get 0))
+  (func (export "mixed") (type $sig-2) (param i32) (result i32) (local.get 0))
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	if len(m.Types) != 2 {
+		t.Fatalf("got %d type decls, want 2", len(m.Types))
+	}
+	if got := m.Types[0].Id; got != "$sig-1" {
+		t.Fatalf("type[0] id=%q, want $sig-1", got)
+	}
+	if len(m.Types[0].TyUse.Params) != 0 || len(m.Types[0].TyUse.Results) != 0 {
+		t.Fatalf("type[0] signature got params=%d results=%d, want 0/0", len(m.Types[0].TyUse.Params), len(m.Types[0].TyUse.Results))
+	}
+	if got := m.Types[1].Id; got != "$sig-2" {
+		t.Fatalf("type[1] id=%q, want $sig-2", got)
+	}
+	if len(m.Types[1].TyUse.Params) != 1 || m.Types[1].TyUse.Params[0].Ty.String() != "i32" {
+		t.Fatalf("type[1] params got %#v, want one i32 param", m.Types[1].TyUse.Params)
+	}
+	if len(m.Types[1].TyUse.Results) != 1 || m.Types[1].TyUse.Results[0].Ty.String() != "i32" {
+		t.Fatalf("type[1] results got %#v, want one i32 result", m.Types[1].TyUse.Results)
+	}
+
+	if len(m.Funcs) != 4 {
+		t.Fatalf("got %d funcs, want 4", len(m.Funcs))
+	}
+
+	typeUse1 := m.Funcs[0].TyUse
+	if typeUse1.Id != "$sig-1" || len(typeUse1.Params) != 0 || len(typeUse1.Results) != 0 {
+		t.Fatalf("func[0] TyUse=%#v, want Id=$sig-1 and empty inline signature", typeUse1)
+	}
+
+	typeUseIdx := m.Funcs[1].TyUse
+	if typeUseIdx.Id != "1" || len(typeUseIdx.Params) != 0 || len(typeUseIdx.Results) != 0 {
+		t.Fatalf("func[1] TyUse=%#v, want Id=1 and empty inline signature", typeUseIdx)
+	}
+
+	inlineOnly := m.Funcs[2].TyUse
+	if inlineOnly.Id != "" || len(inlineOnly.Params) != 1 || len(inlineOnly.Results) != 1 {
+		t.Fatalf("func[2] TyUse=%#v, want inline-only one param/one result", inlineOnly)
+	}
+	if inlineOnly.Params[0].Ty.String() != "i32" || inlineOnly.Results[0].Ty.String() != "i32" {
+		t.Fatalf("func[2] inline signature got param=%s result=%s, want i32/i32", inlineOnly.Params[0].Ty, inlineOnly.Results[0].Ty)
+	}
+
+	mixed := m.Funcs[3].TyUse
+	if mixed.Id != "$sig-2" || len(mixed.Params) != 1 || len(mixed.Results) != 1 {
+		t.Fatalf("func[3] TyUse=%#v, want mixed form with Id=$sig-2 and inline one param/one result", mixed)
+	}
+	if mixed.Params[0].Ty.String() != "i32" || mixed.Results[0].Ty.String() != "i32" {
+		t.Fatalf("func[3] mixed inline signature got param=%s result=%s, want i32/i32", mixed.Params[0].Ty, mixed.Results[0].Ty)
+	}
+}

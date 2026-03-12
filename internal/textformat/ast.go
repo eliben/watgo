@@ -51,7 +51,17 @@ type Function struct {
 
 // TypeUse represents function type-use syntax in text format.
 //
-// It may carry an optional type identifier and inline param/result lists.
+// It preserves both the explicit type reference and any inline signature parts
+// exactly as parsed from WAT. This includes:
+//   - reference-only forms like "(type $sig)",
+//   - inline-only forms like "(param i32) (result i32)",
+//   - mixed forms like "(type $sig) (param i32) (result i32)".
+//
+// Example parse shape:
+//   - (func (export "type-use-1") (type $sig-1))
+//     -> TyUse{Id: "$sig-1", Params: nil, Results: nil}
+//   - (func (param i32) (result i32))
+//     -> TyUse{Id: "", Params: [{Ty: i32}], Results: [{Ty: i32}]}
 type TypeUse struct {
 	// Id is the optional referenced type identifier/index from a "(type ...)"
 	// use. It may be an identifier (for example "$t") or numeric text
