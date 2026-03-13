@@ -228,16 +228,16 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		}
 
 		if td.Init != nil {
-			initInstr, initType, ok := lowerConstInstr(td.Init, l.funcsByName, l.globalsByName, l.out.Globals)
+			ci, ok := l.lowerConstInstr(td.Init)
 			if !ok {
 				l.diags.Addf("table[%d]: unsupported initializer", i)
 				continue
 			}
-			if initType != refType {
+			if ci.Type != refType {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
-			if !nullable && initInstr.Kind == wasmir.InstrRefNull {
+			if !nullable && ci.Instr.Kind == wasmir.InstrRefNull {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
@@ -247,7 +247,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				RefType:    refType,
 			}
 			for j := uint32(0); j < min; j++ {
-				seg.Exprs = append(seg.Exprs, initInstr)
+				seg.Exprs = append(seg.Exprs, ci.Instr)
 			}
 			l.out.Elements = append(l.out.Elements, seg)
 		} else if !nullable {
@@ -297,16 +297,16 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 				GlobalMutable: gd.Mutable,
 			})
 		} else {
-			init, initType, ok := lowerConstInstr(gd.Init, l.funcsByName, l.globalsByName, l.out.Globals)
+			ci, ok := l.lowerConstInstr(gd.Init)
 			if !ok {
 				l.diags.Addf("global[%d]: unsupported initializer", i)
 				continue
 			}
-			if initType != vt {
+			if ci.Type != vt {
 				l.diags.Addf("global[%d]: initializer type mismatch", i)
 				continue
 			}
-			g.Init = init
+			g.Init = ci.Instr
 		}
 		l.out.Globals = append(l.out.Globals, g)
 		if gd.Id == "" {
@@ -1353,78 +1353,112 @@ func lowerF64ConstOperand(op Operand) (uint64, bool) {
 	}
 }
 
-// lowerConstInstr lowers a constant expression instruction and returns its
-// semantic form together with the resulting value type.
-func lowerConstInstr(
-	init Instruction,
-	funcsByName map[string]uint32,
-	globalsByName map[string]uint32,
-	globals []wasmir.Global,
-) (wasmir.Instruction, wasmir.ValueType, bool) {
+// loweredConstInstr is one lowered constant expression plus its resulting type.
+type loweredConstInstr struct {
+	Instr wasmir.Instruction
+	Type  wasmir.ValueType
+}
+
+// lowerConstInstr lowers init as a module-level constant expression.
+//
+// Accepted source forms are one-operand plain/folded instructions:
+//   - i32.const, i64.const, f32.const, f64.const
+//   - ref.null <heaptype>
+//   - ref.func <funcidx-or-id>
+//   - global.get <globalidx-or-id>
+//
+// The returned loweredConstInstr contains both the semantic instruction and the
+// statically known resulting value type. global.get is resolved against globals
+// already collected in l.out.Globals, so only earlier globals are valid here.
+//
+// This is a moduleLowerer method because it needs module-level resolution state
+// (function/global name maps and current globals) that is already owned by l.
+func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, bool) {
 	var name string
 	var op Operand
 	switch in := init.(type) {
 	case *PlainInstr:
 		if len(in.Operands) != 1 {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
 		name = in.Name
 		op = in.Operands[0]
 	case *FoldedInstr:
 		if len(in.Args) != 1 || in.Args[0].Instr != nil || in.Args[0].Operand == nil {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
 		name = in.Name
 		op = in.Args[0].Operand
 	default:
-		return wasmir.Instruction{}, 0, false
+		return nil, false
 	}
 
 	switch name {
 	case "i32.const":
 		imm, ok := lowerI32ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm}, wasmir.ValueTypeI32, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm},
+			Type:  wasmir.ValueTypeI32,
+		}, true
 	case "i64.const":
 		imm, ok := lowerI64ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm}, wasmir.ValueTypeI64, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm},
+			Type:  wasmir.ValueTypeI64,
+		}, true
 	case "f32.const":
 		imm, ok := lowerF32ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm}, wasmir.ValueTypeF32, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm},
+			Type:  wasmir.ValueTypeF32,
+		}, true
 	case "f64.const":
 		imm, ok := lowerF64ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm}, wasmir.ValueTypeF64, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm},
+			Type:  wasmir.ValueTypeF64,
+		}, true
 	case "ref.null":
 		vt, ok := lowerRefHeapTypeOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: vt}, vt, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: vt},
+			Type:  vt,
+		}, true
 	case "ref.func":
-		funcIdx, ok := lowerFuncIndexOperand(op, funcsByName)
+		funcIdx, ok := lowerFuncIndexOperand(op, l.funcsByName)
 		if !ok {
-			return wasmir.Instruction{}, 0, false
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx}, wasmir.ValueTypeFuncRef, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx},
+			Type:  wasmir.ValueTypeFuncRef,
+		}, true
 	case "global.get":
-		globalIdx, ok := lowerGlobalIndexOperand(op, globalsByName)
-		if !ok || int(globalIdx) >= len(globals) {
-			return wasmir.Instruction{}, 0, false
+		globalIdx, ok := lowerGlobalIndexOperand(op, l.globalsByName)
+		if !ok || int(globalIdx) >= len(l.out.Globals) {
+			return nil, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx}, globals[globalIdx].Type, true
+		return &loweredConstInstr{
+			Instr: wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx},
+			Type:  l.out.Globals[globalIdx].Type,
+		}, true
 	default:
-		return wasmir.Instruction{}, 0, false
+		return nil, false
 	}
 }
 
