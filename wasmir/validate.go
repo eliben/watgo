@@ -437,6 +437,24 @@ instrLoop:
 				continue
 			}
 			stack[len(stack)-1] = m.Tables[ins.TableIndex].RefType
+		case InstrTableSet:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: table.set needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: table.set expects i32 index operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != m.Tables[ins.TableIndex].RefType {
+				diags.Addf("%s: table.set expects %s value operand", insCtx, valueTypeName(m.Tables[ins.TableIndex].RefType))
+				continue
+			}
+			stack = stack[:len(stack)-2]
 		case InstrCall:
 			if int(ins.FuncIndex) >= len(m.Funcs) {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -860,6 +878,17 @@ instrLoop:
 				continue
 			}
 			stack = append(stack, ValueTypeFuncRef)
+		case InstrRefIsNull:
+			if len(stack) < 1 {
+				diags.Addf("%s: ref.is_null needs 1 operand", insCtx)
+				continue
+			}
+			top := stack[len(stack)-1]
+			if top != ValueTypeFuncRef && top != ValueTypeExternRef {
+				diags.Addf("%s: ref.is_null expects reference operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI32
 
 		case InstrEnd:
 			if len(controlStack) > 0 {
@@ -1048,6 +1077,8 @@ func instrName(kind InstrKind) string {
 		return "global.set"
 	case InstrTableGet:
 		return "table.get"
+	case InstrTableSet:
+		return "table.set"
 	case InstrI32Load:
 		return "i32.load"
 	case InstrI32Store:
@@ -1176,6 +1207,8 @@ func instrName(kind InstrKind) string {
 		return "f64.nearest"
 	case InstrRefNull:
 		return "ref.null"
+	case InstrRefIsNull:
+		return "ref.is_null"
 	case InstrRefFunc:
 		return "ref.func"
 	case InstrEnd:

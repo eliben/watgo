@@ -841,6 +841,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableGet, TableIndex: tableIndex})
+		case opTableSetCode:
+			tableIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: table.set missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableSet, TableIndex: tableIndex})
 		case opCallCode:
 			funcIndex, err := readU32(r)
 			if err != nil {
@@ -1035,6 +1042,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType})
+		case opRefIsNullCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefIsNull})
 		case opRefFuncCode:
 			funcIndex, err := readU32(r)
 			if err != nil {

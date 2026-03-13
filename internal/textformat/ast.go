@@ -27,6 +27,9 @@ type Module struct {
 	// Globals contains parsed global declarations in source order.
 	Globals []*GlobalDecl
 
+	// Elems contains parsed module-level element segment declarations.
+	Elems []*ElemDecl
+
 	// Funcs contains parsed function declarations in source order.
 	Funcs []*Function
 
@@ -213,5 +216,22 @@ type LocalDecl struct {
 	Ty Type
 
 	// loc is the source location of the enclosing "(local ...)" clause.
+	loc location
+}
+
+// ElemDecl is one module-level element segment declaration "(elem ...)".
+type ElemDecl struct {
+	// TableRef is an optional target table identifier/index. Empty means table
+	// 0.
+	TableRef string
+
+	// Offset is the active segment offset expression.
+	Offset Instruction
+
+	// FuncRefs contains function identifiers/indices for function-index
+	// payloads.
+	FuncRefs []string
+
+	// loc is the source location of the elem declaration form head.
 	loc location
 }

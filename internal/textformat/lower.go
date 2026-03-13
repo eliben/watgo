@@ -124,6 +124,7 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 	l.collectFunctionNames(astm)
 	l.collectGlobalDecls(astm)
 	l.collectTableDecls(astm)
+	l.collectElemDecls(astm)
 	l.collectMemoryDecls(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
@@ -131,6 +132,47 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 			continue
 		}
 		l.lowerFunction(i, f)
+	}
+}
+
+// collectElemDecls lowers module-level elem declarations.
+func (l *moduleLowerer) collectElemDecls(astm *Module) {
+	for i, ed := range astm.Elems {
+		if ed == nil {
+			l.diags.Addf("elem[%d]: nil elem declaration", i)
+			continue
+		}
+
+		tableIndex := uint32(0)
+		if ed.TableRef != "" {
+			idx, ok := l.resolveTableRef(ed.TableRef)
+			if !ok {
+				l.diags.Addf("elem[%d]: unknown table reference %q", i, ed.TableRef)
+				continue
+			}
+			tableIndex = idx
+		}
+
+		offsetConst, ok := l.lowerConstInstr(ed.Offset)
+		if !ok || offsetConst.Instr.Kind != wasmir.InstrI32Const {
+			l.diags.Addf("elem[%d]: offset must be i32.const", i)
+			continue
+		}
+
+		seg := wasmir.ElementSegment{
+			TableIndex:  tableIndex,
+			OffsetI32:   offsetConst.Instr.I32Const,
+			FuncIndices: make([]uint32, 0, len(ed.FuncRefs)),
+		}
+		for j, ref := range ed.FuncRefs {
+			funcIdx, ok := l.resolveFunctionRef(ref)
+			if !ok {
+				l.diags.Addf("elem[%d] func[%d]: unknown function reference %q", i, j, ref)
+				continue
+			}
+			seg.FuncIndices = append(seg.FuncIndices, funcIdx)
+		}
+		l.out.Elements = append(l.out.Elements, seg)
 	}
 }
 
@@ -330,6 +372,13 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 
 func (l *moduleLowerer) resolveFunctionRef(ref string) (uint32, bool) {
 	if idx, ok := l.funcsByName[ref]; ok {
+		return idx, true
+	}
+	return parseU32Literal(ref)
+}
+
+func (l *moduleLowerer) resolveTableRef(ref string) (uint32, bool) {
+	if idx, ok := l.tablesByName[ref]; ok {
 		return idx, true
 	}
 	return parseU32Literal(ref)
@@ -1003,7 +1052,6 @@ var loweringSpecs = map[string]loweringSpec{
 	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
 	"global.get":       {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
 	"global.set":       {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
-	"table.get":        {kind: wasmir.InstrTableGet, operandCount: 1, decode: decodeTableGetOperands},
 	"i32.load":         {kind: wasmir.InstrI32Load, operandCount: 0},
 	"i32.store":        {kind: wasmir.InstrI32Store, operandCount: 0},
 	"memory.grow":      {kind: wasmir.InstrMemoryGrow, operandCount: 0},
@@ -1017,6 +1065,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"f32.const":        {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
 	"f64.const":        {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
 	"ref.null":         {kind: wasmir.InstrRefNull, operandCount: 1, decode: decodeRefNullOperands},
+	"ref.is_null":      {kind: wasmir.InstrRefIsNull, operandCount: 0},
 	"ref.func":         {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
 }
 
@@ -1064,6 +1113,26 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "table.get", "table.set":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
+			return
+		}
+		tableIndex := uint32(0)
+		if len(pi.Operands) == 1 {
+			idx, ok := lowerTableIndexOperand(pi.Operands[0], fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid %s table index operand", pi.Name)
+				return
+			}
+			tableIndex = idx
+		}
+		kind := wasmir.InstrTableGet
+		if pi.Name == "table.set" {
+			kind = wasmir.InstrTableSet
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: kind, TableIndex: tableIndex, SourceLoc: instrLoc})
+		return
 	case "br_table":
 		if len(pi.Operands) == 0 {
 			fl.diagf(instrLoc, "br_table expects at least 1 label operand")

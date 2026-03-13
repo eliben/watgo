@@ -32,6 +32,7 @@ type commandKind string
 
 const (
 	commandModule           commandKind = "module"
+	commandInvoke           commandKind = "invoke"
 	commandRegister         commandKind = "register"
 	commandAssertReturn     commandKind = "assert_return"
 	commandAssertTrap       commandKind = "assert_trap"
@@ -58,6 +59,7 @@ const (
 	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
+	valueRefExtern        valueKind = "ref.extern"
 )
 
 // scriptValue is one script-level constant result/argument.
@@ -105,6 +107,7 @@ type invokeAction struct {
 //
 // Field usage by command kind:
 //   - commandModule: moduleExpr
+//   - commandInvoke: action
 //   - commandRegister: registerName
 //   - commandAssertReturn: action + expectValues
 //   - commandAssertTrap: action + expectText
@@ -165,6 +168,16 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 			kind:       commandModule,
 			loc:        sx.Loc(),
 			moduleExpr: sx,
+		}, nil
+	case "invoke":
+		action, err := parseInvoke(sx)
+		if err != nil {
+			return scriptCommand{}, fmt.Errorf("invalid invoke command: %w", err)
+		}
+		return scriptCommand{
+			kind:   commandInvoke,
+			loc:    sx.Loc(),
+			action: &action,
 		}, nil
 	case "register":
 		return parseRegister(sx)
@@ -447,16 +460,38 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		return scriptValue{kind: valueF64Const, bits: bits, literal: litValue}, nil
 	case "ref.null":
 		elems := sx.Children()
-		if len(elems) != 1 {
-			return scriptValue{}, fmt.Errorf("ref.null expects no operands in script assertion")
+		if len(elems) != 1 && len(elems) != 2 {
+			return scriptValue{}, fmt.Errorf("ref.null expects zero or one heaptype operand")
 		}
-		return scriptValue{kind: valueRefNull, literal: "ref.null"}, nil
+		literal := "ref.null"
+		if len(elems) == 2 {
+			kind, value, ok := elems[1].Token()
+			if !ok || (kind != "KEYWORD" && kind != "ID") {
+				return scriptValue{}, fmt.Errorf("ref.null heaptype must be KEYWORD or ID")
+			}
+			literal = "ref.null " + value
+		}
+		return scriptValue{kind: valueRefNull, literal: literal}, nil
 	case "ref.func":
 		elems := sx.Children()
 		if len(elems) != 1 {
 			return scriptValue{}, fmt.Errorf("ref.func expects no operands in script assertion")
 		}
 		return scriptValue{kind: valueRefFunc, literal: "ref.func"}, nil
+	case "ref.extern":
+		elems := sx.Children()
+		if len(elems) != 2 {
+			return scriptValue{}, fmt.Errorf("ref.extern expects one literal")
+		}
+		litKind, litValue, ok := elems[1].Token()
+		if !ok || litKind != "INT" {
+			return scriptValue{}, fmt.Errorf("ref.extern literal must be INT token")
+		}
+		bits, err := numlit.ParseIntBits(litValue, 64)
+		if err != nil {
+			return scriptValue{}, err
+		}
+		return scriptValue{kind: valueRefExtern, bits: bits, literal: litValue}, nil
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported value kind %q", head)
 	}
@@ -625,6 +660,8 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 		switch cmd.kind {
 		case commandModule:
 			r.runModule(&res, cmd)
+		case commandInvoke:
+			r.runInvoke(&res, cmd)
 		case commandRegister:
 			r.runRegister(&res, cmd)
 		case commandAssertReturn:
@@ -708,6 +745,18 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 	}
 	// Registered modules are kept alive for imports. Do not set as current.
 	_ = mod
+	res.status = true
+}
+
+// runInvoke handles top-level "(invoke ...)" commands.
+// It requires invocation success and ignores returned values.
+func (r *scriptRunner) runInvoke(res *commandResult, cmd scriptCommand) {
+	_, err := r.invoke(cmd.action)
+	if err != nil {
+		res.status = false
+		res.detail = fmt.Sprintf("invoke failed: %v", err)
+		return
+	}
 	res.status = true
 }
 
@@ -799,6 +848,12 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
+		case valueRefExtern:
+			if results[i] != want.bits {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
 		default:
 			res.status = false
 			res.detail = fmt.Sprintf("unsupported expected value kind %q", want.kind)
@@ -827,9 +882,14 @@ func formatExpectedValue(v scriptValue) string {
 	case valueF64NaNArithmetic:
 		return "(f64.const nan:arithmetic)"
 	case valueRefNull:
+		if v.literal != "" && v.literal != "ref.null" {
+			return "(ref.null " + strings.TrimPrefix(v.literal, "ref.null ") + ")"
+		}
 		return "(ref.null)"
 	case valueRefFunc:
 		return "(ref.func)"
+	case valueRefExtern:
+		return fmt.Sprintf("(ref.extern %s)", v.literal)
 	default:
 		return fmt.Sprintf("<%s>", v.kind)
 	}
@@ -854,6 +914,8 @@ func formatGotValueLikeExpected(got uint64, want scriptValue) string {
 			return "(ref.null)"
 		}
 		return "(ref.func)"
+	case valueRefExtern:
+		return fmt.Sprintf("(ref.extern %d)", got)
 	default:
 		return fmt.Sprintf("0x%x", got)
 	}
@@ -1058,7 +1120,7 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 		res.detail = "expected trap, got success"
 		return
 	}
-	if cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
+	if cmd.expectText != "" && !matchesExpectedFailureText(err.Error(), cmd.expectText) {
 		res.status = false
 		res.detail = fmt.Sprintf("trap text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
 		return
@@ -1096,6 +1158,9 @@ func matchesExpectedFailureText(got, want string) bool {
 		return strings.Contains(gotLower, "stack overflow") ||
 			strings.Contains(gotLower, "stack exhausted") ||
 			strings.Contains(gotLower, "stack limit")
+	}
+	if wantLower == "out of bounds table access" {
+		return strings.Contains(gotLower, "invalid table access")
 	}
 	return false
 }
@@ -1182,6 +1247,10 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 		case valueF64NaNCanonical, valueF64NaNArithmetic:
 			// Same rule as f32: canonical quiet NaN for deterministic invocation args.
 			args[i] = 0x7ff8000000000000
+		case valueRefNull:
+			args[i] = 0
+		case valueRefExtern:
+			args[i] = arg.bits
 		default:
 			return nil, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
 		}

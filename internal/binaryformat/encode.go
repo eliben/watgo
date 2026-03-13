@@ -73,6 +73,7 @@ const (
 	opGlobalGetCode     byte = 0x23
 	opGlobalSetCode     byte = 0x24
 	opTableGetCode      byte = 0x25
+	opTableSetCode      byte = 0x26
 	opCallCode          byte = 0x10
 	opCallIndirectCode  byte = 0x11
 	opI32LoadCode       byte = 0x28
@@ -139,6 +140,7 @@ const (
 	opF64MinCode        byte = 0xa4
 	opF64MaxCode        byte = 0xa5
 	opRefNullCode       byte = 0xd0
+	opRefIsNullCode     byte = 0xd1
 	opRefFuncCode       byte = 0xd2
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
@@ -607,6 +609,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrTableGet:
 		out.WriteByte(opTableGetCode)
 		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrTableSet:
+		out.WriteByte(opTableSetCode)
+		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrCall:
 		out.WriteByte(opCallCode)
 		writeULEB128(out, instr.FuncIndex)
@@ -761,6 +766,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 			refCode = refTypeFuncRefCode
 		}
 		out.WriteByte(refCode)
+	case wasmir.InstrRefIsNull:
+		out.WriteByte(opRefIsNullCode)
 	case wasmir.InstrRefFunc:
 		out.WriteByte(opRefFuncCode)
 		writeULEB128(out, instr.FuncIndex)

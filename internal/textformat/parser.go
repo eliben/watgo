@@ -162,6 +162,8 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
 		} else if sub.HeadKeyword() == "global" {
 			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
+		} else if sub.HeadKeyword() == "elem" {
+			m.Elems = append(m.Elems, p.parseElemDecl(sub))
 		} else if sub.HeadKeyword() == "func" {
 			m.Funcs = append(m.Funcs, p.parseFunction(sub))
 		} else {
@@ -606,6 +608,45 @@ func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 		return "", "", false
 	}
 	return mod, field, true
+}
+
+func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
+	ed := &ElemDecl{loc: sx.loc}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "table" {
+		tableClause := sx.list[cursor]
+		if len(tableClause.list) != 2 {
+			p.emitError(tableClause.loc, "elem table clause expects one table reference")
+			return ed
+		}
+		if !tableClause.list[1].IsToken() || (tableClause.list[1].tok.name != ID && tableClause.list[1].tok.name != INT) {
+			p.emitError(tableClause.list[1].loc, "elem table reference must be ID or INT")
+			return ed
+		}
+		ed.TableRef = tableClause.list[1].tok.value
+		cursor++
+	}
+
+	if cursor >= len(sx.list) || !sx.list[cursor].IsList() {
+		p.emitError(sx.loc, "elem declaration missing offset expression")
+		return ed
+	}
+	ed.Offset = p.parseFoldedInstr(sx.list[cursor])
+	cursor++
+
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
+		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "func" {
+		cursor++
+	}
+	for ; cursor < len(sx.list); cursor++ {
+		ref := sx.list[cursor]
+		if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
+			p.emitError(ref.loc, "elem function reference must be ID or INT")
+			continue
+		}
+		ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
+	}
+	return ed
 }
 
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It

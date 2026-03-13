@@ -40,10 +40,12 @@ const (
 	InstrGlobalGet
 	InstrGlobalSet
 	InstrTableGet
+	InstrTableSet
 	InstrI32Load
 	InstrI32Store
 	InstrMemoryGrow
 	InstrRefNull
+	InstrRefIsNull
 	InstrRefFunc
 	InstrI32Add
 	InstrI32Sub
