@@ -1518,8 +1518,12 @@ func lowerTableIndexOperand(op Operand, tablesByName map[string]uint32) (uint32,
 	}
 }
 
-// lowerRefHeapTypeOperand lowers a ref heaptype token operand used by
+// lowerRefHeapTypeOperand lowers op as a reference heaptype operand used by
 // instructions such as ref.null.
+// op must be a keyword heaptype token like "func"/"extern" or an ID heaptype
+// (for typed function references).
+// It returns the lowered semantic reference type and true on success.
+// On failure it returns 0/false.
 func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 	switch o := op.(type) {
 	case *KeywordOperand:
@@ -1628,8 +1632,11 @@ func lowerValueType(ty Type) (wasmir.ValueType, bool) {
 	}
 }
 
-// lowerRefTypeInfo lowers a text ref type into semantic reference type and
-// nullability.
+// lowerRefTypeInfo lowers ty as a reference type declaration.
+// ty may be a BasicType ("funcref"/"externref") or a RefType
+// ("(ref ...)" / "(ref null ...)").
+// It returns (valueType, nullable, ok), where nullable reflects source
+// nullability and ok reports whether ty is supported.
 func lowerRefTypeInfo(ty Type) (wasmir.ValueType, bool, bool) {
 	switch t := ty.(type) {
 	case *BasicType:
@@ -1652,6 +1659,9 @@ func lowerRefTypeInfo(ty Type) (wasmir.ValueType, bool, bool) {
 	}
 }
 
+// lowerRefHeapTypeName lowers a text heaptype name (for example "func",
+// "extern", or a type identifier like "$t") into a semantic reference type.
+// It returns the lowered type and true on success, or 0/false on failure.
 func lowerRefHeapTypeName(name string) (wasmir.ValueType, bool) {
 	switch name {
 	case "func":
@@ -1667,6 +1677,12 @@ func lowerRefHeapTypeName(name string) (wasmir.ValueType, bool) {
 	}
 }
 
+// lowerTypeParams lowers params from one type declaration into semantic value
+// types.
+// params is the parsed parameter declaration list for a single type.
+// typeIdx is used only for diagnostic context ("type[typeIdx] ...").
+// diags accumulates per-parameter lowering errors.
+// It returns the successfully lowered parameter types in declaration order.
 func lowerTypeParams(params []*ParamDecl, typeIdx int, diags *diag.ErrorList) []wasmir.ValueType {
 	out := make([]wasmir.ValueType, 0, len(params))
 	for i, pd := range params {
