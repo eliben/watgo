@@ -77,6 +77,10 @@ type TableDecl struct {
 	// Each entry is raw source text (identifier or numeric index literal).
 	ElemRefs []string
 
+	// ElemExprs are parsed reference-typed constant expressions from inline
+	// "(elem ...)" forms such as "(elem (ref.func $f) (ref.null func))".
+	ElemExprs []Instruction
+
 	// loc is the source location of the table declaration form head.
 	loc location
 }
@@ -223,14 +227,33 @@ type LocalDecl struct {
 	loc location
 }
 
+// ElemMode classifies an element segment by initialization mode.
+//
+// This follows the core spec's element segment modes:
+// active, passive, and declarative.
+type ElemMode uint8
+
+const (
+	// ElemModeActive initializes a table at instantiation with an offset.
+	ElemModeActive ElemMode = iota
+
+	// ElemModePassive is not applied at instantiation and is used by table.init.
+	ElemModePassive
+
+	// ElemModeDeclarative is validated but not available at runtime.
+	ElemModeDeclarative
+)
+
 // ElemDecl is one module-level element segment declaration "(elem ...)".
 type ElemDecl struct {
-	// Declarative reports whether this is a declarative segment
-	// "(elem declare ...)".
-	Declarative bool
+	// Id is the optional element segment identifier (for example "$e").
+	Id string
+
+	// Mode is the element segment mode: active, passive, or declarative.
+	Mode ElemMode
 
 	// TableRef is an optional target table identifier/index. Empty means table
-	// 0.
+	// 0. This is used only for active segments.
 	TableRef string
 
 	// Offset is the active segment offset expression.
@@ -239,6 +262,12 @@ type ElemDecl struct {
 	// FuncRefs contains function identifiers/indices for function-index
 	// payloads.
 	FuncRefs []string
+
+	// Exprs contains reference-typed constant-expression payload entries.
+	Exprs []Instruction
+
+	// RefTy is the optional explicit payload reference type.
+	RefTy Type
 
 	// loc is the source location of the elem declaration form head.
 	loc location

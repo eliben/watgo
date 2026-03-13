@@ -47,9 +47,28 @@ func ValidateModule(m *Module) error {
 			diags.Addf("element[%d] has invalid table index %d", i, elem.TableIndex)
 			continue
 		}
+		tableTy := m.Tables[elem.TableIndex].RefType
+		if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
+			diags.Addf("element[%d]: type mismatch", i)
+		}
 		for j, funcIdx := range elem.FuncIndices {
 			if int(funcIdx) >= len(m.Funcs) {
 				diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
+			}
+		}
+		if len(elem.Exprs) > 0 {
+			if elem.RefType != tableTy {
+				diags.Addf("element[%d]: type mismatch", i)
+			}
+			for j, expr := range elem.Exprs {
+				ty, ok := globalInitType(m, expr)
+				if !ok {
+					diags.Addf("element[%d] expr[%d]: constant expression required", i, j)
+					continue
+				}
+				if ty != elem.RefType {
+					diags.Addf("element[%d] expr[%d]: type mismatch", i, j)
+				}
 			}
 		}
 	}

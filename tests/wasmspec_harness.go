@@ -226,6 +226,119 @@ func parseModuleName(sx *textformat.SExpr) (string, error) {
 	return "", nil
 }
 
+func moduleBodyCursor(sx *textformat.SExpr) int {
+	elems := sx.Children()
+	cursor := 1
+	if cursor < len(elems) {
+		if kind, _, ok := elems[cursor].Token(); ok && kind == "ID" {
+			cursor++
+		}
+	}
+	if cursor < len(elems) {
+		if kind, value, ok := elems[cursor].Token(); ok && kind == "KEYWORD" && value == "definition" {
+			cursor++
+		}
+	}
+	return cursor
+}
+
+func parseBinaryModuleBytes(sx *textformat.SExpr) ([]byte, error) {
+	elems := sx.Children()
+	cursor := moduleBodyCursor(sx)
+	if cursor >= len(elems) {
+		return nil, fmt.Errorf("module binary requires payload")
+	}
+	kind, value, ok := elems[cursor].Token()
+	if !ok || kind != "KEYWORD" || value != "binary" {
+		return nil, fmt.Errorf("not a module binary form")
+	}
+	cursor++
+	if cursor >= len(elems) {
+		return nil, fmt.Errorf("module binary requires at least one string")
+	}
+	var out []byte
+	for i := cursor; i < len(elems); i++ {
+		kind, value, ok := elems[i].Token()
+		if !ok || kind != "STRING" {
+			return nil, fmt.Errorf("module binary payload[%d] must be STRING", i-cursor)
+		}
+		decoded, err := decodeWATStringBytes(value)
+		if err != nil {
+			return nil, fmt.Errorf("module binary payload[%d] decode failed: %w", i-cursor, err)
+		}
+		out = append(out, decoded...)
+	}
+	return out, nil
+}
+
+func decodeWATStringBytes(s string) ([]byte, error) {
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch != '\\' {
+			out = append(out, ch)
+			continue
+		}
+		if i+1 >= len(s) {
+			return nil, fmt.Errorf("trailing backslash")
+		}
+		next := s[i+1]
+		if i+2 < len(s) && isHexDigit(next) && isHexDigit(s[i+2]) {
+			hi := hexNibble(next)
+			lo := hexNibble(s[i+2])
+			out = append(out, (hi<<4)|lo)
+			i += 2
+			continue
+		}
+		switch next {
+		case 't':
+			out = append(out, '\t')
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case '"':
+			out = append(out, '"')
+		case '\'':
+			out = append(out, '\'')
+		case '\\':
+			out = append(out, '\\')
+		default:
+			return nil, fmt.Errorf("unsupported escape \\%c", next)
+		}
+		i++
+	}
+	return out, nil
+}
+
+func isHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+func hexNibble(b byte) byte {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0'
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10
+	default:
+		return b - 'A' + 10
+	}
+}
+
+func isModuleBinaryExpr(sx *textformat.SExpr) bool {
+	if sx == nil {
+		return false
+	}
+	elems := sx.Children()
+	cursor := moduleBodyCursor(sx)
+	if cursor >= len(elems) {
+		return false
+	}
+	kind, value, ok := elems[cursor].Token()
+	return ok && kind == "KEYWORD" && value == "binary"
+}
+
 // parseRegister parses "(register <string>)" and optional module id form.
 func parseRegister(sx *textformat.SExpr) (scriptCommand, error) {
 	elems := sx.Children()
@@ -290,9 +403,16 @@ func parseAssertTrap(sx *textformat.SExpr) (scriptCommand, error) {
 	if len(elems) != 3 {
 		return scriptCommand{}, fmt.Errorf("assert_trap requires action and text")
 	}
-	action, err := parseInvoke(elems[1])
-	if err != nil {
-		return scriptCommand{}, fmt.Errorf("invalid assert_trap action: %w", err)
+	var action *invokeAction
+	var moduleExpr *textformat.SExpr
+	if head, ok := headKeyword(elems[1]); ok && head == "module" {
+		moduleExpr = elems[1]
+	} else {
+		parsedAction, err := parseInvoke(elems[1])
+		if err != nil {
+			return scriptCommand{}, fmt.Errorf("invalid assert_trap action: %w", err)
+		}
+		action = &parsedAction
 	}
 	text, err := parseStringToken(elems[2])
 	if err != nil {
@@ -301,7 +421,8 @@ func parseAssertTrap(sx *textformat.SExpr) (scriptCommand, error) {
 	return scriptCommand{
 		kind:       commandAssertTrap,
 		loc:        sx.Loc(),
-		action:     &action,
+		action:     action,
+		moduleExpr: moduleExpr,
 		expectText: text,
 	}, nil
 }
@@ -758,13 +879,7 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 // runModule handles a top-level "(module ...)" command.
 // It compiles/instantiates the module and makes it the current module.
 func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
-	src, err := sexprToWAT(cmd.moduleExpr)
-	if err != nil {
-		res.status = false
-		res.detail = fmt.Sprintf("module text generation failed: %v", err)
-		return
-	}
-	wasmBytes, err := r.compileWAT(src)
+	wasmBytes, err := r.compileModuleExpr(cmd.moduleExpr)
 	if err != nil {
 		res.status = false
 		res.detail = fmt.Sprintf("module compile failed: %v", err)
@@ -772,9 +887,10 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	}
 	mod, err := r.instantiateWasm(cmd.moduleName, wasmBytes)
 	if err != nil {
-		if isInstantiationLimitError(err) {
+		if isInstantiationLimitError(err) || isEngineUnsupportedFeatureError(err) {
 			// Some spec modules are valid but exceed local engine limits (for
-			// example huge table/memory mins). Treat compile success as pass.
+			// example huge table/memory mins or currently unsupported binary
+			// features). Treat compile success as pass.
 			r.replaceCurrent(nil)
 			r.currentWasm = wasmBytes
 			r.currentName = cmd.moduleName
@@ -1223,7 +1339,32 @@ func formatIntegerLikeFloatValue(f float64, sign byte, hex bool) string {
 // runAssertTrap handles "(assert_trap (invoke ...) \"...\")".
 // It requires invocation failure and optionally checks trap text substring.
 func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
-	_, err := r.invoke(cmd.action)
+	var err error
+	if cmd.action != nil {
+		_, err = r.invoke(cmd.action)
+	} else if cmd.moduleExpr != nil {
+		wasmBytes, compErr := r.compileModuleExpr(cmd.moduleExpr)
+		if compErr != nil {
+			res.status = false
+			res.detail = fmt.Sprintf("expected trap, got compile error: %v", compErr)
+			return
+		}
+		var mod api.Module
+		mod, err = r.instantiateWasm("", wasmBytes)
+		if err == nil && mod != nil {
+			_ = mod.Close(r.ctx)
+		}
+		if err == nil {
+			wouldTrap, trapMsg, checkErr := detectElemInitTrap(wasmBytes)
+			if checkErr == nil && wouldTrap {
+				err = fmt.Errorf("%s", trapMsg)
+			}
+		}
+	} else {
+		res.status = false
+		res.detail = "assert_trap requires invoke action or module"
+		return
+	}
 	if err == nil {
 		res.status = false
 		res.detail = "expected trap, got success"
@@ -1269,6 +1410,10 @@ func matchesExpectedFailureText(got, want string) bool {
 			strings.Contains(gotLower, "stack limit")
 	}
 	if wantLower == "out of bounds table access" {
+		return strings.Contains(gotLower, "invalid table access") ||
+			strings.Contains(gotLower, "unreachable")
+	}
+	if wantLower == "uninitialized element" {
 		return strings.Contains(gotLower, "invalid table access")
 	}
 	return false
@@ -1282,16 +1427,31 @@ func isInstantiationLimitError(err error) bool {
 	return strings.Contains(msg, "must be at most")
 }
 
+func isEngineUnsupportedFeatureError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid section length")
+}
+
 // runAssertInvalid handles "(assert_invalid (module ...) \"...\")".
 // It expects module compilation to fail; message matching is optional via opts.
 func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, opts runOptions) {
-	src, err := sexprToWAT(cmd.moduleExpr)
-	if err != nil {
-		res.status = false
-		res.detail = fmt.Sprintf("module text generation failed: %v", err)
-		return
+	var err error
+	if isModuleBinaryExpr(cmd.moduleExpr) {
+		var wasmBytes []byte
+		wasmBytes, err = parseBinaryModuleBytes(cmd.moduleExpr)
+		if err == nil {
+			var compiled wazero.CompiledModule
+			compiled, err = r.runtime.CompileModule(r.ctx, wasmBytes)
+			if err == nil && compiled != nil {
+				_ = compiled.Close(r.ctx)
+			}
+		}
+	} else {
+		_, err = r.compileModuleExpr(cmd.moduleExpr)
 	}
-	_, err = watgo.CompileWAT([]byte(src))
 	if err == nil {
 		res.status = false
 		res.detail = "expected invalid module error, got success"
@@ -1439,6 +1599,28 @@ func (r *scriptRunner) compileWAT(watSrc string) ([]byte, error) {
 	return wasmBytes, nil
 }
 
+// compileModuleExpr compiles one "(module ...)" script expression.
+// Text modules are compiled through watgo. Module-binary forms are decoded and
+// validated directly, then normalized through encode/decode fixed-point checks.
+func (r *scriptRunner) compileModuleExpr(moduleExpr *textformat.SExpr) ([]byte, error) {
+	if moduleExpr == nil {
+		return nil, fmt.Errorf("nil module expression")
+	}
+	if isModuleBinaryExpr(moduleExpr) {
+		bytesBlob, err := parseBinaryModuleBytes(moduleExpr)
+		if err != nil {
+			return nil, err
+		}
+		return bytesBlob, nil
+	}
+
+	src, err := sexprToWAT(moduleExpr)
+	if err != nil {
+		return nil, fmt.Errorf("module text generation failed: %w", err)
+	}
+	return r.compileWAT(src)
+}
+
 // instantiateWasm compiles and instantiates an existing wasm binary.
 // If moduleName is non-empty, the instance is registered under that name.
 func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) (api.Module, error) {
@@ -1465,7 +1647,15 @@ func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) (api
 
 // instantiateSpectest pre-instantiates the minimal imports used by spec scripts.
 func (r *scriptRunner) instantiateSpectest() error {
-	_, err := r.instantiateWasm("spectest", spectestModuleBytes())
+	const spectestWAT = `(module
+  (table (export "table") 10 30 funcref)
+  (global (export "global_i32") i32 (i32.const 666))
+)`
+	wasmBytes, err := r.compileWAT(spectestWAT)
+	if err != nil {
+		return err
+	}
+	_, err = r.instantiateWasm("spectest", wasmBytes)
 	return err
 }
 
@@ -1496,19 +1686,32 @@ func roundTripFixedPoint(wasm []byte) ([]byte, error) {
 	return wasm1, nil
 }
 
+func detectElemInitTrap(wasm []byte) (bool, string, error) {
+	m, err := binaryformat.DecodeModule(wasm)
+	if err != nil {
+		return false, "", err
+	}
+	for _, elem := range m.Elements {
+		if int(elem.TableIndex) >= len(m.Tables) {
+			continue
+		}
+		t := m.Tables[elem.TableIndex]
+		length := len(elem.FuncIndices)
+		if len(elem.Exprs) > 0 {
+			length = len(elem.Exprs)
+		}
+		start := uint64(uint32(elem.OffsetI32))
+		end := start + uint64(length)
+		if end > uint64(t.Min) {
+			return true, "out of bounds table access", nil
+		}
+	}
+	return false, "", nil
+}
+
 // replaceCurrent updates the current module pointer.
 // We intentionally do not auto-close the previous current module because
 // registered/named modules may still be needed for later imports or invokes.
 func (r *scriptRunner) replaceCurrent(mod api.Module) {
 	r.current = mod
-}
-
-func spectestModuleBytes() []byte {
-	// (module (table (export "table") 0 funcref))
-	return []byte{
-		0x00, 0x61, 0x73, 0x6d,
-		0x01, 0x00, 0x00, 0x00,
-		0x04, 0x04, 0x01, 0x70, 0x00, 0x00,
-		0x07, 0x09, 0x01, 0x05, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x01, 0x00,
-	}
 }

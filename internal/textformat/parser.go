@@ -159,11 +159,16 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		} else if sub.HeadKeyword() == "table" {
 			m.Tables = append(m.Tables, p.parseTableDecl(sub))
 		} else if sub.HeadKeyword() == "import" {
-			td, ok := p.parseImportField(sub)
+			td, gd, ok := p.parseImportField(sub)
 			if !ok {
 				continue
 			}
-			m.Tables = append(m.Tables, td)
+			if td != nil {
+				m.Tables = append(m.Tables, td)
+			}
+			if gd != nil {
+				m.Globals = append(m.Globals, gd)
+			}
 		} else if sub.HeadKeyword() == "memory" {
 			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
 		} else if sub.HeadKeyword() == "global" {
@@ -180,22 +185,49 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	return m
 }
 
-func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, bool) {
+func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, *GlobalDecl, bool) {
 	if len(sx.list) != 4 {
 		p.emitError(sx.loc, "invalid import declaration")
-		return nil, false
+		return nil, nil, false
 	}
 	mod := p.matchElement(sx, 1, STRING)
 	name := p.matchElement(sx, 2, STRING)
 	desc := sx.list[3]
-	if desc.HeadKeyword() != "table" {
+	switch desc.HeadKeyword() {
+	case "table":
+		td := p.parseTableDecl(desc)
+		td.ImportModule = mod
+		td.ImportName = name
+		return td, nil, true
+	case "global":
+		gd := p.parseGlobalImportDesc(desc)
+		gd.ImportModule = mod
+		gd.ImportName = name
+		return nil, gd, true
+	default:
 		p.emitError(desc.loc, "unsupported import descriptor")
-		return nil, false
+		return nil, nil, false
 	}
-	td := p.parseTableDecl(desc)
-	td.ImportModule = mod
-	td.ImportName = name
-	return td, true
+}
+
+func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
+	gd := &GlobalDecl{loc: sx.loc}
+	if len(sx.list) != 2 {
+		p.emitError(sx.loc, "invalid global import descriptor")
+		return gd
+	}
+	tySx := sx.list[1]
+	if tySx.IsList() && tySx.HeadKeyword() == "mut" {
+		if len(tySx.list) != 2 {
+			p.emitError(tySx.loc, "invalid mutable global type")
+			return gd
+		}
+		gd.Mutable = true
+		gd.Ty = p.parseType(tySx.list[1])
+		return gd
+	}
+	gd.Ty = p.parseType(tySx)
+	return gd
 }
 
 func (p *Parser) parseFunction(sx *SExpr) *Function {
@@ -615,11 +647,27 @@ func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
 	}
 	for i := 1; i < len(elemClause.list); i++ {
 		elem := elemClause.list[i]
-		if !elem.IsToken() || (elem.tok.name != ID && elem.tok.name != INT) {
-			p.emitError(elem.loc, "elem entry must be function ID or INT")
+		if elem.IsToken() {
+			if elem.tok.name == KEYWORD && elem.tok.value == "func" {
+				continue
+			}
+			if elem.tok.name == ID || elem.tok.name == INT {
+				td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+				continue
+			}
+			if elem.tok.name == KEYWORD {
+				if elem.tok.value == "funcref" || elem.tok.value == "externref" {
+					continue
+				}
+			}
+			p.emitError(elem.loc, "elem entry must be function ID/INT or reference expression")
 			continue
 		}
-		td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+		if elem.HeadKeyword() == "item" {
+			td.ElemExprs = append(td.ElemExprs, p.parseElemItemExprs(elem)...)
+			continue
+		}
+		td.ElemExprs = append(td.ElemExprs, p.parseFoldedInstr(elem))
 	}
 }
 
@@ -639,27 +687,21 @@ func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 }
 
 func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
-	ed := &ElemDecl{loc: sx.loc}
+	ed := &ElemDecl{Mode: ElemModeActive, loc: sx.loc}
 	cursor := 1
+
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		ed.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+
 	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
 		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "declare" {
-		ed.Declarative = true
+		ed.Mode = ElemModeDeclarative
 		cursor++
-		if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
-			sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "func" {
-			cursor++
-		}
-		for ; cursor < len(sx.list); cursor++ {
-			ref := sx.list[cursor]
-			if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
-				p.emitError(ref.loc, "elem function reference must be ID or INT")
-				continue
-			}
-			ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
-		}
-		return ed
 	}
-	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "table" {
+
+	if ed.Mode != ElemModeDeclarative && cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "table" {
 		tableClause := sx.list[cursor]
 		if len(tableClause.list) != 2 {
 			p.emitError(tableClause.loc, "elem table clause expects one table reference")
@@ -673,26 +715,81 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 		cursor++
 	}
 
-	if cursor >= len(sx.list) || !sx.list[cursor].IsList() {
-		p.emitError(sx.loc, "elem declaration missing offset expression")
-		return ed
+	if ed.Mode != ElemModeDeclarative && cursor < len(sx.list) && sx.list[cursor].IsList() {
+		head := sx.list[cursor].HeadKeyword()
+		switch head {
+		case "offset":
+			if len(sx.list[cursor].list) != 2 || !sx.list[cursor].list[1].IsList() {
+				p.emitError(sx.list[cursor].loc, "elem offset clause expects one instruction list")
+			} else {
+				ed.Offset = p.parseFoldedInstr(sx.list[cursor].list[1])
+			}
+			cursor++
+		case "ref", "item":
+			// Passive expr payload starts directly.
+		default:
+			// Active shorthand: direct offset expression like "(i32.const 0)".
+			ed.Offset = p.parseFoldedInstr(sx.list[cursor])
+			cursor++
+		}
 	}
-	ed.Offset = p.parseFoldedInstr(sx.list[cursor])
-	cursor++
+	if ed.Mode != ElemModeDeclarative && ed.Offset == nil {
+		if ed.TableRef != "" {
+			p.emitError(sx.loc, "elem declaration missing offset expression")
+			return ed
+		}
+		ed.Mode = ElemModePassive
+	}
 
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
-		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "func" {
-		cursor++
+	if cursor < len(sx.list) {
+		elem := sx.list[cursor]
+		if elem.IsToken() && elem.tok.name == KEYWORD && elem.tok.value == "func" {
+			cursor++
+		} else if (elem.IsToken() && elem.tok.name == KEYWORD &&
+			(elem.tok.value == "funcref" || elem.tok.value == "externref")) ||
+			(elem.IsList() && elem.HeadKeyword() == "ref") {
+			ed.RefTy = p.parseType(elem)
+			cursor++
+		}
 	}
+
 	for ; cursor < len(sx.list); cursor++ {
 		ref := sx.list[cursor]
-		if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
-			p.emitError(ref.loc, "elem function reference must be ID or INT")
+		if ref.IsToken() && (ref.tok.name == ID || ref.tok.name == INT) {
+			ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
 			continue
 		}
-		ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
+		if !ref.IsList() {
+			p.emitError(ref.loc, "elem entry must be function ID/INT or reference expression")
+			continue
+		}
+		if ref.HeadKeyword() == "item" {
+			ed.Exprs = append(ed.Exprs, p.parseElemItemExprs(ref)...)
+			continue
+		}
+		ed.Exprs = append(ed.Exprs, p.parseFoldedInstr(ref))
+	}
+
+	if len(ed.FuncRefs) > 0 && len(ed.Exprs) > 0 {
+		p.emitError(sx.loc, "elem declaration must not mix function refs and expression payload")
 	}
 	return ed
+}
+
+func (p *Parser) parseElemItemExprs(item *SExpr) []Instruction {
+	if len(item.list) < 2 {
+		p.emitError(item.loc, "elem item must contain an expression")
+		return nil
+	}
+	if len(item.list) == 2 && item.list[1].IsList() {
+		return []Instruction{p.parseFoldedInstr(item.list[1])}
+	}
+	instrs := p.parseInstrs(item, 1)
+	if len(instrs) != 1 {
+		p.emitError(item.loc, "elem item must contain exactly one expression")
+		return nil
+	}
+	return instrs
 }
 
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It
@@ -719,39 +816,45 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 
 		name := elem.tok.value
 		switch name {
-		case "local.get":
+		case "local.get", "local.set", "local.tee", "call", "br", "br_if", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
 			if cursor+1 >= len(sx.list) {
-				p.emitError(elem.loc, "local.get expects one operand")
+				p.emitError(elem.loc, fmt.Sprintf("%s expects one operand", name))
 				cursor++
 				continue
 			}
-
 			operandSx := sx.list[cursor+1]
 			operand := p.parseOperand(operandSx)
-			switch operand.(type) {
-			case *IdOperand, *IntOperand:
-				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
-			default:
-				p.emitError(operandSx.loc, "local.get operand must be ID or INT")
-			}
-			cursor += 2
-		case "call":
-			if cursor+1 >= len(sx.list) {
-				p.emitError(elem.loc, "call expects one operand")
-				cursor++
+			if operand == nil {
+				p.emitError(operandSx.loc, fmt.Sprintf("invalid operand for %s", name))
+				cursor += 2
 				continue
 			}
 
-			operandSx := sx.list[cursor+1]
-			operand := p.parseOperand(operandSx)
-			switch operand.(type) {
-			case *IdOperand, *IntOperand:
-				out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
-			default:
-				p.emitError(operandSx.loc, "call operand must be ID or INT")
+			if !isValidPlainOperand(name, operand) {
+				p.emitError(operandSx.loc, fmt.Sprintf("invalid operand for %s", name))
+				cursor += 2
+				continue
 			}
-			cursor += 2
 
+			out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
+			cursor += 2
+		case "table.get", "table.set", "table.grow", "table.size":
+			// Table ops accept an optional immediate table index; when omitted,
+			// table index 0 is implied.
+			operands := []Operand{}
+			if cursor+1 < len(sx.list) {
+				next := sx.list[cursor+1]
+				op := p.parseOperand(next)
+				switch op.(type) {
+				case *IdOperand, *IntOperand:
+					operands = append(operands, op)
+					cursor += 2
+					out = append(out, &PlainInstr{Name: name, Operands: operands, loc: elem.loc})
+					continue
+				}
+			}
+			out = append(out, &PlainInstr{Name: name, loc: elem.loc})
+			cursor++
 		default:
 			// For this initial subset, parse all other instructions as plain
 			// zero-operand instructions.
@@ -830,6 +933,37 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 		return &KeywordOperand{Value: sx.tok.value, loc: sx.loc}
 	default:
 		return nil
+	}
+}
+
+func isValidPlainOperand(name string, op Operand) bool {
+	switch name {
+	case "local.get", "local.set", "local.tee", "call", "br", "br_if", "global.get", "global.set", "ref.func":
+		switch op.(type) {
+		case *IdOperand, *IntOperand:
+			return true
+		default:
+			return false
+		}
+	case "i32.const", "i64.const":
+		_, ok := op.(*IntOperand)
+		return ok
+	case "f32.const", "f64.const":
+		switch op.(type) {
+		case *IntOperand, *FloatOperand:
+			return true
+		default:
+			return false
+		}
+	case "ref.null":
+		switch op.(type) {
+		case *IdOperand, *KeywordOperand:
+			return true
+		default:
+			return false
+		}
+	default:
+		return true
 	}
 }
 
