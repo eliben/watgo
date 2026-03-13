@@ -85,9 +85,10 @@ type scriptValue struct {
 //
 // For now we support the common anonymous-module form where <name>? is omitted.
 type invokeAction struct {
-	loc      string
-	funcName string
-	args     []scriptValue
+	loc        string
+	moduleName string
+	funcName   string
+	args       []scriptValue
 }
 
 // scriptCommand is a parsed top-level command from a .wast script.
@@ -118,9 +119,14 @@ type scriptCommand struct {
 	kind commandKind
 	loc  string
 
-	moduleExpr   *textformat.SExpr
+	moduleExpr *textformat.SExpr
+	// moduleName is the optional script module identifier from "(module $id ...)".
+	moduleName   string
 	quotedWAT    string
 	registerName string
+	// registerFrom is the optional source module identifier from
+	// "(register \"alias\" $id)".
+	registerFrom string
 
 	action       *invokeAction
 	expectValues []scriptValue
@@ -164,10 +170,15 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 
 	switch head {
 	case "module":
+		moduleName, err := parseModuleName(sx)
+		if err != nil {
+			return scriptCommand{}, err
+		}
 		return scriptCommand{
 			kind:       commandModule,
 			loc:        sx.Loc(),
 			moduleExpr: sx,
+			moduleName: moduleName,
 		}, nil
 	case "invoke":
 		action, err := parseInvoke(sx)
@@ -196,6 +207,25 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 	}
 }
 
+func parseModuleName(sx *textformat.SExpr) (string, error) {
+	elems := sx.Children()
+	if len(elems) < 1 {
+		return "", fmt.Errorf("invalid module command")
+	}
+	cursor := 1
+	if cursor < len(elems) {
+		if kind, value, ok := elems[cursor].Token(); ok && kind == "KEYWORD" && value == "definition" {
+			cursor++
+		}
+	}
+	if cursor < len(elems) {
+		if kind, value, ok := elems[cursor].Token(); ok && kind == "ID" {
+			return value, nil
+		}
+	}
+	return "", nil
+}
+
 // parseRegister parses "(register <string>)" and optional module id form.
 func parseRegister(sx *textformat.SExpr) (scriptCommand, error) {
 	elems := sx.Children()
@@ -206,10 +236,19 @@ func parseRegister(sx *textformat.SExpr) (scriptCommand, error) {
 	if err != nil {
 		return scriptCommand{}, fmt.Errorf("invalid register name: %w", err)
 	}
+	var from string
+	if len(elems) == 3 {
+		kind, value, ok := elems[2].Token()
+		if !ok || kind != "ID" {
+			return scriptCommand{}, fmt.Errorf("register module argument must be ID")
+		}
+		from = value
+	}
 	return scriptCommand{
 		kind:         commandRegister,
 		loc:          sx.Loc(),
 		registerName: name,
+		registerFrom: from,
 	}, nil
 }
 
@@ -339,8 +378,8 @@ func parseAssertMalformed(sx *textformat.SExpr) (scriptCommand, error) {
 }
 
 // parseInvoke parses an invoke action expression.
-// sx must be "(invoke <string> <const>*)".
-// It returns the target export name and parsed constant arguments.
+// sx must be "(invoke <string> <const>*)" or "(invoke <id> <string> <const>*)".
+// It returns the optional module name, target export name and parsed args.
 func parseInvoke(sx *textformat.SExpr) (invokeAction, error) {
 	elems := sx.Children()
 	if len(elems) < 2 {
@@ -351,23 +390,35 @@ func parseInvoke(sx *textformat.SExpr) (invokeAction, error) {
 		return invokeAction{}, fmt.Errorf("expected invoke action")
 	}
 
-	funcName, err := parseStringToken(elems[1])
+	cursor := 1
+	var moduleName string
+	if kind, value, ok := elems[cursor].Token(); ok && kind == "ID" {
+		moduleName = value
+		cursor++
+	}
+	if cursor >= len(elems) {
+		return invokeAction{}, fmt.Errorf("invoke requires function name")
+	}
+
+	funcName, err := parseStringToken(elems[cursor])
 	if err != nil {
 		return invokeAction{}, fmt.Errorf("invalid function name: %w", err)
 	}
+	cursor++
 
 	var args []scriptValue
-	for i := 2; i < len(elems); i++ {
+	for i := cursor; i < len(elems); i++ {
 		v, err := parseValue(elems[i])
 		if err != nil {
-			return invokeAction{}, fmt.Errorf("invalid invoke arg[%d]: %w", i-2, err)
+			return invokeAction{}, fmt.Errorf("invalid invoke arg[%d]: %w", i-cursor, err)
 		}
 		args = append(args, v)
 	}
 	return invokeAction{
-		loc:      sx.Loc(),
-		funcName: funcName,
-		args:     args,
+		loc:        sx.Loc(),
+		moduleName: moduleName,
+		funcName:   funcName,
+		args:       args,
 	}, nil
 }
 
@@ -609,18 +660,39 @@ type runOptions struct {
 // Execution follows spec script sequencing: commands are processed in order,
 // and actions/assertions operate on the current module instance.
 type scriptRunner struct {
-	ctx          context.Context
-	runtime      wazero.Runtime
-	current      api.Module
-	currentWasm  []byte
+	ctx         context.Context
+	runtime     wazero.Runtime
+	current     api.Module
+	currentWasm []byte
+
+	// moduleWasm stores compiled wasm bytes for named script modules.
+	// It allows "(register ... $id)" to re-instantiate a named module under a
+	// runtime import name.
+	moduleWasm map[string][]byte
+
+	// moduleAlias maps script module identifiers (for example "$M") to the
+	// runtime module name to use for imports/invocations after register aliasing.
+	// In spec scripts, module ids and registered names are distinct namespaces:
+	//   (module $M ...)
+	//   (register "x" $M)
+	//   (invoke $M "f")
+	// The final invoke must run against runtime module "x", not the original
+	// unnamed/current instance. This map preserves that script-level aliasing.
+	moduleAlias map[string]string
+
+	// currentName tracks the script identifier/runtime name of current when
+	// available so plain "(register \"x\")" can alias the current module.
+	currentName  string
 	bootstrapErr error
 }
 
 // newScriptRunner creates a runner with a fresh wazero runtime bound to ctx.
 func newScriptRunner(ctx context.Context) *scriptRunner {
 	r := &scriptRunner{
-		ctx:     ctx,
-		runtime: wazero.NewRuntime(ctx),
+		ctx:         ctx,
+		runtime:     wazero.NewRuntime(ctx),
+		moduleWasm:  map[string][]byte{},
+		moduleAlias: map[string]string{},
 	}
 	r.bootstrapErr = r.instantiateSpectest()
 	return r
@@ -698,13 +770,18 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 		res.detail = fmt.Sprintf("module compile failed: %v", err)
 		return
 	}
-	mod, err := r.instantiateWasm("", wasmBytes)
+	mod, err := r.instantiateWasm(cmd.moduleName, wasmBytes)
 	if err != nil {
 		if isInstantiationLimitError(err) {
 			// Some spec modules are valid but exceed local engine limits (for
 			// example huge table/memory mins). Treat compile success as pass.
 			r.replaceCurrent(nil)
 			r.currentWasm = wasmBytes
+			r.currentName = cmd.moduleName
+			if cmd.moduleName != "" {
+				r.moduleWasm[cmd.moduleName] = wasmBytes
+				r.moduleAlias[cmd.moduleName] = cmd.moduleName
+			}
 			res.status = true
 			return
 		}
@@ -714,18 +791,39 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	}
 	r.replaceCurrent(mod)
 	r.currentWasm = wasmBytes
+	r.currentName = cmd.moduleName
+	if cmd.moduleName != "" {
+		r.moduleWasm[cmd.moduleName] = wasmBytes
+		r.moduleAlias[cmd.moduleName] = cmd.moduleName
+	}
 	res.status = true
 }
 
-// runRegister handles "(register \"name\")" by instantiating the current module
-// under the requested name for future imports.
+// runRegister handles "(register \"name\")" and "(register \"name\" $id)".
+// The registered name is the runtime name used by imports. When a source
+// module id is present, we additionally map that script id to the registered
+// runtime name so later "(invoke $id ...)" resolves through moduleAlias.
 func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 	if cmd.registerName == "" {
 		res.status = false
 		res.detail = "register command missing name"
 		return
 	}
-	if len(r.currentWasm) == 0 {
+	wasmBytes := r.currentWasm
+	sourceName := cmd.registerFrom
+	if sourceName == "" {
+		sourceName = r.currentName
+	}
+	if cmd.registerFrom != "" {
+		stored, ok := r.moduleWasm[cmd.registerFrom]
+		if !ok {
+			res.status = false
+			res.detail = fmt.Sprintf("register source module %q not found", cmd.registerFrom)
+			return
+		}
+		wasmBytes = stored
+	}
+	if len(wasmBytes) == 0 {
 		res.status = false
 		res.detail = "register requires a previously compiled module"
 		return
@@ -737,14 +835,25 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 			return
 		}
 	}
-	mod, err := r.instantiateWasm(cmd.registerName, r.currentWasm)
+	mod, err := r.instantiateWasm(cmd.registerName, wasmBytes)
 	if err != nil {
 		res.status = false
 		res.detail = fmt.Sprintf("register instantiate failed: %v", err)
 		return
 	}
-	// Registered modules are kept alive for imports. Do not set as current.
-	_ = mod
+	r.moduleWasm[cmd.registerName] = wasmBytes
+	r.moduleAlias[cmd.registerName] = cmd.registerName
+	if sourceName != "" {
+		r.moduleAlias[sourceName] = cmd.registerName
+	}
+	if sourceName != "" && r.currentName == sourceName {
+		r.replaceCurrent(mod)
+		r.currentWasm = wasmBytes
+		r.currentName = cmd.registerName
+	} else {
+		// Registered modules are kept alive for imports.
+		_ = mod
+	}
 	res.status = true
 }
 
@@ -1213,18 +1322,30 @@ func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand,
 	res.status = true
 }
 
-// invoke calls an exported function on the current module.
-// action supplies the target export name and script argument values.
+// invoke calls an exported function on the current module or a named module.
+// action supplies the target export and arguments; when action.moduleName is
+// set we first resolve script-id aliases through moduleAlias.
 // It returns raw wasm values as uint64, matching wazero's call API.
 func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil invoke action")
 	}
-	if r.current == nil {
+	target := r.current
+	if action.moduleName != "" {
+		moduleName := action.moduleName
+		if aliased, ok := r.moduleAlias[moduleName]; ok {
+			moduleName = aliased
+		}
+		target = r.runtime.Module(moduleName)
+		if target == nil {
+			return nil, fmt.Errorf("named module %q not found for invoke %q", action.moduleName, action.funcName)
+		}
+	}
+	if target == nil {
 		return nil, fmt.Errorf("no current module for invoke %q", action.funcName)
 	}
 
-	fn := r.current.ExportedFunction(action.funcName)
+	fn := target.ExportedFunction(action.funcName)
 	if fn == nil {
 		return nil, fmt.Errorf("exported function %q not found", action.funcName)
 	}
@@ -1321,6 +1442,13 @@ func (r *scriptRunner) compileWAT(watSrc string) ([]byte, error) {
 // instantiateWasm compiles and instantiates an existing wasm binary.
 // If moduleName is non-empty, the instance is registered under that name.
 func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) (api.Module, error) {
+	if moduleName != "" {
+		if existing := r.runtime.Module(moduleName); existing != nil {
+			if err := existing.Close(r.ctx); err != nil {
+				return nil, err
+			}
+		}
+	}
 	compiled, err := r.runtime.CompileModule(r.ctx, wasmBytes)
 	if err != nil {
 		return nil, err
@@ -1368,11 +1496,10 @@ func roundTripFixedPoint(wasm []byte) ([]byte, error) {
 	return wasm1, nil
 }
 
-// replaceCurrent swaps the current module instance, closing any previous one.
+// replaceCurrent updates the current module pointer.
+// We intentionally do not auto-close the previous current module because
+// registered/named modules may still be needed for later imports or invokes.
 func (r *scriptRunner) replaceCurrent(mod api.Module) {
-	if r.current != nil {
-		_ = r.current.Close(r.ctx)
-	}
 	r.current = mod
 }
 

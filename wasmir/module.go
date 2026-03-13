@@ -41,6 +41,8 @@ const (
 	InstrGlobalSet
 	InstrTableGet
 	InstrTableSet
+	InstrTableGrow
+	InstrTableSize
 	InstrI32Load
 	InstrI32Store
 	InstrMemoryGrow
@@ -62,6 +64,8 @@ const (
 	InstrI32Eqz
 	InstrI32LtS
 	InstrI32LtU
+	InstrI32LeU
+	InstrI32GeU
 	InstrI64Add
 	InstrI64Eq
 	InstrI64Eqz

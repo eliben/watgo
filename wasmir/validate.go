@@ -455,6 +455,31 @@ instrLoop:
 				continue
 			}
 			stack = stack[:len(stack)-2]
+		case InstrTableGrow:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: table.grow needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-2] != m.Tables[ins.TableIndex].RefType {
+				diags.Addf("%s: table.grow expects %s value operand", insCtx, valueTypeName(m.Tables[ins.TableIndex].RefType))
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: table.grow expects i32 delta operand", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
+		case InstrTableSize:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			stack = append(stack, ValueTypeI32)
 		case InstrCall:
 			if int(ins.FuncIndex) >= len(m.Funcs) {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -706,7 +731,7 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
 
-		case InstrI32Eq, InstrI32LtS, InstrI32LtU:
+		case InstrI32Eq, InstrI32LtS, InstrI32LtU, InstrI32LeU, InstrI32GeU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -1079,6 +1104,10 @@ func instrName(kind InstrKind) string {
 		return "table.get"
 	case InstrTableSet:
 		return "table.set"
+	case InstrTableGrow:
+		return "table.grow"
+	case InstrTableSize:
+		return "table.size"
 	case InstrI32Load:
 		return "i32.load"
 	case InstrI32Store:
@@ -1115,6 +1144,10 @@ func instrName(kind InstrKind) string {
 		return "i32.lt_s"
 	case InstrI32LtU:
 		return "i32.lt_u"
+	case InstrI32LeU:
+		return "i32.le_u"
+	case InstrI32GeU:
+		return "i32.ge_u"
 	case InstrI64Add:
 		return "i64.add"
 	case InstrI64Eq:

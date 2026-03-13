@@ -95,6 +95,8 @@ const (
 	opI32EqzCode        byte = 0x45
 	opI32LtSCode        byte = 0x48
 	opI32LtUCode        byte = 0x49
+	opI32LeUCode        byte = 0x4d
+	opI32GeUCode        byte = 0x4f
 	opI64AddCode        byte = 0x7c
 	opI64EqCode         byte = 0x51
 	opI64EqzCode        byte = 0x50
@@ -142,6 +144,11 @@ const (
 	opRefNullCode       byte = 0xd0
 	opRefIsNullCode     byte = 0xd1
 	opRefFuncCode       byte = 0xd2
+	opPrefixFCCode      byte = 0xfc
+
+	// FC-prefixed table instruction subopcodes.
+	subopTableGrowCode uint32 = 0x0f
+	subopTableSizeCode uint32 = 0x10
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -612,6 +619,14 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrTableSet:
 		out.WriteByte(opTableSetCode)
 		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrTableGrow:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopTableGrowCode)
+		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrTableSize:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopTableSizeCode)
+		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrCall:
 		out.WriteByte(opCallCode)
 		writeULEB128(out, instr.FuncIndex)
@@ -668,6 +683,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32LtSCode)
 	case wasmir.InstrI32LtU:
 		out.WriteByte(opI32LtUCode)
+	case wasmir.InstrI32LeU:
+		out.WriteByte(opI32LeUCode)
+	case wasmir.InstrI32GeU:
+		out.WriteByte(opI32GeUCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
 	case wasmir.InstrI64Eq:

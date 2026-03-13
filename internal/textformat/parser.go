@@ -158,6 +158,12 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			m.Types = append(m.Types, p.parseTypeDecl(sub))
 		} else if sub.HeadKeyword() == "table" {
 			m.Tables = append(m.Tables, p.parseTableDecl(sub))
+		} else if sub.HeadKeyword() == "import" {
+			td, ok := p.parseImportField(sub)
+			if !ok {
+				continue
+			}
+			m.Tables = append(m.Tables, td)
 		} else if sub.HeadKeyword() == "memory" {
 			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
 		} else if sub.HeadKeyword() == "global" {
@@ -172,6 +178,24 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	}
 
 	return m
+}
+
+func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, bool) {
+	if len(sx.list) != 4 {
+		p.emitError(sx.loc, "invalid import declaration")
+		return nil, false
+	}
+	mod := p.matchElement(sx, 1, STRING)
+	name := p.matchElement(sx, 2, STRING)
+	desc := sx.list[3]
+	if desc.HeadKeyword() != "table" {
+		p.emitError(desc.loc, "unsupported import descriptor")
+		return nil, false
+	}
+	td := p.parseTableDecl(desc)
+	td.ImportModule = mod
+	td.ImportName = name
+	return td, true
 }
 
 func (p *Parser) parseFunction(sx *SExpr) *Function {
@@ -250,6 +274,10 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	cursor := 1
 	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
 		td.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
+		td.Export = p.matchElement(sx.list[cursor], 1, STRING)
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
@@ -613,6 +641,24 @@ func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	ed := &ElemDecl{loc: sx.loc}
 	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
+		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "declare" {
+		ed.Declarative = true
+		cursor++
+		if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
+			sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "func" {
+			cursor++
+		}
+		for ; cursor < len(sx.list); cursor++ {
+			ref := sx.list[cursor]
+			if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
+				p.emitError(ref.loc, "elem function reference must be ID or INT")
+				continue
+			}
+			ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
+		}
+		return ed
+	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "table" {
 		tableClause := sx.list[cursor]
 		if len(tableClause.list) != 2 {

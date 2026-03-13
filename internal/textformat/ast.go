@@ -45,6 +45,10 @@ type TableDecl struct {
 	// Id is the optional table identifier (for example "$t").
 	Id string
 
+	// Export is the optional exported name from an inline "(export \"...\")"
+	// clause.
+	Export string
+
 	// ImportModule is non-empty when this table is imported and stores the
 	// import module name.
 	ImportModule string
@@ -221,6 +225,10 @@ type LocalDecl struct {
 
 // ElemDecl is one module-level element segment declaration "(elem ...)".
 type ElemDecl struct {
+	// Declarative reports whether this is a declarative segment
+	// "(elem declare ...)".
+	Declarative bool
+
 	// TableRef is an optional target table identifier/index. Empty means table
 	// 0.
 	TableRef string

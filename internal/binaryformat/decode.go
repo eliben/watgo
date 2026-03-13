@@ -848,6 +848,31 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableSet, TableIndex: tableIndex})
+		case opPrefixFCCode:
+			subop, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: 0xfc prefixed op missing/invalid subopcode: %v", funcIdx, err)
+				return out
+			}
+			switch subop {
+			case subopTableGrowCode:
+				tableIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: table.grow missing/invalid immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableGrow, TableIndex: tableIndex})
+			case subopTableSizeCode:
+				tableIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: table.size missing/invalid immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableSize, TableIndex: tableIndex})
+			default:
+				diags.Addf("code[%d]: unsupported 0xfc subopcode 0x%x", funcIdx, subop)
+				return out
+			}
 		case opCallCode:
 			funcIndex, err := readU32(r)
 			if err != nil {
@@ -940,6 +965,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtS})
 		case opI32LtUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtU})
+		case opI32LeUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeU})
+		case opI32GeUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeU})
 		case opI64AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
 		case opI64EqCode:

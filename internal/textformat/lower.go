@@ -142,6 +142,11 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 			l.diags.Addf("elem[%d]: nil elem declaration", i)
 			continue
 		}
+		if ed.Declarative {
+			// Declarative segments are used only for declarations and don't affect
+			// runtime initialization in this subset.
+			continue
+		}
 
 		tableIndex := uint32(0)
 		if ed.TableRef != "" {
@@ -250,6 +255,13 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			} else {
 				l.tablesByName[td.Id] = tableIdx
 			}
+		}
+		if td.Export != "" {
+			l.out.Exports = append(l.out.Exports, wasmir.Export{
+				Name:  td.Export,
+				Kind:  wasmir.ExternalKindTable,
+				Index: tableIdx,
+			})
 		}
 
 		if len(td.ElemRefs) > 0 {
@@ -1000,6 +1012,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.eqz":          {kind: wasmir.InstrI32Eqz, operandCount: 0},
 	"i32.lt_s":         {kind: wasmir.InstrI32LtS, operandCount: 0},
 	"i32.lt_u":         {kind: wasmir.InstrI32LtU, operandCount: 0},
+	"i32.le_u":         {kind: wasmir.InstrI32LeU, operandCount: 0},
+	"i32.ge_u":         {kind: wasmir.InstrI32GeU, operandCount: 0},
 	"i64.add":          {kind: wasmir.InstrI64Add, operandCount: 0},
 	"i64.eq":           {kind: wasmir.InstrI64Eq, operandCount: 0},
 	"i64.eqz":          {kind: wasmir.InstrI64Eqz, operandCount: 0},
@@ -1130,6 +1144,26 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		kind := wasmir.InstrTableGet
 		if pi.Name == "table.set" {
 			kind = wasmir.InstrTableSet
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: kind, TableIndex: tableIndex, SourceLoc: instrLoc})
+		return
+	case "table.grow", "table.size":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
+			return
+		}
+		tableIndex := uint32(0)
+		if len(pi.Operands) == 1 {
+			idx, ok := lowerTableIndexOperand(pi.Operands[0], fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid %s table index operand", pi.Name)
+				return
+			}
+			tableIndex = idx
+		}
+		kind := wasmir.InstrTableGrow
+		if pi.Name == "table.size" {
+			kind = wasmir.InstrTableSize
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: kind, TableIndex: tableIndex, SourceLoc: instrLoc})
 		return
