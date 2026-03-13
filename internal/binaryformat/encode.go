@@ -30,38 +30,23 @@ const (
 	// typeCodeFunc tags a function type entry in the type section.
 	typeCodeFunc byte = 0x60
 
-	// valueTypeI32Code is the binary encoding of i32.
-	valueTypeI32Code byte = 0x7f
-	// valueTypeI64Code is the binary encoding of i64.
-	valueTypeI64Code byte = 0x7e
-	// valueTypeF32Code is the binary encoding of f32.
-	valueTypeF32Code byte = 0x7d
-	// valueTypeF64Code is the binary encoding of f64.
-	valueTypeF64Code byte = 0x7c
-	// valueTypeExternRefCode is the binary encoding of externref.
+	valueTypeI32Code       byte = 0x7f
+	valueTypeI64Code       byte = 0x7e
+	valueTypeF32Code       byte = 0x7d
+	valueTypeF64Code       byte = 0x7c
 	valueTypeExternRefCode byte = 0x6f
 
-	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
-	// exportKindTableCode tags a table export entry.
-	exportKindTableCode byte = 0x01
-	// exportKindMemoryCode tags a memory export entry.
-	exportKindMemoryCode byte = 0x02
-	// exportKindGlobalCode tags a global export entry.
-	exportKindGlobalCode byte = 0x03
+	exportKindTableCode    byte = 0x01
+	exportKindMemoryCode   byte = 0x02
+	exportKindGlobalCode   byte = 0x03
 
-	// importKindFunctionCode tags a function import entry.
 	importKindFunctionCode byte = 0x00
-	// importKindTableCode tags a table import entry.
-	importKindTableCode byte = 0x01
-	// importKindMemoryCode tags a memory import entry.
-	importKindMemoryCode byte = 0x02
-	// importKindGlobalCode tags a global import entry.
-	importKindGlobalCode byte = 0x03
+	importKindTableCode    byte = 0x01
+	importKindMemoryCode   byte = 0x02
+	importKindGlobalCode   byte = 0x03
 
-	// refTypeFuncRefCode encodes funcref in table types.
-	refTypeFuncRefCode byte = 0x70
-	// refTypeExternRefCode encodes externref in table types.
+	refTypeFuncRefCode   byte = 0x70
 	refTypeExternRefCode byte = 0x6f
 
 	// Opcodes for the currently supported instruction subset.
@@ -163,6 +148,24 @@ const (
 	globalMutabilityConstCode byte = 0x00
 	// globalMutabilityVarCode marks a mutable global type.
 	globalMutabilityVarCode byte = 0x01
+
+	// limitsFlagMinOnly encodes limits with only a minimum bound.
+	limitsFlagMinOnly byte = 0x00
+	// limitsFlagMinMax encodes limits with both minimum and maximum bounds.
+	limitsFlagMinMax byte = 0x01
+
+	// elemSegmentFlagActiveTable0FuncIndices encodes an active element segment
+	// for table 0 using function indices (legacy/table-0 form).
+	elemSegmentFlagActiveTable0FuncIndices byte = 0x00
+	// elemSegmentFlagActiveExplicitTableFuncIndices encodes an active element
+	// segment with an explicit table index and function indices.
+	elemSegmentFlagActiveExplicitTableFuncIndices byte = 0x02
+	// elemSegmentFlagActiveExplicitTableExprs encodes an active element segment
+	// with an explicit table index and reference-typed const expressions.
+	elemSegmentFlagActiveExplicitTableExprs byte = 0x06
+
+	// elemKindFuncRef marks legacy function-index element payloads as funcref.
+	elemKindFuncRef byte = 0x00
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -430,8 +433,8 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 	writeULEB128(&payload, uint32(len(elements)))
 	for i, elem := range elements {
 		if len(elem.Exprs) > 0 {
-			// flags=0x06 => active with explicit table index and ref-type exprs.
-			payload.WriteByte(0x06)
+			// Active segment with explicit table index and ref-typed expr payload.
+			payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
 			writeULEB128(&payload, elem.TableIndex)
 			payload.WriteByte(opI32ConstCode)
 			writeSLEB128(&payload, int64(elem.OffsetI32))
@@ -451,14 +454,14 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 			continue
 		}
 
-		// flags=0x02 => active with explicit table index and function indices.
-		payload.WriteByte(0x02)
+		// Active segment with explicit table index and function-index payload.
+		payload.WriteByte(elemSegmentFlagActiveExplicitTableFuncIndices)
 		writeULEB128(&payload, elem.TableIndex)
 		payload.WriteByte(opI32ConstCode)
 		writeSLEB128(&payload, int64(elem.OffsetI32))
 		payload.WriteByte(opEndCode)
-		// elemkind 0x00 => funcref.
-		payload.WriteByte(0x00)
+		// Legacy element kind tag for funcref function-index payloads.
+		payload.WriteByte(elemKindFuncRef)
 		writeULEB128(&payload, uint32(len(elem.FuncIndices)))
 		for _, idx := range elem.FuncIndices {
 			writeULEB128(&payload, idx)
@@ -869,12 +872,12 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 
 func writeLimits(out *bytes.Buffer, min uint32, hasMax bool, max uint32) {
 	if hasMax {
-		out.WriteByte(0x01)
+		out.WriteByte(limitsFlagMinMax)
 		writeULEB128(out, min)
 		writeULEB128(out, max)
 		return
 	}
-	out.WriteByte(0x00)
+	out.WriteByte(limitsFlagMinOnly)
 	writeULEB128(out, min)
 }
 

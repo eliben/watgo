@@ -444,7 +444,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			break
 		}
 		switch flags {
-		case 0x00:
+		case elemSegmentFlagActiveTable0FuncIndices:
 			offsetInstr, err := decodeConstExpr(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
@@ -460,7 +460,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				OffsetI32:   offsetInstr.I32Const,
 				FuncIndices: funcIndices,
 			})
-		case 0x02:
+		case elemSegmentFlagActiveExplicitTableFuncIndices:
 			tableIndex, err := readU32(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid table index: %v", i, err)
@@ -480,7 +480,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: missing elemkind: %v", i, err)
 				break
 			}
-			if elemKind != 0x00 {
+			if elemKind != elemKindFuncRef {
 				diags.Addf("element[%d]: unsupported elemkind 0x%x", i, elemKind)
 				break
 			}
@@ -490,7 +490,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				OffsetI32:   offsetInstr.I32Const,
 				FuncIndices: funcIndices,
 			})
-		case 0x06:
+		case elemSegmentFlagActiveExplicitTableExprs:
 			tableIndex, err := readU32(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid table index: %v", i, err)
@@ -567,10 +567,10 @@ func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
 		return 0, false, 0, err
 	}
 	switch flags {
-	case 0x00:
+	case limitsFlagMinOnly:
 		min, err := readU32(r)
 		return min, false, 0, err
-	case 0x01:
+	case limitsFlagMinMax:
 		min, err := readU32(r)
 		if err != nil {
 			return 0, false, 0, err
