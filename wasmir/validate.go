@@ -29,7 +29,10 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, g := range m.Globals {
-		initType, ok := globalInitType(g.Init)
+		if g.Imported {
+			continue
+		}
+		initType, ok := globalInitType(m, g.Init)
 		if !ok {
 			diags.Addf("global[%d]: unsupported initializer instruction kind %d", i, g.Init.Kind)
 			continue
@@ -52,12 +55,25 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, exp := range m.Exports {
-		if exp.Kind != ExternalKindFunction {
+		switch exp.Kind {
+		case ExternalKindFunction:
+			if int(exp.Index) >= len(m.Funcs) {
+				diags.Addf("export[%d] index %d out of range", i, exp.Index)
+			}
+		case ExternalKindTable:
+			if int(exp.Index) >= len(m.Tables) {
+				diags.Addf("export[%d] index %d out of range", i, exp.Index)
+			}
+		case ExternalKindMemory:
+			if int(exp.Index) >= len(m.Memories) {
+				diags.Addf("export[%d] index %d out of range", i, exp.Index)
+			}
+		case ExternalKindGlobal:
+			if int(exp.Index) >= len(m.Globals) {
+				diags.Addf("export[%d] index %d out of range", i, exp.Index)
+			}
+		default:
 			diags.Addf("export[%d] has unsupported kind %d", i, exp.Kind)
-			continue
-		}
-		if int(exp.Index) >= len(m.Funcs) {
-			diags.Addf("export[%d] index %d out of range", i, exp.Index)
 		}
 	}
 
@@ -407,6 +423,20 @@ instrLoop:
 				continue
 			}
 			stack = stack[:len(stack)-1]
+		case InstrTableGet:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: table.get needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: table.get expects i32 index operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = m.Tables[ins.TableIndex].RefType
 		case InstrCall:
 			if int(ins.FuncIndex) >= len(m.Funcs) {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -822,6 +852,14 @@ instrLoop:
 				continue
 			}
 			// Unary f64 operators preserve top-of-stack type.
+		case InstrRefNull:
+			stack = append(stack, ins.RefType)
+		case InstrRefFunc:
+			if int(ins.FuncIndex) >= len(m.Funcs) {
+				diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
+				continue
+			}
+			stack = append(stack, ValueTypeFuncRef)
 
 		case InstrEnd:
 			if len(controlStack) > 0 {
@@ -920,12 +958,16 @@ func valueTypeName(vt ValueType) string {
 		return "f32"
 	case ValueTypeF64:
 		return "f64"
+	case ValueTypeFuncRef:
+		return "funcref"
+	case ValueTypeExternRef:
+		return "externref"
 	default:
 		return fmt.Sprintf("value_type(%d)", vt)
 	}
 }
 
-func globalInitType(init Instruction) (ValueType, bool) {
+func globalInitType(m *Module, init Instruction) (ValueType, bool) {
 	switch init.Kind {
 	case InstrI32Const:
 		return ValueTypeI32, true
@@ -935,6 +977,22 @@ func globalInitType(init Instruction) (ValueType, bool) {
 		return ValueTypeF32, true
 	case InstrF64Const:
 		return ValueTypeF64, true
+	case InstrRefNull:
+		return init.RefType, true
+	case InstrRefFunc:
+		if int(init.FuncIndex) >= len(m.Funcs) {
+			return 0, false
+		}
+		return ValueTypeFuncRef, true
+	case InstrGlobalGet:
+		if int(init.GlobalIndex) >= len(m.Globals) {
+			return 0, false
+		}
+		g := m.Globals[init.GlobalIndex]
+		if g.Mutable {
+			return 0, false
+		}
+		return g.Type, true
 	default:
 		return 0, false
 	}
@@ -988,6 +1046,8 @@ func instrName(kind InstrKind) string {
 		return "global.get"
 	case InstrGlobalSet:
 		return "global.set"
+	case InstrTableGet:
+		return "table.get"
 	case InstrI32Load:
 		return "i32.load"
 	case InstrI32Store:
@@ -1114,6 +1174,10 @@ func instrName(kind InstrKind) string {
 		return "f64.trunc"
 	case InstrF64Nearest:
 		return "f64.nearest"
+	case InstrRefNull:
+		return "ref.null"
+	case InstrRefFunc:
+		return "ref.func"
 	case InstrEnd:
 		return "end"
 	default:

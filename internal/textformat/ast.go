@@ -42,6 +42,30 @@ type TableDecl struct {
 	// Id is the optional table identifier (for example "$t").
 	Id string
 
+	// ImportModule is non-empty when this table is imported and stores the
+	// import module name.
+	ImportModule string
+
+	// ImportName is non-empty when this table is imported and stores the
+	// import field name.
+	ImportName string
+
+	// Min is the minimum table size in elements.
+	Min uint32
+
+	// HasMax reports whether a maximum table size was specified.
+	HasMax bool
+
+	// Max is the maximum table size when HasMax is true.
+	Max uint32
+
+	// RefTy is the declared table reference element type.
+	RefTy Type
+
+	// Init is an optional table-init expression from table sugar forms such as
+	// "(table 10 funcref (ref.func $f))".
+	Init Instruction
+
 	// ElemRefs are parsed function references from the inline "(elem ...)" list.
 	// Each entry is raw source text (identifier or numeric index literal).
 	ElemRefs []string
@@ -66,6 +90,18 @@ type MemoryDecl struct {
 type GlobalDecl struct {
 	// Id is the optional global identifier (for example "$g").
 	Id string
+
+	// Export is the optional exported name from an inline "(export \"...\")"
+	// clause.
+	Export string
+
+	// ImportModule is non-empty when this global is imported and stores the
+	// import module name.
+	ImportModule string
+
+	// ImportName is non-empty when this global is imported and stores the import
+	// field name.
+	ImportName string
 
 	// Mutable reports whether this global declaration uses "(mut ...)".
 	Mutable bool

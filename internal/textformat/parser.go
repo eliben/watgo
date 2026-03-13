@@ -146,6 +146,11 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		m.Id = sx.list[cursor].tok.value
 		cursor++
 	}
+	// .wast script commands may include "(module definition ...)".
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
+		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "definition" {
+		cursor++
+	}
 
 	for i := cursor; i < len(sx.list); i++ {
 		sub := sx.list[i]
@@ -159,8 +164,9 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
 		} else if sub.HeadKeyword() == "func" {
 			m.Funcs = append(m.Funcs, p.parseFunction(sub))
+		} else {
+			p.emitError(sub.loc, fmt.Sprintf("unsupported module field %q", sub.HeadKeyword()))
 		}
-		// TODO: check all other types too
 	}
 
 	return m
@@ -244,31 +250,74 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		td.Id = sx.list[cursor].tok.value
 		cursor++
 	}
-	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "table declaration missing element type")
-		return td
-	}
-	if !sx.list[cursor].IsToken() || sx.list[cursor].tok.name != KEYWORD || sx.list[cursor].tok.value != "funcref" {
-		p.emitError(sx.list[cursor].loc, `table declaration expects "funcref"`)
-		return td
-	}
-	cursor++
-	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "table declaration missing inline elem clause")
-		return td
-	}
-	elemClause := sx.list[cursor]
-	if elemClause.HeadKeyword() != "elem" {
-		p.emitError(elemClause.loc, `table declaration expects "(elem ...)"`)
-		return td
-	}
-	for i := 1; i < len(elemClause.list); i++ {
-		elem := elemClause.list[i]
-		if !elem.IsToken() || (elem.tok.name != ID && elem.tok.name != INT) {
-			p.emitError(elem.loc, "elem entry must be function ID or INT")
-			continue
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
+		modName, fieldName, ok := p.parseImportClause(sx.list[cursor])
+		if !ok {
+			p.emitError(sx.list[cursor].loc, "invalid table import clause")
+			return td
 		}
-		td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+		td.ImportModule = modName
+		td.ImportName = fieldName
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "table declaration missing limits or element type")
+		return td
+	}
+
+	// Legacy shorthand: (table funcref (elem ...))
+	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == KEYWORD {
+		td.RefTy = p.parseType(sx.list[cursor])
+		cursor++
+		if cursor >= len(sx.list) {
+			return td
+		}
+		switch sx.list[cursor].HeadKeyword() {
+		case "elem":
+			p.parseElemRefs(td, sx.list[cursor])
+		default:
+			td.Init = p.parseFoldedInstr(sx.list[cursor])
+		}
+		return td
+	}
+
+	// Sized table form: (table <min> [<max>] <reftype> [<init-expr>])
+	if !sx.list[cursor].IsToken() || sx.list[cursor].tok.name != INT {
+		p.emitError(sx.list[cursor].loc, "table declaration expects minimum size")
+		return td
+	}
+	min, ok := parseU32Token(sx.list[cursor].tok.value)
+	if !ok {
+		p.emitError(sx.list[cursor].loc, "invalid table minimum size")
+		return td
+	}
+	td.Min = min
+	cursor++
+
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == INT {
+		max, ok := parseU32Token(sx.list[cursor].tok.value)
+		if !ok {
+			p.emitError(sx.list[cursor].loc, "invalid table maximum size")
+			return td
+		}
+		td.HasMax = true
+		td.Max = max
+		cursor++
+	}
+
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "table declaration missing reference type")
+		return td
+	}
+	td.RefTy = p.parseType(sx.list[cursor])
+	cursor++
+	if cursor < len(sx.list) {
+		switch sx.list[cursor].HeadKeyword() {
+		case "elem":
+			p.parseElemRefs(td, sx.list[cursor])
+		default:
+			td.Init = p.parseFoldedInstr(sx.list[cursor])
+		}
 	}
 	return td
 }
@@ -315,6 +364,20 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		gd.Id = sx.list[cursor].tok.value
 		cursor++
 	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
+		gd.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		cursor++
+	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
+		modName, fieldName, ok := p.parseImportClause(sx.list[cursor])
+		if !ok {
+			p.emitError(sx.list[cursor].loc, "invalid global import clause")
+			return gd
+		}
+		gd.ImportModule = modName
+		gd.ImportName = fieldName
+		cursor++
+	}
 	if cursor >= len(sx.list) {
 		p.emitError(sx.loc, "global declaration missing type")
 		return gd
@@ -331,6 +394,9 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		gd.Ty = p.parseType(tySx)
 	}
 	cursor++
+	if gd.ImportModule != "" {
+		return gd
+	}
 	if cursor >= len(sx.list) {
 		p.emitError(sx.loc, "global declaration missing initializer")
 		return gd
@@ -488,6 +554,19 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 }
 
 func (p *Parser) parseType(sx *SExpr) Type {
+	if sx.IsList() && sx.HeadKeyword() == "ref" {
+		elems := sx.Children()
+		if len(elems) == 2 && elems[1].IsToken() && (elems[1].tok.name == KEYWORD || elems[1].tok.name == ID) {
+			return &RefType{Nullable: false, HeapType: elems[1].tok.value}
+		}
+		if len(elems) == 3 &&
+			elems[1].IsToken() && elems[1].tok.name == KEYWORD && elems[1].tok.value == "null" &&
+			elems[2].IsToken() && (elems[2].tok.name == KEYWORD || elems[2].tok.name == ID) {
+			return &RefType{Nullable: true, HeapType: elems[2].tok.value}
+		}
+		p.emitError(sx.loc, "invalid ref type")
+		return nil
+	}
 	if sx.IsToken() && sx.tok.name == KEYWORD {
 		name := sx.tok.value
 		if _, ok := basicTypes[name]; ok {
@@ -497,6 +576,36 @@ func (p *Parser) parseType(sx *SExpr) Type {
 
 	p.emitError(sx.loc, "invalid type")
 	return nil
+}
+
+func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
+	if elemClause.HeadKeyword() != "elem" {
+		p.emitError(elemClause.loc, `table declaration expects "(elem ...)"`)
+		return
+	}
+	for i := 1; i < len(elemClause.list); i++ {
+		elem := elemClause.list[i]
+		if !elem.IsToken() || (elem.tok.name != ID && elem.tok.name != INT) {
+			p.emitError(elem.loc, "elem entry must be function ID or INT")
+			continue
+		}
+		td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+	}
+}
+
+func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
+	if sx.HeadKeyword() != "import" {
+		return "", "", false
+	}
+	if len(sx.list) != 3 {
+		return "", "", false
+	}
+	mod := p.matchElement(sx, 1, STRING)
+	field := p.matchElement(sx, 2, STRING)
+	if mod == "" || field == "" {
+		return "", "", false
+	}
+	return mod, field, true
 }
 
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It

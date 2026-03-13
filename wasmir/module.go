@@ -8,6 +8,8 @@ const (
 	ValueTypeI64
 	ValueTypeF32
 	ValueTypeF64
+	ValueTypeFuncRef
+	ValueTypeExternRef
 )
 
 // InstrKind identifies one supported instruction opcode in semantic IR form.
@@ -37,9 +39,12 @@ const (
 	InstrSelect
 	InstrGlobalGet
 	InstrGlobalSet
+	InstrTableGet
 	InstrI32Load
 	InstrI32Store
 	InstrMemoryGrow
+	InstrRefNull
+	InstrRefFunc
 	InstrI32Add
 	InstrI32Sub
 	InstrI32Mul
@@ -108,6 +113,9 @@ type ExternalKind uint8
 
 const (
 	ExternalKindFunction ExternalKind = iota
+	ExternalKindTable
+	ExternalKindMemory
+	ExternalKindGlobal
 )
 
 // Module is the semantic in-memory representation of a WebAssembly module.
@@ -118,6 +126,9 @@ const (
 type Module struct {
 	// Types is the module's function type table.
 	Types []FuncType
+
+	// Imports is the module's import list.
+	Imports []Import
 
 	// Funcs is the list of function definitions in index order.
 	Funcs []Function
@@ -189,10 +200,53 @@ type Export struct {
 	Index uint32
 }
 
+// Import is one module import entry.
+type Import struct {
+	// Module is the import module name.
+	Module string
+
+	// Name is the import field name.
+	Name string
+
+	// Kind is the external kind of this import.
+	Kind ExternalKind
+
+	// TypeIdx is used when Kind==ExternalKindFunction.
+	TypeIdx uint32
+
+	// Table is used when Kind==ExternalKindTable.
+	Table Table
+
+	// Memory is used when Kind==ExternalKindMemory.
+	Memory Memory
+
+	// GlobalType and GlobalMutable are used when Kind==ExternalKindGlobal.
+	GlobalType    ValueType
+	GlobalMutable bool
+}
+
 // Table is one table definition.
 type Table struct {
 	// Min is the minimum table size in elements.
 	Min uint32
+
+	// HasMax reports whether Max is present.
+	HasMax bool
+
+	// Max is the maximum table size in elements when HasMax is true.
+	Max uint32
+
+	// RefType is the table element reference type.
+	RefType ValueType
+
+	// Imported reports whether this table is imported.
+	Imported bool
+
+	// ImportModule is set when Imported is true.
+	ImportModule string
+
+	// ImportName is set when Imported is true.
+	ImportName string
 }
 
 // Memory is one linear memory definition.
@@ -212,8 +266,17 @@ type Global struct {
 	// Mutable reports whether this global can be written by global.set.
 	Mutable bool
 
+	// Imported reports whether this global is imported.
+	Imported bool
+
+	// ImportModule is set when Imported is true.
+	ImportModule string
+
+	// ImportName is set when Imported is true.
+	ImportName string
+
 	// Init is the initializer constant expression for this global.
-	// It is expected to be one of: i32.const, i64.const, f32.const, f64.const.
+	// It is expected to be a valid constant expression instruction.
 	Init Instruction
 }
 
@@ -227,6 +290,13 @@ type ElementSegment struct {
 
 	// FuncIndices are function indices written into the table.
 	FuncIndices []uint32
+
+	// Exprs is the expression form payload for reference-type element segments.
+	// When non-empty, FuncIndices should be empty.
+	Exprs []Instruction
+
+	// RefType is the reference type for Exprs.
+	RefType ValueType
 }
 
 // Instruction is one semantic instruction.
@@ -242,6 +312,9 @@ type Instruction struct {
 
 	// FuncIndex is the function index immediate used by InstrCall.
 	FuncIndex uint32
+
+	// RefType is the reference value type immediate used by InstrRefNull.
+	RefType ValueType
 
 	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
 	CallTypeIndex uint32

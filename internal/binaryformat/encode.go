@@ -3,6 +3,7 @@ package binaryformat
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/wasmir"
@@ -17,6 +18,7 @@ const (
 
 	// Section IDs follow the core binary spec's section id table.
 	sectionTypeID     byte = 1
+	sectionImportID   byte = 2
 	sectionFunctionID byte = 3
 	sectionTableID    byte = 4
 	sectionMemoryID   byte = 5
@@ -36,12 +38,31 @@ const (
 	valueTypeF32Code byte = 0x7d
 	// valueTypeF64Code is the binary encoding of f64.
 	valueTypeF64Code byte = 0x7c
+	// valueTypeExternRefCode is the binary encoding of externref.
+	valueTypeExternRefCode byte = 0x6f
 
 	// exportKindFunctionCode tags a function export entry.
 	exportKindFunctionCode byte = 0x00
+	// exportKindTableCode tags a table export entry.
+	exportKindTableCode byte = 0x01
+	// exportKindMemoryCode tags a memory export entry.
+	exportKindMemoryCode byte = 0x02
+	// exportKindGlobalCode tags a global export entry.
+	exportKindGlobalCode byte = 0x03
+
+	// importKindFunctionCode tags a function import entry.
+	importKindFunctionCode byte = 0x00
+	// importKindTableCode tags a table import entry.
+	importKindTableCode byte = 0x01
+	// importKindMemoryCode tags a memory import entry.
+	importKindMemoryCode byte = 0x02
+	// importKindGlobalCode tags a global import entry.
+	importKindGlobalCode byte = 0x03
 
 	// refTypeFuncRefCode encodes funcref in table types.
 	refTypeFuncRefCode byte = 0x70
+	// refTypeExternRefCode encodes externref in table types.
+	refTypeExternRefCode byte = 0x6f
 
 	// Opcodes for the currently supported instruction subset.
 	opBlockCode         byte = 0x02
@@ -66,6 +87,7 @@ const (
 	opLocalTeeCode      byte = 0x22
 	opGlobalGetCode     byte = 0x23
 	opGlobalSetCode     byte = 0x24
+	opTableGetCode      byte = 0x25
 	opCallCode          byte = 0x10
 	opCallIndirectCode  byte = 0x11
 	opI32LoadCode       byte = 0x28
@@ -131,6 +153,8 @@ const (
 	opF64DivCode        byte = 0xa3
 	opF64MinCode        byte = 0xa4
 	opF64MaxCode        byte = 0xa5
+	opRefNullCode       byte = 0xd0
+	opRefFuncCode       byte = 0xd2
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -160,6 +184,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	typeSection := encodeTypeSection(m.Types, &diags)
 	if len(typeSection) > 0 {
 		writeSection(&out, sectionTypeID, typeSection)
+	}
+
+	importSection := encodeImportSection(m.Imports, &diags)
+	if len(importSection) > 0 {
+		writeSection(&out, sectionImportID, importSection)
 	}
 
 	functionSection := encodeFunctionSection(m.Funcs)
@@ -249,6 +278,59 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	return payload.Bytes()
 }
 
+// encodeImportSection emits section 2 as a vector of imports.
+func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte {
+	if len(imports) == 0 {
+		return nil
+	}
+
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(imports)))
+	for i, imp := range imports {
+		moduleName := []byte(imp.Module)
+		writeULEB128(&payload, uint32(len(moduleName)))
+		payload.Write(moduleName)
+
+		name := []byte(imp.Name)
+		writeULEB128(&payload, uint32(len(name)))
+		payload.Write(name)
+
+		switch imp.Kind {
+		case wasmir.ExternalKindFunction:
+			payload.WriteByte(importKindFunctionCode)
+			writeULEB128(&payload, imp.TypeIdx)
+		case wasmir.ExternalKindTable:
+			payload.WriteByte(importKindTableCode)
+			refCode, ok := refTypeCode(imp.Table.RefType)
+			if !ok {
+				diags.Addf("import[%d]: unsupported table ref type %d", i, imp.Table.RefType)
+				refCode = refTypeFuncRefCode
+			}
+			payload.WriteByte(refCode)
+			writeLimits(&payload, imp.Table.Min, imp.Table.HasMax, imp.Table.Max)
+		case wasmir.ExternalKindMemory:
+			payload.WriteByte(importKindMemoryCode)
+			writeLimits(&payload, imp.Memory.Min, false, 0)
+		case wasmir.ExternalKindGlobal:
+			payload.WriteByte(importKindGlobalCode)
+			vt, ok := valueTypeCode(imp.GlobalType)
+			if !ok {
+				diags.Addf("import[%d]: unsupported global value type %d", i, imp.GlobalType)
+				vt = valueTypeI32Code
+			}
+			payload.WriteByte(vt)
+			if imp.GlobalMutable {
+				payload.WriteByte(globalMutabilityVarCode)
+			} else {
+				payload.WriteByte(globalMutabilityConstCode)
+			}
+		default:
+			diags.Addf("import[%d]: unsupported kind %d", i, imp.Kind)
+		}
+	}
+	return payload.Bytes()
+}
+
 // encodeFunctionSection emits section 3.
 // The payload is a vector of type indices classifying defined functions.
 func encodeFunctionSection(funcs []wasmir.Function) []byte {
@@ -264,19 +346,30 @@ func encodeFunctionSection(funcs []wasmir.Function) []byte {
 	return payload.Bytes()
 }
 
-// encodeTableSection emits section 4 as a vector of table definitions.
-// This encoder currently supports funcref tables with min-only limits.
-func encodeTableSection(tables []wasmir.Table, _ *diag.ErrorList) []byte {
-	if len(tables) == 0 {
+// encodeTableSection emits section 4 as a vector of defined table entries.
+func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
+	definedCount := 0
+	for _, tb := range tables {
+		if !tb.Imported {
+			definedCount++
+		}
+	}
+	if definedCount == 0 {
 		return nil
 	}
 	var payload bytes.Buffer
-	writeULEB128(&payload, uint32(len(tables)))
-	for _, tb := range tables {
-		payload.WriteByte(refTypeFuncRefCode)
-		// limits: flags=0x00 (min only), then min.
-		payload.WriteByte(0x00)
-		writeULEB128(&payload, tb.Min)
+	writeULEB128(&payload, uint32(definedCount))
+	for i, tb := range tables {
+		if tb.Imported {
+			continue
+		}
+		refCode, ok := refTypeCode(tb.RefType)
+		if !ok {
+			diags.Addf("table[%d]: unsupported ref type %d", i, tb.RefType)
+			refCode = refTypeFuncRefCode
+		}
+		payload.WriteByte(refCode)
+		writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
 	}
 	return payload.Bytes()
 }
@@ -290,21 +383,28 @@ func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(len(memories)))
 	for _, mem := range memories {
-		// limits: flags=0x00 (min only), then min.
-		payload.WriteByte(0x00)
-		writeULEB128(&payload, mem.Min)
+		writeLimits(&payload, mem.Min, false, 0)
 	}
 	return payload.Bytes()
 }
 
 // encodeGlobalSection emits section 6 as a vector of global definitions.
 func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte {
-	if len(globals) == 0 {
+	definedCount := 0
+	for _, g := range globals {
+		if !g.Imported {
+			definedCount++
+		}
+	}
+	if definedCount == 0 {
 		return nil
 	}
 	var payload bytes.Buffer
-	writeULEB128(&payload, uint32(len(globals)))
+	writeULEB128(&payload, uint32(definedCount))
 	for i, g := range globals {
+		if g.Imported {
+			continue
+		}
 		vt, ok := valueTypeCode(g.Type)
 		if !ok {
 			diags.Addf("global[%d]: unsupported value type %d", i, g.Type)
@@ -316,13 +416,12 @@ func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte 
 		} else {
 			payload.WriteByte(globalMutabilityConstCode)
 		}
-		encodeConstExpr(&payload, i, g.Init, diags)
+		encodeConstExpr(&payload, fmt.Sprintf("global[%d]", i), g.Init, diags)
 	}
 	return payload.Bytes()
 }
 
 // encodeElementSection emits section 9 as active element segments.
-// This encoder currently supports only active segments with i32.const offsets.
 func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorList) []byte {
 	if len(elements) == 0 {
 		return nil
@@ -330,14 +429,36 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(len(elements)))
 	for i, elem := range elements {
-		if elem.TableIndex != 0 {
-			diags.Addf("element[%d]: only table index 0 is supported", i)
+		if len(elem.Exprs) > 0 {
+			// flags=0x06 => active with explicit table index and ref-type exprs.
+			payload.WriteByte(0x06)
+			writeULEB128(&payload, elem.TableIndex)
+			payload.WriteByte(opI32ConstCode)
+			writeSLEB128(&payload, int64(elem.OffsetI32))
+			payload.WriteByte(opEndCode)
+
+			refCode, ok := refTypeCode(elem.RefType)
+			if !ok {
+				diags.Addf("element[%d]: unsupported expr ref type %d", i, elem.RefType)
+				refCode = refTypeFuncRefCode
+			}
+			payload.WriteByte(refCode)
+
+			writeULEB128(&payload, uint32(len(elem.Exprs)))
+			for j, expr := range elem.Exprs {
+				encodeConstExpr(&payload, fmt.Sprintf("element[%d] expr[%d]", i, j), expr, diags)
+			}
+			continue
 		}
-		// flags=0x00 => active segment for table 0 with const offset expression.
-		payload.WriteByte(0x00)
+
+		// flags=0x02 => active with explicit table index and function indices.
+		payload.WriteByte(0x02)
+		writeULEB128(&payload, elem.TableIndex)
 		payload.WriteByte(opI32ConstCode)
 		writeSLEB128(&payload, int64(elem.OffsetI32))
 		payload.WriteByte(opEndCode)
+		// elemkind 0x00 => funcref.
+		payload.WriteByte(0x00)
 		writeULEB128(&payload, uint32(len(elem.FuncIndices)))
 		for _, idx := range elem.FuncIndices {
 			writeULEB128(&payload, idx)
@@ -480,6 +601,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrGlobalSet:
 		out.WriteByte(opGlobalSetCode)
 		writeULEB128(out, instr.GlobalIndex)
+	case wasmir.InstrTableGet:
+		out.WriteByte(opTableGetCode)
+		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrCall:
 		out.WriteByte(opCallCode)
 		writeULEB128(out, instr.FuncIndex)
@@ -626,6 +750,17 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64TruncCode)
 	case wasmir.InstrF64Nearest:
 		out.WriteByte(opF64NearestCode)
+	case wasmir.InstrRefNull:
+		out.WriteByte(opRefNullCode)
+		refCode, ok := refTypeCode(instr.RefType)
+		if !ok {
+			diags.Addf("func[%d] instruction[%d]: unsupported ref.null type %d", funcIdx, instrIdx, instr.RefType)
+			refCode = refTypeFuncRefCode
+		}
+		out.WriteByte(refCode)
+	case wasmir.InstrRefFunc:
+		out.WriteByte(opRefFuncCode)
+		writeULEB128(out, instr.FuncIndex)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:
@@ -633,8 +768,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	}
 }
 
-// encodeConstExpr emits a constant initializer expression terminated by end.
-func encodeConstExpr(out *bytes.Buffer, globalIdx int, init wasmir.Instruction, diags *diag.ErrorList) {
+// encodeConstExpr emits a constant expression terminated by end.
+func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
 	switch init.Kind {
 	case wasmir.InstrI32Const:
 		out.WriteByte(opI32ConstCode)
@@ -648,8 +783,22 @@ func encodeConstExpr(out *bytes.Buffer, globalIdx int, init wasmir.Instruction, 
 	case wasmir.InstrF64Const:
 		out.WriteByte(opF64ConstCode)
 		writeU64LE(out, init.F64Const)
+	case wasmir.InstrRefNull:
+		out.WriteByte(opRefNullCode)
+		refCode, ok := refTypeCode(init.RefType)
+		if !ok {
+			diags.Addf("%s: unsupported ref.null type %d", where, init.RefType)
+			refCode = refTypeFuncRefCode
+		}
+		out.WriteByte(refCode)
+	case wasmir.InstrRefFunc:
+		out.WriteByte(opRefFuncCode)
+		writeULEB128(out, init.FuncIndex)
+	case wasmir.InstrGlobalGet:
+		out.WriteByte(opGlobalGetCode)
+		writeULEB128(out, init.GlobalIndex)
 	default:
-		diags.Addf("global[%d]: unsupported initializer instruction kind %d", globalIdx, init.Kind)
+		diags.Addf("%s: unsupported initializer instruction kind %d", where, init.Kind)
 		out.WriteByte(opI32ConstCode)
 		writeSLEB128(out, 0)
 	}
@@ -683,6 +832,10 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return valueTypeF32Code, true
 	case wasmir.ValueTypeF64:
 		return valueTypeF64Code, true
+	case wasmir.ValueTypeFuncRef:
+		return refTypeFuncRefCode, true
+	case wasmir.ValueTypeExternRef:
+		return valueTypeExternRefCode, true
 	default:
 		return 0, false
 	}
@@ -692,9 +845,37 @@ func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
 	switch kind {
 	case wasmir.ExternalKindFunction:
 		return exportKindFunctionCode, true
+	case wasmir.ExternalKindTable:
+		return exportKindTableCode, true
+	case wasmir.ExternalKindMemory:
+		return exportKindMemoryCode, true
+	case wasmir.ExternalKindGlobal:
+		return exportKindGlobalCode, true
 	default:
 		return 0, false
 	}
+}
+
+func refTypeCode(vt wasmir.ValueType) (byte, bool) {
+	switch vt {
+	case wasmir.ValueTypeFuncRef:
+		return refTypeFuncRefCode, true
+	case wasmir.ValueTypeExternRef:
+		return refTypeExternRefCode, true
+	default:
+		return 0, false
+	}
+}
+
+func writeLimits(out *bytes.Buffer, min uint32, hasMax bool, max uint32) {
+	if hasMax {
+		out.WriteByte(0x01)
+		writeULEB128(out, min)
+		writeULEB128(out, max)
+		return
+	}
+	out.WriteByte(0x00)
+	writeULEB128(out, min)
 }
 
 // writeULEB128 writes v as an unsigned LEB128-encoded integer.

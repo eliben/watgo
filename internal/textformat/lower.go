@@ -32,6 +32,9 @@ type moduleLowerer struct {
 
 	// globalsByName maps global identifiers to their indices in out.Globals.
 	globalsByName map[string]uint32
+
+	// tablesByName maps table identifiers to their indices in out.Tables.
+	tablesByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -110,6 +113,7 @@ func newModuleLowerer() *moduleLowerer {
 		funcsByName:   map[string]uint32{},
 		typesByName:   map[string]uint32{},
 		globalsByName: map[string]uint32{},
+		tablesByName:  map[string]uint32{},
 	}
 }
 
@@ -118,9 +122,9 @@ func newModuleLowerer() *moduleLowerer {
 func (l *moduleLowerer) lowerModule(astm *Module) {
 	l.collectTypeDecls(astm)
 	l.collectFunctionNames(astm)
+	l.collectGlobalDecls(astm)
 	l.collectTableDecls(astm)
 	l.collectMemoryDecls(astm)
-	l.collectGlobalDecls(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
 			l.diags.Addf("func[%d]: nil function", i)
@@ -156,34 +160,99 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 	}
 }
 
-// collectTableDecls lowers table declarations and their inline element lists.
+// collectTableDecls lowers table declarations and inline table initializers.
 func (l *moduleLowerer) collectTableDecls(astm *Module) {
 	for i, td := range astm.Tables {
 		if td == nil {
 			l.diags.Addf("table[%d]: nil table declaration", i)
 			continue
 		}
-		tableIdx := uint32(len(l.out.Tables))
-		min := uint32(len(td.ElemRefs))
-		l.out.Tables = append(l.out.Tables, wasmir.Table{Min: min})
-
-		if len(td.ElemRefs) == 0 {
+		refType, nullable, ok := lowerRefTypeInfo(td.RefTy)
+		if !ok {
+			l.diags.Addf("table[%d]: unsupported reference type %q", i, td.RefTy)
 			continue
 		}
-		seg := wasmir.ElementSegment{
-			TableIndex:  tableIdx,
-			OffsetI32:   0,
-			FuncIndices: make([]uint32, 0, len(td.ElemRefs)),
+
+		min := td.Min
+		if len(td.ElemRefs) > 0 && min < uint32(len(td.ElemRefs)) {
+			min = uint32(len(td.ElemRefs))
 		}
-		for _, ref := range td.ElemRefs {
-			idx, ok := l.resolveFunctionRef(ref)
+		if td.HasMax && td.Max < min {
+			l.diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
+			continue
+		}
+
+		tb := wasmir.Table{
+			Min:     min,
+			HasMax:  td.HasMax,
+			Max:     td.Max,
+			RefType: refType,
+		}
+		if td.ImportModule != "" {
+			tb.Imported = true
+			tb.ImportModule = td.ImportModule
+			tb.ImportName = td.ImportName
+			l.out.Imports = append(l.out.Imports, wasmir.Import{
+				Module: td.ImportModule,
+				Name:   td.ImportName,
+				Kind:   wasmir.ExternalKindTable,
+				Table:  tb,
+			})
+		}
+		tableIdx := uint32(len(l.out.Tables))
+		l.out.Tables = append(l.out.Tables, tb)
+
+		if td.Id != "" {
+			if prev, exists := l.tablesByName[td.Id]; exists {
+				l.diags.Addf("table[%d] %s: duplicate table id (first seen at table[%d])", i, td.Id, prev)
+			} else {
+				l.tablesByName[td.Id] = tableIdx
+			}
+		}
+
+		if len(td.ElemRefs) > 0 {
+			seg := wasmir.ElementSegment{
+				TableIndex:  tableIdx,
+				OffsetI32:   0,
+				FuncIndices: make([]uint32, 0, len(td.ElemRefs)),
+			}
+			for _, ref := range td.ElemRefs {
+				idx, ok := l.resolveFunctionRef(ref)
+				if !ok {
+					l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
+					continue
+				}
+				seg.FuncIndices = append(seg.FuncIndices, idx)
+			}
+			l.out.Elements = append(l.out.Elements, seg)
+		}
+
+		if td.Init != nil {
+			initInstr, initType, ok := lowerConstInstr(td.Init, l.funcsByName, l.globalsByName, l.out.Globals)
 			if !ok {
-				l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
+				l.diags.Addf("table[%d]: unsupported initializer", i)
 				continue
 			}
-			seg.FuncIndices = append(seg.FuncIndices, idx)
+			if initType != refType {
+				l.diags.Addf("table[%d]: type mismatch", i)
+				continue
+			}
+			if !nullable && initInstr.Kind == wasmir.InstrRefNull {
+				l.diags.Addf("table[%d]: type mismatch", i)
+				continue
+			}
+			seg := wasmir.ElementSegment{
+				TableIndex: tableIdx,
+				OffsetI32:  0,
+				RefType:    refType,
+			}
+			for j := uint32(0); j < min; j++ {
+				seg.Exprs = append(seg.Exprs, initInstr)
+			}
+			l.out.Elements = append(l.out.Elements, seg)
+		} else if !nullable {
+			l.diags.Addf("table[%d]: type mismatch", i)
 		}
-		l.out.Elements = append(l.out.Elements, seg)
 	}
 }
 
@@ -210,26 +279,52 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 			l.diags.Addf("global[%d]: unsupported value type %q", i, gd.Ty)
 			continue
 		}
-		init, ok := lowerGlobalInit(gd.Init)
-		if !ok {
-			l.diags.Addf("global[%d]: unsupported initializer", i)
-			continue
-		}
 		globalIdx := uint32(len(l.out.Globals))
-		l.out.Globals = append(l.out.Globals, wasmir.Global{
+		g := wasmir.Global{
 			Name:    gd.Id,
 			Type:    vt,
 			Mutable: gd.Mutable,
-			Init:    init,
-		})
+		}
+		if gd.ImportModule != "" {
+			g.Imported = true
+			g.ImportModule = gd.ImportModule
+			g.ImportName = gd.ImportName
+			l.out.Imports = append(l.out.Imports, wasmir.Import{
+				Module:        gd.ImportModule,
+				Name:          gd.ImportName,
+				Kind:          wasmir.ExternalKindGlobal,
+				GlobalType:    vt,
+				GlobalMutable: gd.Mutable,
+			})
+		} else {
+			init, initType, ok := lowerConstInstr(gd.Init, l.funcsByName, l.globalsByName, l.out.Globals)
+			if !ok {
+				l.diags.Addf("global[%d]: unsupported initializer", i)
+				continue
+			}
+			if initType != vt {
+				l.diags.Addf("global[%d]: initializer type mismatch", i)
+				continue
+			}
+			g.Init = init
+		}
+		l.out.Globals = append(l.out.Globals, g)
 		if gd.Id == "" {
-			continue
+			goto exportGlobal
 		}
 		if prev, exists := l.globalsByName[gd.Id]; exists {
 			l.diags.Addf("global[%d] %s: duplicate global id (first seen at global[%d])", i, gd.Id, prev)
-			continue
+		} else {
+			l.globalsByName[gd.Id] = globalIdx
 		}
-		l.globalsByName[gd.Id] = globalIdx
+	exportGlobal:
+		if gd.Export != "" {
+			l.out.Exports = append(l.out.Exports, wasmir.Export{
+				Name:  gd.Export,
+				Kind:  wasmir.ExternalKindGlobal,
+				Index: globalIdx,
+			})
+		}
 	}
 }
 
@@ -908,6 +1003,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
 	"global.get":       {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
 	"global.set":       {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
+	"table.get":        {kind: wasmir.InstrTableGet, operandCount: 1, decode: decodeTableGetOperands},
 	"i32.load":         {kind: wasmir.InstrI32Load, operandCount: 0},
 	"i32.store":        {kind: wasmir.InstrI32Store, operandCount: 0},
 	"memory.grow":      {kind: wasmir.InstrMemoryGrow, operandCount: 0},
@@ -920,6 +1016,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"i64.const":        {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
 	"f32.const":        {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
 	"f64.const":        {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
+	"ref.null":         {kind: wasmir.InstrRefNull, operandCount: 1, decode: decodeRefNullOperands},
+	"ref.func":         {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
 }
 
 // lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
@@ -1102,6 +1200,36 @@ func decodeGlobalSetOperands(fl *functionLowerer, ins *wasmir.Instruction, opera
 	return true
 }
 
+// decodeTableGetOperands decodes operands into ins.TableIndex for table.get.
+func decodeTableGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	tableIndex, ok := lowerTableIndexOperand(operands[0], fl.mod.tablesByName)
+	if !ok {
+		return false
+	}
+	ins.TableIndex = tableIndex
+	return true
+}
+
+// decodeRefNullOperands decodes operands into ins.RefType for ref.null.
+func decodeRefNullOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	refType, ok := lowerRefHeapTypeOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.RefType = refType
+	return true
+}
+
+// decodeRefFuncOperands decodes operands into ins.FuncIndex for ref.func.
+func decodeRefFuncOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	funcIndex, ok := lowerFuncIndexOperand(operands[0], fl.mod.funcsByName)
+	if !ok {
+		return false
+	}
+	ins.FuncIndex = funcIndex
+	return true
+}
+
 // decodeI32ConstOperands decodes operands into ins.I32Const for i32.const.
 func decodeI32ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	imm, ok := lowerI32ConstOperand(operands[0])
@@ -1225,55 +1353,78 @@ func lowerF64ConstOperand(op Operand) (uint64, bool) {
 	}
 }
 
-// lowerGlobalInit lowers a global initializer expression to a semantic const
-// instruction.
-func lowerGlobalInit(init Instruction) (wasmir.Instruction, bool) {
+// lowerConstInstr lowers a constant expression instruction and returns its
+// semantic form together with the resulting value type.
+func lowerConstInstr(
+	init Instruction,
+	funcsByName map[string]uint32,
+	globalsByName map[string]uint32,
+	globals []wasmir.Global,
+) (wasmir.Instruction, wasmir.ValueType, bool) {
 	var name string
 	var op Operand
 	switch in := init.(type) {
 	case *PlainInstr:
 		if len(in.Operands) != 1 {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
 		name = in.Name
 		op = in.Operands[0]
 	case *FoldedInstr:
 		if len(in.Args) != 1 || in.Args[0].Instr != nil || in.Args[0].Operand == nil {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
 		name = in.Name
 		op = in.Args[0].Operand
 	default:
-		return wasmir.Instruction{}, false
+		return wasmir.Instruction{}, 0, false
 	}
 
 	switch name {
 	case "i32.const":
 		imm, ok := lowerI32ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm}, true
+		return wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm}, wasmir.ValueTypeI32, true
 	case "i64.const":
 		imm, ok := lowerI64ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm}, true
+		return wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm}, wasmir.ValueTypeI64, true
 	case "f32.const":
 		imm, ok := lowerF32ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm}, true
+		return wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm}, wasmir.ValueTypeF32, true
 	case "f64.const":
 		imm, ok := lowerF64ConstOperand(op)
 		if !ok {
-			return wasmir.Instruction{}, false
+			return wasmir.Instruction{}, 0, false
 		}
-		return wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm}, true
+		return wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm}, wasmir.ValueTypeF64, true
+	case "ref.null":
+		vt, ok := lowerRefHeapTypeOperand(op)
+		if !ok {
+			return wasmir.Instruction{}, 0, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: vt}, vt, true
+	case "ref.func":
+		funcIdx, ok := lowerFuncIndexOperand(op, funcsByName)
+		if !ok {
+			return wasmir.Instruction{}, 0, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx}, wasmir.ValueTypeFuncRef, true
+	case "global.get":
+		globalIdx, ok := lowerGlobalIndexOperand(op, globalsByName)
+		if !ok || int(globalIdx) >= len(globals) {
+			return wasmir.Instruction{}, 0, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx}, globals[globalIdx].Type, true
 	default:
-		return wasmir.Instruction{}, false
+		return wasmir.Instruction{}, 0, false
 	}
 }
 
@@ -1314,6 +1465,34 @@ func lowerGlobalIndexOperand(op Operand, globalsByName map[string]uint32) (uint3
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerTableIndexOperand resolves op as a table index using tablesByName.
+// It returns the resolved index and true on success, or 0/false otherwise.
+func lowerTableIndexOperand(op Operand, tablesByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := tablesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerRefHeapTypeOperand lowers a ref heaptype token operand used by
+// instructions such as ref.null.
+func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
+	switch o := op.(type) {
+	case *KeywordOperand:
+		return lowerRefHeapTypeName(o.Value)
+	case *IdOperand:
+		// Typed function references are lowered to funcref in this subset.
+		return wasmir.ValueTypeFuncRef, true
 	default:
 		return 0, false
 	}
@@ -1389,21 +1568,67 @@ func parseU32Literal(s string) (uint32, bool) {
 // It returns the lowered type and true on success, or 0/false if ty is
 // unsupported.
 func lowerValueType(ty Type) (wasmir.ValueType, bool) {
-	bt, ok := ty.(*BasicType)
-	if !ok {
+	switch t := ty.(type) {
+	case *BasicType:
+		switch t.Name {
+		case "i32":
+			return wasmir.ValueTypeI32, true
+		case "i64":
+			return wasmir.ValueTypeI64, true
+		case "f32":
+			return wasmir.ValueTypeF32, true
+		case "f64":
+			return wasmir.ValueTypeF64, true
+		case "funcref":
+			return wasmir.ValueTypeFuncRef, true
+		case "externref":
+			return wasmir.ValueTypeExternRef, true
+		default:
+			return 0, false
+		}
+	case *RefType:
+		vt, _, ok := lowerRefTypeInfo(t)
+		return vt, ok
+	default:
 		return 0, false
 	}
+}
 
-	switch bt.Name {
-	case "i32":
-		return wasmir.ValueTypeI32, true
-	case "i64":
-		return wasmir.ValueTypeI64, true
-	case "f32":
-		return wasmir.ValueTypeF32, true
-	case "f64":
-		return wasmir.ValueTypeF64, true
+// lowerRefTypeInfo lowers a text ref type into semantic reference type and
+// nullability.
+func lowerRefTypeInfo(ty Type) (wasmir.ValueType, bool, bool) {
+	switch t := ty.(type) {
+	case *BasicType:
+		switch t.Name {
+		case "funcref":
+			return wasmir.ValueTypeFuncRef, true, true
+		case "externref":
+			return wasmir.ValueTypeExternRef, true, true
+		default:
+			return 0, false, false
+		}
+	case *RefType:
+		vt, ok := lowerRefHeapTypeName(t.HeapType)
+		if !ok {
+			return 0, false, false
+		}
+		return vt, t.Nullable, true
 	default:
+		return 0, false, false
+	}
+}
+
+func lowerRefHeapTypeName(name string) (wasmir.ValueType, bool) {
+	switch name {
+	case "func":
+		return wasmir.ValueTypeFuncRef, true
+	case "extern":
+		return wasmir.ValueTypeExternRef, true
+	default:
+		// Typed function references are lowered to funcref in this subset.
+		if strings.HasPrefix(name, "$") {
+			return wasmir.ValueTypeFuncRef, true
+		}
 		return 0, false
 	}
 }
