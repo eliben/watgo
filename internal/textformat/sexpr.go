@@ -22,6 +22,29 @@ func (sx *SExpr) IsList() bool {
 	return sx.list != nil
 }
 
+// IsTokenKind reports whether sx is a token node with the given token kind.
+func (sx *SExpr) IsTokenKind(kind tokenName) bool {
+	return sx != nil && sx.IsToken() && sx.tok.name == kind
+}
+
+// IsTokenAny reports whether sx is a token node with any of the given kinds.
+func (sx *SExpr) IsTokenAny(kinds ...tokenName) bool {
+	if sx == nil || !sx.IsToken() {
+		return false
+	}
+	for _, k := range kinds {
+		if sx.tok.name == k {
+			return true
+		}
+	}
+	return false
+}
+
+// IsKeywordToken reports whether sx is a KEYWORD token with the given value.
+func (sx *SExpr) IsKeywordToken(value string) bool {
+	return sx != nil && sx.IsToken() && sx.tok.name == KEYWORD && sx.tok.value == value
+}
+
 // HeadKeyword returns the keyword value at the head of the SExpr; for SExprs
 // of the form (head foo bar ...), where `head` is a KEYWORD token, this returns
 // the value of the token. For other sexprs it returns ""

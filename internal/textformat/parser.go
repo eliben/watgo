@@ -145,13 +145,12 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	m := &Module{loc: sx.loc}
 	// Optional module name
 	cursor := 1
-	if len(sx.list) > 1 && sx.list[cursor].tok.name == ID {
+	if len(sx.list) > 1 && sx.list[cursor].IsTokenKind(ID) {
 		m.Id = sx.list[cursor].tok.value
 		cursor++
 	}
 	// .wast script commands may include "(module definition ...)".
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
-		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "definition" {
+	if cursor < len(sx.list) && sx.list[cursor].IsKeywordToken("definition") {
 		cursor++
 	}
 
@@ -296,7 +295,7 @@ func (p *Parser) parseFuncImportDesc(sx *SExpr) *Function {
 func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
 	gd := &GlobalDecl{loc: sx.loc}
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		gd.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -332,7 +331,7 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 
 	// Optional function name
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		f.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -394,7 +393,7 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 	td := &TypeDecl{loc: sx.loc}
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		td.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -415,7 +414,7 @@ func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	td := &TableDecl{loc: sx.loc}
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		td.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -439,7 +438,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	}
 
 	// Legacy shorthand: (table funcref (elem ...))
-	if sx.list[cursor].IsToken() && sx.list[cursor].tok.name == KEYWORD {
+	if sx.list[cursor].IsTokenKind(KEYWORD) {
 		td.RefTy = p.parseType(sx.list[cursor])
 		cursor++
 		if cursor >= len(sx.list) {
@@ -455,7 +454,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	}
 
 	// Sized table form: (table <min> [<max>] <reftype> [<init-expr>])
-	if !sx.list[cursor].IsToken() || sx.list[cursor].tok.name != INT {
+	if !sx.list[cursor].IsTokenKind(INT) {
 		p.emitError(sx.list[cursor].loc, "table declaration expects minimum size")
 		return td
 	}
@@ -467,7 +466,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	td.Min = min
 	cursor++
 
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == INT {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(INT) {
 		max, ok := parseU32Token(sx.list[cursor].tok.value)
 		if !ok {
 			p.emitError(sx.list[cursor].loc, "invalid table maximum size")
@@ -506,7 +505,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	md := &MemoryDecl{loc: sx.loc}
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		md.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -535,7 +534,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	}
 
 	minTok := sx.list[cursor]
-	if !minTok.IsToken() || minTok.tok.name != INT {
+	if !minTok.IsTokenKind(INT) {
 		p.emitError(minTok.loc, "memory minimum must be INT")
 		return md
 	}
@@ -547,7 +546,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	md.Min = min
 	cursor++
 
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == INT {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(INT) {
 		max, ok := parseU32Token(sx.list[cursor].tok.value)
 		if !ok {
 			p.emitError(sx.list[cursor].loc, "invalid memory maximum size")
@@ -576,7 +575,7 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 			p.emitError(memClause.loc, "data memory clause expects one memory reference")
 			return dd
 		}
-		if !memClause.list[1].IsToken() || (memClause.list[1].tok.name != ID && memClause.list[1].tok.name != INT) {
+		if !memClause.list[1].IsTokenAny(ID, INT) {
 			p.emitError(memClause.list[1].loc, "data memory reference must be ID or INT")
 			return dd
 		}
@@ -611,7 +610,7 @@ func (p *Parser) parseDataStrings(dataClause *SExpr) []string {
 func (p *Parser) parseDataStringsFrom(sx *SExpr, start int) []string {
 	var out []string
 	for i := start; i < len(sx.list); i++ {
-		if !sx.list[i].IsToken() || sx.list[i].tok.name != STRING {
+		if !sx.list[i].IsTokenKind(STRING) {
 			p.emitError(sx.list[i].loc, "data string must be STRING")
 			continue
 		}
@@ -628,7 +627,7 @@ func (p *Parser) parseDataStringsFrom(sx *SExpr, start int) []string {
 func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 	gd := &GlobalDecl{loc: sx.loc}
 	cursor := 1
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		gd.Id = sx.list[cursor].tok.value
 		cursor++
 	}
@@ -715,7 +714,7 @@ func (p *Parser) parseTypeUseClause(sx *SExpr) string {
 		return ""
 	}
 	ref := sx.list[1]
-	if !ref.IsToken() || (ref.tok.name != ID && ref.tok.name != INT) {
+	if !ref.IsTokenAny(ID, INT) {
 		p.emitError(ref.loc, "type use expects ID or INT")
 		return ""
 	}
@@ -734,7 +733,7 @@ func (p *Parser) parseParamDecl(sx *SExpr) []*ParamDecl {
 	if len(sx.list) == 1 {
 		return nil
 	}
-	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
+	if len(sx.list) == 3 && sx.list[1].IsTokenKind(ID) {
 		return []*ParamDecl{{
 			Id:  p.matchElement(sx, 1, ID),
 			Ty:  p.parseType(sx.list[2]),
@@ -798,7 +797,7 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 	if len(sx.list) == 1 {
 		return nil
 	}
-	if len(sx.list) == 3 && sx.list[1].IsToken() && sx.list[1].tok.name == ID {
+	if len(sx.list) == 3 && sx.list[1].IsTokenKind(ID) {
 		return []*LocalDecl{{
 			Id:  p.matchElement(sx, 1, ID),
 			Ty:  p.parseType(sx.list[2]),
@@ -826,18 +825,18 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 func (p *Parser) parseType(sx *SExpr) Type {
 	if sx.IsList() && sx.HeadKeyword() == "ref" {
 		elems := sx.Children()
-		if len(elems) == 2 && elems[1].IsToken() && (elems[1].tok.name == KEYWORD || elems[1].tok.name == ID) {
+		if len(elems) == 2 && elems[1].IsTokenAny(KEYWORD, ID) {
 			return &RefType{Nullable: false, HeapType: elems[1].tok.value}
 		}
 		if len(elems) == 3 &&
-			elems[1].IsToken() && elems[1].tok.name == KEYWORD && elems[1].tok.value == "null" &&
-			elems[2].IsToken() && (elems[2].tok.name == KEYWORD || elems[2].tok.name == ID) {
+			elems[1].IsKeywordToken("null") &&
+			elems[2].IsTokenAny(KEYWORD, ID) {
 			return &RefType{Nullable: true, HeapType: elems[2].tok.value}
 		}
 		p.emitError(sx.loc, "invalid ref type")
 		return nil
 	}
-	if sx.IsToken() && sx.tok.name == KEYWORD {
+	if sx.IsTokenKind(KEYWORD) {
 		name := sx.tok.value
 		if _, ok := basicTypes[name]; ok {
 			return &BasicType{Name: name}
@@ -859,11 +858,10 @@ func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
 	for i := 1; i < len(elemClause.list); i++ {
 		elem := elemClause.list[i]
 		switch {
-		case elem.IsToken() &&
-			elem.tok.name == KEYWORD &&
+		case elem.IsTokenKind(KEYWORD) &&
 			(elem.tok.value == "func" || elem.tok.value == "funcref" || elem.tok.value == "externref"):
 			// Grammar markers in elem payload; they don't represent entries.
-		case elem.IsToken() && (elem.tok.name == ID || elem.tok.name == INT):
+		case elem.IsTokenAny(ID, INT):
 			td.ElemRefs = append(td.ElemRefs, elem.tok.value)
 		case elem.IsToken():
 			p.emitError(elem.loc, "elem entry must be function ID/INT or reference expression")
@@ -899,13 +897,12 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	ed := &ElemDecl{Mode: ElemModeActive, loc: sx.loc}
 	cursor := 1
 
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		ed.Id = sx.list[cursor].tok.value
 		cursor++
 	}
 
-	if cursor < len(sx.list) && sx.list[cursor].IsToken() &&
-		sx.list[cursor].tok.name == KEYWORD && sx.list[cursor].tok.value == "declare" {
+	if cursor < len(sx.list) && sx.list[cursor].IsKeywordToken("declare") {
 		ed.Mode = ElemModeDeclarative
 		cursor++
 	}
@@ -916,7 +913,7 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 			p.emitError(tableClause.loc, "elem table clause expects one table reference")
 			return ed
 		}
-		if !tableClause.list[1].IsToken() || (tableClause.list[1].tok.name != ID && tableClause.list[1].tok.name != INT) {
+		if !tableClause.list[1].IsTokenAny(ID, INT) {
 			p.emitError(tableClause.list[1].loc, "elem table reference must be ID or INT")
 			return ed
 		}
@@ -952,9 +949,9 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 
 	if cursor < len(sx.list) {
 		elem := sx.list[cursor]
-		if elem.IsToken() && elem.tok.name == KEYWORD && elem.tok.value == "func" {
+		if elem.IsKeywordToken("func") {
 			cursor++
-		} else if (elem.IsToken() && elem.tok.name == KEYWORD &&
+		} else if (elem.IsTokenKind(KEYWORD) &&
 			(elem.tok.value == "funcref" || elem.tok.value == "externref")) ||
 			(elem.IsList() && elem.HeadKeyword() == "ref") {
 			ed.RefTy = p.parseType(elem)
@@ -964,7 +961,7 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 
 	for ; cursor < len(sx.list); cursor++ {
 		ref := sx.list[cursor]
-		if ref.IsToken() && (ref.tok.name == ID || ref.tok.name == INT) {
+		if ref.IsTokenAny(ID, INT) {
 			ed.FuncRefs = append(ed.FuncRefs, ref.tok.value)
 			continue
 		}
@@ -1019,7 +1016,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 			cursor++
 			continue
 		}
-		if elem.tok.name != KEYWORD {
+		if !elem.IsTokenKind(KEYWORD) {
 			p.emitError(elem.loc, fmt.Sprintf("expected instruction keyword, found %s", elem.tok.name))
 			cursor++
 			continue
@@ -1095,7 +1092,7 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 		return nil
 	}
 	head := sx.list[0]
-	if !head.IsToken() || head.tok.name != KEYWORD {
+	if !head.IsTokenKind(KEYWORD) {
 		p.emitError(head.loc, "expected folded instruction keyword")
 		return nil
 	}
