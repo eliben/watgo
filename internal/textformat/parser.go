@@ -738,27 +738,20 @@ func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
 	}
 	for i := 1; i < len(elemClause.list); i++ {
 		elem := elemClause.list[i]
-		if elem.IsToken() {
-			if elem.tok.name == KEYWORD && elem.tok.value == "func" {
-				continue
-			}
-			if elem.tok.name == ID || elem.tok.name == INT {
-				td.ElemRefs = append(td.ElemRefs, elem.tok.value)
-				continue
-			}
-			if elem.tok.name == KEYWORD {
-				if elem.tok.value == "funcref" || elem.tok.value == "externref" {
-					continue
-				}
-			}
+		switch {
+		case elem.IsToken() &&
+			elem.tok.name == KEYWORD &&
+			(elem.tok.value == "func" || elem.tok.value == "funcref" || elem.tok.value == "externref"):
+			// Grammar markers in elem payload; they don't represent entries.
+		case elem.IsToken() && (elem.tok.name == ID || elem.tok.name == INT):
+			td.ElemRefs = append(td.ElemRefs, elem.tok.value)
+		case elem.IsToken():
 			p.emitError(elem.loc, "elem entry must be function ID/INT or reference expression")
-			continue
-		}
-		if elem.HeadKeyword() == "item" {
+		case elem.HeadKeyword() == "item":
 			td.ElemExprs = append(td.ElemExprs, p.parseElemItemExprs(elem)...)
-			continue
+		default:
+			td.ElemExprs = append(td.ElemExprs, p.parseFoldedInstr(elem))
 		}
-		td.ElemExprs = append(td.ElemExprs, p.parseFoldedInstr(elem))
 	}
 }
 
