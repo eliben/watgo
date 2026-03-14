@@ -845,6 +845,10 @@ func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
 			fl.diagf("", "nil param declaration")
 			continue
 		}
+		if usesNamedRefHeapType(pd.Ty) {
+			fl.diagf(pd.loc.String(), "unsupported param type %q", pd.Ty)
+			continue
+		}
 		vt, ok := lowerValueType(pd.Ty)
 		if !ok {
 			fl.diagf(pd.loc.String(), "unsupported param type %q", pd.Ty)
@@ -871,6 +875,10 @@ func (fl *functionLowerer) lowerResults(results []*ResultDecl) {
 			fl.diagf("", "nil result declaration")
 			continue
 		}
+		if usesNamedRefHeapType(rd.Ty) {
+			fl.diagf(rd.loc.String(), "unsupported result type %q", rd.Ty)
+			continue
+		}
 		vt, ok := lowerValueType(rd.Ty)
 		if !ok {
 			fl.diagf(rd.loc.String(), "unsupported result type %q", rd.Ty)
@@ -885,6 +893,10 @@ func (fl *functionLowerer) lowerLocals() {
 	for _, ld := range fl.fn.Locals {
 		if ld == nil {
 			fl.diagf("", "nil local declaration")
+			continue
+		}
+		if usesNamedRefHeapType(ld.Ty) {
+			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)
 			continue
 		}
 		if _, nullable, ok := lowerRefTypeInfo(ld.Ty); ok && !nullable {
@@ -2423,7 +2435,7 @@ func lowerRefHeapTypeName(name string) (wasmir.ValueType, bool) {
 	case "extern":
 		return wasmir.ValueTypeExternRef, true
 	default:
-		// Typed function references are lowered to funcref in this subset.
+		// Named heap types currently collapse to funcref in wasmir.
 		if strings.HasPrefix(name, "$") {
 			return wasmir.ValueTypeFuncRef, true
 		}
@@ -2444,6 +2456,10 @@ func lowerTypeParams(params []*ParamDecl, typeIdx int, diags *diag.ErrorList) []
 			diags.Addf("type[%d] param[%d]: nil param declaration", typeIdx, i)
 			continue
 		}
+		if usesNamedRefHeapType(pd.Ty) {
+			diags.Addf("type[%d] param[%d]: unsupported param type %q", typeIdx, i, pd.Ty)
+			continue
+		}
 		vt, ok := lowerValueType(pd.Ty)
 		if !ok {
 			diags.Addf("type[%d] param[%d]: unsupported param type %q", typeIdx, i, pd.Ty)
@@ -2461,6 +2477,10 @@ func lowerTypeResults(results []*ResultDecl, typeIdx int, diags *diag.ErrorList)
 			diags.Addf("type[%d] result[%d]: nil result declaration", typeIdx, i)
 			continue
 		}
+		if usesNamedRefHeapType(rd.Ty) {
+			diags.Addf("type[%d] result[%d]: unsupported result type %q", typeIdx, i, rd.Ty)
+			continue
+		}
 		vt, ok := lowerValueType(rd.Ty)
 		if !ok {
 			diags.Addf("type[%d] result[%d]: unsupported result type %q", typeIdx, i, rd.Ty)
@@ -2469,6 +2489,14 @@ func lowerTypeResults(results []*ResultDecl, typeIdx int, diags *diag.ErrorList)
 		out = append(out, vt)
 	}
 	return out
+}
+
+func usesNamedRefHeapType(ty Type) bool {
+	rt, ok := ty.(*RefType)
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(rt.HeapType, "$")
 }
 
 // addLowerDiag appends one lowering diagnostic prefixed with function context
