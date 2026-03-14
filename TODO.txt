@@ -1,1 +1,11 @@
-* 
+* When I tried adding the br_on_null.wast script, turned out Wazero doesn't
+  support it. See https://github.com/wazero/wazero/issues/2483
+  It's possible that Wazero doesn't support lots of stuff yet:
+  https://github.com/wazero/wazero/issues/2426#issuecomment-3538706451
+
+  Note the feature list: https://webassembly.org/features/
+
+  So we should probably convert the harness to use Node instead of wazero,
+  at least for now...
+
+
