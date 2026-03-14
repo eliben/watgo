@@ -1153,16 +1153,28 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Eq})
 		case opI32NeCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ne})
+		case opI32GtSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GtS})
+		case opI32GtUCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GtU})
+		case opI32GeSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeS})
 		case opI32ClzCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Clz})
 		case opI32CtzCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ctz})
+		case opI32PopcntCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Popcnt})
 		case opI32AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
 		case opI32SubCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub})
 		case opI32MulCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul})
+		case opI32OrCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Or})
+		case opI32XorCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Xor})
 		case opI32DivSCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS})
 		case opI32DivUCode:
@@ -1177,6 +1189,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ShrS})
 		case opI32ShrUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ShrU})
+		case opI32RotlCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Rotl})
+		case opI32RotrCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Rotr})
 		case opI32EqzCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Eqz})
 		case opI32LtSCode:
@@ -1191,6 +1207,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeU})
 		case opI32AndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32And})
+		case opI32Extend8SCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Extend8S})
+		case opI32Extend16SCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Extend16S})
 		case opI64AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
 		case opI64EqCode:

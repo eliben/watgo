@@ -1300,6 +1300,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.add":             {kind: wasmir.InstrI32Add, operandCount: 0},
 	"i32.sub":             {kind: wasmir.InstrI32Sub, operandCount: 0},
 	"i32.mul":             {kind: wasmir.InstrI32Mul, operandCount: 0},
+	"i32.or":              {kind: wasmir.InstrI32Or, operandCount: 0},
+	"i32.xor":             {kind: wasmir.InstrI32Xor, operandCount: 0},
 	"i32.div_s":           {kind: wasmir.InstrI32DivS, operandCount: 0},
 	"i32.div_u":           {kind: wasmir.InstrI32DivU, operandCount: 0},
 	"i32.rem_s":           {kind: wasmir.InstrI32RemS, operandCount: 0},
@@ -1307,13 +1309,21 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.shl":             {kind: wasmir.InstrI32Shl, operandCount: 0},
 	"i32.shr_s":           {kind: wasmir.InstrI32ShrS, operandCount: 0},
 	"i32.shr_u":           {kind: wasmir.InstrI32ShrU, operandCount: 0},
+	"i32.rotl":            {kind: wasmir.InstrI32Rotl, operandCount: 0},
+	"i32.rotr":            {kind: wasmir.InstrI32Rotr, operandCount: 0},
 	"i32.clz":             {kind: wasmir.InstrI32Clz, operandCount: 0},
+	"i32.popcnt":          {kind: wasmir.InstrI32Popcnt, operandCount: 0},
+	"i32.extend8_s":       {kind: wasmir.InstrI32Extend8S, operandCount: 0},
+	"i32.extend16_s":      {kind: wasmir.InstrI32Extend16S, operandCount: 0},
 	"i32.eqz":             {kind: wasmir.InstrI32Eqz, operandCount: 0},
 	"i32.ne":              {kind: wasmir.InstrI32Ne, operandCount: 0},
 	"i32.lt_s":            {kind: wasmir.InstrI32LtS, operandCount: 0},
 	"i32.lt_u":            {kind: wasmir.InstrI32LtU, operandCount: 0},
 	"i32.le_s":            {kind: wasmir.InstrI32LeS, operandCount: 0},
 	"i32.le_u":            {kind: wasmir.InstrI32LeU, operandCount: 0},
+	"i32.gt_s":            {kind: wasmir.InstrI32GtS, operandCount: 0},
+	"i32.gt_u":            {kind: wasmir.InstrI32GtU, operandCount: 0},
+	"i32.ge_s":            {kind: wasmir.InstrI32GeS, operandCount: 0},
 	"i32.ge_u":            {kind: wasmir.InstrI32GeU, operandCount: 0},
 	"i32.and":             {kind: wasmir.InstrI32And, operandCount: 0},
 	"i64.add":             {kind: wasmir.InstrI64Add, operandCount: 0},
@@ -1597,11 +1607,11 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 // load/store instruction.
 //
 // Return values:
-//   1. alignExp: alignment exponent stored in the binary memarg immediate
-//      (for example align=4 -> 2, align=1 -> 0). If align is omitted, this is 0.
-//   2. offset: byte offset immediate. If offset is omitted, this is 0.
-//   3. ok: true when all operands are valid memarg keywords; false on any
-//      malformed/duplicate/unknown operand.
+//  1. alignExp: alignment exponent stored in the binary memarg immediate
+//     (for example align=4 -> 2, align=1 -> 0). If align is omitted, this is 0.
+//  2. offset: byte offset immediate. If offset is omitted, this is 0.
+//  3. ok: true when all operands are valid memarg keywords; false on any
+//     malformed/duplicate/unknown operand.
 //
 // Examples:
 //   - [] -> (0, 0, true)

@@ -76,14 +76,14 @@ func ValidateModule(m *Module) error {
 			continue
 		}
 		tableTy := m.Tables[elem.TableIndex].RefType
-			if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
-				diags.Addf("element[%d]: type mismatch", i)
+		if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
+			diags.Addf("element[%d]: type mismatch", i)
+		}
+		for j, funcIdx := range elem.FuncIndices {
+			if funcIdx >= totalFuncCount {
+				diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
 			}
-			for j, funcIdx := range elem.FuncIndices {
-				if funcIdx >= totalFuncCount {
-					diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
-				}
-			}
+		}
 		if len(elem.Exprs) > 0 {
 			if elem.RefType != tableTy {
 				diags.Addf("element[%d]: type mismatch", i)
@@ -529,33 +529,33 @@ instrLoop:
 				continue
 			}
 			stack = append(stack, ValueTypeI32)
-			case InstrCall:
-				if ins.FuncIndex >= totalFuncCount {
-					diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
-					continue
+		case InstrCall:
+			if ins.FuncIndex >= totalFuncCount {
+				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
+				continue
+			}
+			calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
+			calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
+			if !ok {
+				diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
+				continue
+			}
+			if len(stack) < len(calleeType.Params) {
+				diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
+				continue
+			}
+			base := len(stack) - len(calleeType.Params)
+			operandsOK := true
+			for j, pt := range calleeType.Params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), valueTypeName(pt))
+					operandsOK = false
+					break
 				}
-				calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
-				calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
-				if !ok {
-					diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
-					continue
-				}
-				if len(stack) < len(calleeType.Params) {
-					diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
-					continue
-				}
-				base := len(stack) - len(calleeType.Params)
-				operandsOK := true
-				for j, pt := range calleeType.Params {
-					if stack[base+j] != pt {
-						diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), valueTypeName(pt))
-						operandsOK = false
-						break
-					}
-				}
-				if !operandsOK {
-					continue
-				}
+			}
+			if !operandsOK {
+				continue
+			}
 			stack = stack[:base]
 			stack = append(stack, calleeType.Results...)
 		case InstrCallIndirect:
@@ -916,7 +916,8 @@ instrLoop:
 			break instrLoop
 
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU,
-			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU, InstrI32And:
+			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU,
+			InstrI32And, InstrI32Or, InstrI32Xor, InstrI32Rotl, InstrI32Rotr:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -929,8 +930,9 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
 
-			case InstrI32Eq, InstrI32Ne, InstrI32LtS, InstrI32LtU, InstrI32LeS, InstrI32LeU, InstrI32GeU:
-				name := instrName(ins.Kind)
+		case InstrI32Eq, InstrI32Ne, InstrI32LtS, InstrI32LtU, InstrI32LeS, InstrI32LeU,
+			InstrI32GtS, InstrI32GtU, InstrI32GeS, InstrI32GeU:
+			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
@@ -951,17 +953,17 @@ instrLoop:
 				continue
 			}
 			// i32.eqz replaces i32 with i32 at top-of-stack.
-			case InstrI32Clz, InstrI32Ctz:
-				name := instrName(ins.Kind)
-				if len(stack) < 1 {
-					diags.Addf("%s: %s needs 1 operand", insCtx, name)
-					continue
-				}
-				if stack[len(stack)-1] != ValueTypeI32 {
-					diags.Addf("%s: %s expects i32 operand", insCtx, name)
-					continue
-				}
-				// i32.clz/i32.ctz preserve i32 on stack.
+		case InstrI32Clz, InstrI32Ctz, InstrI32Popcnt, InstrI32Extend8S, InstrI32Extend16S:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 operand", insCtx, name)
+				continue
+			}
+			// i32 unary operators preserve i32 on stack.
 
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
@@ -1022,45 +1024,45 @@ instrLoop:
 			}
 			stack[len(stack)-1] = ValueTypeI32
 
-			case InstrI64ExtendI32S, InstrI64ExtendI32U:
-				name := instrName(ins.Kind)
-				if len(stack) < 1 {
-					diags.Addf("%s: %s needs 1 operand", insCtx, name)
-					continue
+		case InstrI64ExtendI32S, InstrI64ExtendI32U:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
 			}
 			if stack[len(stack)-1] != ValueTypeI32 {
 				diags.Addf("%s: %s expects i32 operand", insCtx, name)
 				continue
-				}
-				stack[len(stack)-1] = ValueTypeI64
+			}
+			stack[len(stack)-1] = ValueTypeI64
 
-			case InstrF32ConvertI32S:
-				if len(stack) < 1 {
-					diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
-					continue
-				}
-				if stack[len(stack)-1] != ValueTypeI32 {
-					diags.Addf("%s: f32.convert_i32_s expects i32 operand", insCtx)
-					continue
-				}
-				stack[len(stack)-1] = ValueTypeF32
+		case InstrF32ConvertI32S:
+			if len(stack) < 1 {
+				diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: f32.convert_i32_s expects i32 operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeF32
 
-			case InstrF64ConvertI64S:
-				if len(stack) < 1 {
-					diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
-					continue
-				}
-				if stack[len(stack)-1] != ValueTypeI64 {
-					diags.Addf("%s: f64.convert_i64_s expects i64 operand", insCtx)
-					continue
-				}
-				stack[len(stack)-1] = ValueTypeF64
+		case InstrF64ConvertI64S:
+			if len(stack) < 1 {
+				diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 {
+				diags.Addf("%s: f64.convert_i64_s expects i64 operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeF64
 
-			case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
-				name := instrName(ins.Kind)
-				if len(stack) < 2 {
-					diags.Addf("%s: %s needs 2 operands", insCtx, name)
-					continue
+		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
 			}
 			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
 				diags.Addf("%s: %s expects f32 operands", insCtx, name)
@@ -1139,11 +1141,11 @@ instrLoop:
 			stack[len(stack)-1] = ValueTypeF64
 		case InstrRefNull:
 			stack = append(stack, ins.RefType)
-			case InstrRefFunc:
-				if ins.FuncIndex >= totalFuncCount {
-					diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
-					continue
-				}
+		case InstrRefFunc:
+			if ins.FuncIndex >= totalFuncCount {
+				diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
+				continue
+			}
 			stack = append(stack, ValueTypeFuncRef)
 		case InstrRefIsNull:
 			if len(stack) < 1 {
@@ -1460,12 +1462,18 @@ func instrName(kind InstrKind) string {
 		return "i32.clz"
 	case InstrI32Ctz:
 		return "i32.ctz"
+	case InstrI32Popcnt:
+		return "i32.popcnt"
 	case InstrI32Add:
 		return "i32.add"
 	case InstrI32Sub:
 		return "i32.sub"
 	case InstrI32Mul:
 		return "i32.mul"
+	case InstrI32Or:
+		return "i32.or"
+	case InstrI32Xor:
+		return "i32.xor"
 	case InstrI32DivS:
 		return "i32.div_s"
 	case InstrI32DivU:
@@ -1480,6 +1488,10 @@ func instrName(kind InstrKind) string {
 		return "i32.shr_s"
 	case InstrI32ShrU:
 		return "i32.shr_u"
+	case InstrI32Rotl:
+		return "i32.rotl"
+	case InstrI32Rotr:
+		return "i32.rotr"
 	case InstrI32Eqz:
 		return "i32.eqz"
 	case InstrI32LtS:
@@ -1490,10 +1502,20 @@ func instrName(kind InstrKind) string {
 		return "i32.le_s"
 	case InstrI32LeU:
 		return "i32.le_u"
+	case InstrI32GtS:
+		return "i32.gt_s"
+	case InstrI32GtU:
+		return "i32.gt_u"
+	case InstrI32GeS:
+		return "i32.ge_s"
 	case InstrI32GeU:
 		return "i32.ge_u"
 	case InstrI32And:
 		return "i32.and"
+	case InstrI32Extend8S:
+		return "i32.extend8_s"
+	case InstrI32Extend16S:
+		return "i32.extend16_s"
 	case InstrI64Add:
 		return "i64.add"
 	case InstrI64Eq:

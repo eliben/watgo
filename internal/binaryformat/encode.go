@@ -107,8 +107,11 @@ const (
 	opI32NeCode             byte = 0x47
 	opI32LtSCode            byte = 0x48
 	opI32LtUCode            byte = 0x49
+	opI32GtSCode            byte = 0x4a
+	opI32GtUCode            byte = 0x4b
 	opI32LeSCode            byte = 0x4c
 	opI32LeUCode            byte = 0x4d
+	opI32GeSCode            byte = 0x4e
 	opI32GeUCode            byte = 0x4f
 	opI64EqzCode            byte = 0x50
 	opI64EqCode             byte = 0x51
@@ -119,18 +122,23 @@ const (
 	opI64LeUCode            byte = 0x58
 	opF32GtCode             byte = 0x5e
 	opI32ClzCode            byte = 0x67
+	opI32CtzCode            byte = 0x68
+	opI32PopcntCode         byte = 0x69
 	opI32AddCode            byte = 0x6a
 	opI32SubCode            byte = 0x6b
 	opI32MulCode            byte = 0x6c
-	opI32CtzCode            byte = 0x68
 	opI32DivSCode           byte = 0x6d
 	opI32DivUCode           byte = 0x6e
 	opI32RemSCode           byte = 0x6f
 	opI32RemUCode           byte = 0x70
+	opI32AndCode            byte = 0x71
+	opI32OrCode             byte = 0x72
+	opI32XorCode            byte = 0x73
 	opI32ShlCode            byte = 0x74
 	opI32ShrSCode           byte = 0x75
 	opI32ShrUCode           byte = 0x76
-	opI32AndCode            byte = 0x71
+	opI32RotlCode           byte = 0x77
+	opI32RotrCode           byte = 0x78
 	opI64AddCode            byte = 0x7c
 	opI64SubCode            byte = 0x7d
 	opI64MulCode            byte = 0x7e
@@ -176,6 +184,8 @@ const (
 	opRefFuncCode           byte = 0xd2
 	opPrefixFCCode          byte = 0xfc
 	opF64ReinterpretI64Code byte = 0xbf
+	opI32Extend8SCode       byte = 0xc0
+	opI32Extend16SCode      byte = 0xc1
 
 	// FC-prefixed table instruction subopcodes.
 	subopTableGrowCode uint32 = 0x0f
@@ -803,16 +813,28 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32EqCode)
 	case wasmir.InstrI32Ne:
 		out.WriteByte(opI32NeCode)
+	case wasmir.InstrI32GtS:
+		out.WriteByte(opI32GtSCode)
+	case wasmir.InstrI32GtU:
+		out.WriteByte(opI32GtUCode)
+	case wasmir.InstrI32GeS:
+		out.WriteByte(opI32GeSCode)
 	case wasmir.InstrI32Clz:
 		out.WriteByte(opI32ClzCode)
 	case wasmir.InstrI32Ctz:
 		out.WriteByte(opI32CtzCode)
+	case wasmir.InstrI32Popcnt:
+		out.WriteByte(opI32PopcntCode)
 	case wasmir.InstrI32Add:
 		out.WriteByte(opI32AddCode)
 	case wasmir.InstrI32Sub:
 		out.WriteByte(opI32SubCode)
 	case wasmir.InstrI32Mul:
 		out.WriteByte(opI32MulCode)
+	case wasmir.InstrI32Or:
+		out.WriteByte(opI32OrCode)
+	case wasmir.InstrI32Xor:
+		out.WriteByte(opI32XorCode)
 	case wasmir.InstrI32DivS:
 		out.WriteByte(opI32DivSCode)
 	case wasmir.InstrI32DivU:
@@ -827,6 +849,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32ShrSCode)
 	case wasmir.InstrI32ShrU:
 		out.WriteByte(opI32ShrUCode)
+	case wasmir.InstrI32Rotl:
+		out.WriteByte(opI32RotlCode)
+	case wasmir.InstrI32Rotr:
+		out.WriteByte(opI32RotrCode)
 	case wasmir.InstrI32Eqz:
 		out.WriteByte(opI32EqzCode)
 	case wasmir.InstrI32LtS:
@@ -841,6 +867,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32GeUCode)
 	case wasmir.InstrI32And:
 		out.WriteByte(opI32AndCode)
+	case wasmir.InstrI32Extend8S:
+		out.WriteByte(opI32Extend8SCode)
+	case wasmir.InstrI32Extend16S:
+		out.WriteByte(opI32Extend16SCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
 	case wasmir.InstrI64Eq:

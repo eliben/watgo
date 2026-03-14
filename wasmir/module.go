@@ -74,10 +74,13 @@ const (
 	InstrI32Add
 	InstrI32Sub
 	InstrI32Mul
+	InstrI32Or
+	InstrI32Xor
 	InstrI32Eq
 	InstrI32Ne
 	InstrI32Clz
 	InstrI32Ctz
+	InstrI32Popcnt
 	InstrI32DivS
 	InstrI32DivU
 	InstrI32RemS
@@ -85,13 +88,20 @@ const (
 	InstrI32Shl
 	InstrI32ShrS
 	InstrI32ShrU
+	InstrI32Rotl
+	InstrI32Rotr
 	InstrI32Eqz
 	InstrI32LtS
 	InstrI32LtU
 	InstrI32LeS
 	InstrI32LeU
+	InstrI32GtS
+	InstrI32GtU
+	InstrI32GeS
 	InstrI32GeU
 	InstrI32And
+	InstrI32Extend8S
+	InstrI32Extend16S
 	InstrI64Add
 	InstrI64Eq
 	InstrI64Eqz
