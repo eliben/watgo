@@ -75,6 +75,8 @@ const (
 	InstrI32Sub
 	InstrI32Mul
 	InstrI32Eq
+	InstrI32Ne
+	InstrI32Clz
 	InstrI32Ctz
 	InstrI32DivS
 	InstrI32DivU
@@ -86,6 +88,7 @@ const (
 	InstrI32Eqz
 	InstrI32LtS
 	InstrI32LtU
+	InstrI32LeS
 	InstrI32LeU
 	InstrI32GeU
 	InstrI32And

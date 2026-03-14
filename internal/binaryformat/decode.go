@@ -1151,6 +1151,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemoryGrow, MemoryIndex: memIndex})
 		case opI32EqCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Eq})
+		case opI32NeCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ne})
+		case opI32ClzCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Clz})
 		case opI32CtzCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ctz})
 		case opI32AddCode:
@@ -1179,6 +1183,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtS})
 		case opI32LtUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtU})
+		case opI32LeSCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeS})
 		case opI32LeUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeU})
 		case opI32GeUCode:

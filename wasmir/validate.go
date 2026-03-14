@@ -929,8 +929,8 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI32)
 
-		case InstrI32Eq, InstrI32LtS, InstrI32LtU, InstrI32LeU, InstrI32GeU:
-			name := instrName(ins.Kind)
+			case InstrI32Eq, InstrI32Ne, InstrI32LtS, InstrI32LtU, InstrI32LeS, InstrI32LeU, InstrI32GeU:
+				name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
@@ -951,16 +951,17 @@ instrLoop:
 				continue
 			}
 			// i32.eqz replaces i32 with i32 at top-of-stack.
-		case InstrI32Ctz:
-			if len(stack) < 1 {
-				diags.Addf("%s: i32.ctz needs 1 operand", insCtx)
-				continue
-			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: i32.ctz expects i32 operand", insCtx)
-				continue
-			}
-			// i32.ctz preserves i32 on stack.
+			case InstrI32Clz, InstrI32Ctz:
+				name := instrName(ins.Kind)
+				if len(stack) < 1 {
+					diags.Addf("%s: %s needs 1 operand", insCtx, name)
+					continue
+				}
+				if stack[len(stack)-1] != ValueTypeI32 {
+					diags.Addf("%s: %s expects i32 operand", insCtx, name)
+					continue
+				}
+				// i32.clz/i32.ctz preserve i32 on stack.
 
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
@@ -1453,6 +1454,10 @@ func instrName(kind InstrKind) string {
 		return "memory.grow"
 	case InstrI32Eq:
 		return "i32.eq"
+	case InstrI32Ne:
+		return "i32.ne"
+	case InstrI32Clz:
+		return "i32.clz"
 	case InstrI32Ctz:
 		return "i32.ctz"
 	case InstrI32Add:
@@ -1481,6 +1486,8 @@ func instrName(kind InstrKind) string {
 		return "i32.lt_s"
 	case InstrI32LtU:
 		return "i32.lt_u"
+	case InstrI32LeS:
+		return "i32.le_s"
 	case InstrI32LeU:
 		return "i32.le_u"
 	case InstrI32GeU:

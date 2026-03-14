@@ -102,8 +102,23 @@ const (
 	opI64Store32Code        byte = 0x3e
 	opMemorySizeCode        byte = 0x3f
 	opMemoryGrowCode        byte = 0x40
+	opI32EqzCode            byte = 0x45
 	opI32EqCode             byte = 0x46
+	opI32NeCode             byte = 0x47
+	opI32LtSCode            byte = 0x48
+	opI32LtUCode            byte = 0x49
+	opI32LeSCode            byte = 0x4c
+	opI32LeUCode            byte = 0x4d
+	opI32GeUCode            byte = 0x4f
+	opI64EqzCode            byte = 0x50
+	opI64EqCode             byte = 0x51
+	opI64LtSCode            byte = 0x53
+	opI64LtUCode            byte = 0x54
+	opI64GtSCode            byte = 0x55
+	opI64GtUCode            byte = 0x56
+	opI64LeUCode            byte = 0x58
 	opF32GtCode             byte = 0x5e
+	opI32ClzCode            byte = 0x67
 	opI32AddCode            byte = 0x6a
 	opI32SubCode            byte = 0x6b
 	opI32MulCode            byte = 0x6c
@@ -115,18 +130,8 @@ const (
 	opI32ShlCode            byte = 0x74
 	opI32ShrSCode           byte = 0x75
 	opI32ShrUCode           byte = 0x76
-	opI32EqzCode            byte = 0x45
-	opI32LtSCode            byte = 0x48
-	opI32LtUCode            byte = 0x49
-	opI32LeUCode            byte = 0x4d
-	opI32GeUCode            byte = 0x4f
 	opI32AndCode            byte = 0x71
 	opI64AddCode            byte = 0x7c
-	opI64EqCode             byte = 0x51
-	opI64EqzCode            byte = 0x50
-	opI64GtSCode            byte = 0x55
-	opI64GtUCode            byte = 0x56
-	opI64LeUCode            byte = 0x58
 	opI64SubCode            byte = 0x7d
 	opI64MulCode            byte = 0x7e
 	opI64DivSCode           byte = 0x7f
@@ -136,8 +141,6 @@ const (
 	opI64ShlCode            byte = 0x86
 	opI64ShrSCode           byte = 0x87
 	opI64ShrUCode           byte = 0x88
-	opI64LtSCode            byte = 0x53
-	opI64LtUCode            byte = 0x54
 	opI32WrapI64Code        byte = 0xa7
 	opI64ExtendI32SCode     byte = 0xac
 	opI64ExtendI32UCode     byte = 0xad
@@ -798,6 +801,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrI32Eq:
 		out.WriteByte(opI32EqCode)
+	case wasmir.InstrI32Ne:
+		out.WriteByte(opI32NeCode)
+	case wasmir.InstrI32Clz:
+		out.WriteByte(opI32ClzCode)
 	case wasmir.InstrI32Ctz:
 		out.WriteByte(opI32CtzCode)
 	case wasmir.InstrI32Add:
@@ -826,6 +833,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32LtSCode)
 	case wasmir.InstrI32LtU:
 		out.WriteByte(opI32LtUCode)
+	case wasmir.InstrI32LeS:
+		out.WriteByte(opI32LeSCode)
 	case wasmir.InstrI32LeU:
 		out.WriteByte(opI32LeUCode)
 	case wasmir.InstrI32GeU:
