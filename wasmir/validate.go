@@ -207,14 +207,26 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		if target.kind == controlKindLoop {
 			targetTypes = target.paramTypes
 		}
-		wantHeight := target.entryHeight + len(targetTypes)
-		if len(stack) < wantHeight {
+		minHeight := target.entryHeight + len(targetTypes)
+		if len(stack) < minHeight {
+			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opName, depth)
+			return controlFrame{}, false
+		}
+		base := len(stack) - len(targetTypes)
+		// Branch operands must come from the current frame's operand portion.
+		// Values below the current frame entry height are not available as
+		// branch arguments from inside nested blocks.
+		currentEntry := 0
+		if len(controlStack) > 0 {
+			currentEntry = controlStack[len(controlStack)-1].entryHeight
+		}
+		if base < currentEntry {
 			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opName, depth)
 			return controlFrame{}, false
 		}
 		for i, tt := range targetTypes {
-			if stack[target.entryHeight+i] != tt {
-				diags.Addf("%s: %s depth %d target type mismatch at %d: got %s want %s", insCtx, opName, depth, i, valueTypeName(stack[target.entryHeight+i]), valueTypeName(tt))
+			if stack[base+i] != tt {
+				diags.Addf("%s: %s depth %d target type mismatch at %d: got %s want %s", insCtx, opName, depth, i, valueTypeName(stack[base+i]), valueTypeName(tt))
 				return controlFrame{}, false
 			}
 		}
@@ -1098,13 +1110,14 @@ instrLoop:
 				continue
 			}
 			// Unary f32 operators preserve top-of-stack type.
-		case InstrF32Gt:
+		case InstrF32Gt, InstrF32Ne:
+			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("%s: f32.gt needs 2 operands", insCtx)
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
-				diags.Addf("%s: f32.gt expects f32 operands", insCtx)
+				diags.Addf("%s: %s expects f32 operands", insCtx, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -1134,13 +1147,14 @@ instrLoop:
 				continue
 			}
 			// Unary f64 operators preserve top-of-stack type.
-		case InstrF64Eq:
+		case InstrF64Eq, InstrF64Le:
+			name := instrName(ins.Kind)
 			if len(stack) < 2 {
-				diags.Addf("%s: f64.eq needs 2 operands", insCtx)
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeF64 {
-				diags.Addf("%s: f64.eq expects f64 operands", insCtx)
+				diags.Addf("%s: %s expects f64 operands", insCtx, name)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -1620,6 +1634,8 @@ func instrName(kind InstrKind) string {
 		return "f32.neg"
 	case InstrF32Gt:
 		return "f32.gt"
+	case InstrF32Ne:
+		return "f32.ne"
 	case InstrF32Min:
 		return "f32.min"
 	case InstrF32Max:
@@ -1658,6 +1674,8 @@ func instrName(kind InstrKind) string {
 		return "f64.nearest"
 	case InstrF64Eq:
 		return "f64.eq"
+	case InstrF64Le:
+		return "f64.le"
 	case InstrF64ReinterpretI64:
 		return "f64.reinterpret_i64"
 	case InstrRefNull:

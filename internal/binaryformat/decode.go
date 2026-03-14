@@ -1299,6 +1299,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Neg})
 		case opF32GtCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Gt})
+		case opF32NeCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ne})
 		case opF32MinCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min})
 		case opF32MaxCode:
@@ -1337,6 +1339,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Nearest})
 		case opF64EqCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Eq})
+		case opF64LeCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Le})
 		case opF64ReinterpretI64Code:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ReinterpretI64})
 		case opRefNullCode:

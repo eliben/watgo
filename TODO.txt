@@ -1,4 +1,1 @@
-* Refactor lowering (and then validation) to keep more state in a struct
-  to prevent repetitiveness and long function param lists
-* Make sure lowering and validation errors include function names when these
-  names are available.
+* 

@@ -146,6 +146,7 @@ const (
 	InstrF32Sqrt
 	InstrF32Neg
 	InstrF32Gt
+	InstrF32Ne
 	InstrF32Min
 	InstrF32Max
 	InstrF32Ceil
@@ -165,6 +166,7 @@ const (
 	InstrF64Trunc
 	InstrF64Nearest
 	InstrF64Eq
+	InstrF64Le
 	InstrF64ReinterpretI64
 	InstrEnd
 )

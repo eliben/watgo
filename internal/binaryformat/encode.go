@@ -124,6 +124,7 @@ const (
 	opI64LeUCode            byte = 0x58
 	opI64GeSCode            byte = 0x59
 	opI64GeUCode            byte = 0x5a
+	opF32NeCode             byte = 0x5c
 	opF32GtCode             byte = 0x5e
 	opI32ClzCode            byte = 0x67
 	opI32CtzCode            byte = 0x68
@@ -183,6 +184,7 @@ const (
 	opF64TruncCode          byte = 0x9d
 	opF64NearestCode        byte = 0x9e
 	opF64EqCode             byte = 0x61
+	opF64LeCode             byte = 0x65
 	opF64SqrtCode           byte = 0x9f
 	opF64NegCode            byte = 0x9a
 	opF64AddCode            byte = 0xa0
@@ -974,6 +976,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF32NegCode)
 	case wasmir.InstrF32Gt:
 		out.WriteByte(opF32GtCode)
+	case wasmir.InstrF32Ne:
+		out.WriteByte(opF32NeCode)
 	case wasmir.InstrF32Min:
 		out.WriteByte(opF32MinCode)
 	case wasmir.InstrF32Max:
@@ -1012,6 +1016,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64NearestCode)
 	case wasmir.InstrF64Eq:
 		out.WriteByte(opF64EqCode)
+	case wasmir.InstrF64Le:
+		out.WriteByte(opF64LeCode)
 	case wasmir.InstrF64ReinterpretI64:
 		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:
