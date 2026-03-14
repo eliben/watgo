@@ -155,36 +155,77 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		cursor++
 	}
 
+	// importsClosed tracks when module parsing has moved past the import phase.
+	// WAT allows imports in the type/import prefix, but once a non-import
+	// definition is seen, later top-level "(import ...)" forms are rejected.
+	importsClosed := false
 	for i := cursor; i < len(sx.list); i++ {
 		sub := sx.list[i]
-		switch sub.HeadKeyword() {
-		case "type":
-			m.Types = append(m.Types, p.parseTypeDecl(sub))
-		case "table":
-			m.Tables = append(m.Tables, p.parseTableDecl(sub))
+		head := sub.HeadKeyword()
+		switch head {
 		case "import":
-			td, gd, ok := p.parseImportField(sub)
+			if importsClosed {
+				p.emitError(sub.loc, "import after module field")
+				continue
+			}
+			fd, td, md, gd, ok := p.parseImportField(sub)
 			if !ok {
 				continue
+			}
+			if fd != nil {
+				m.Funcs = append(m.Funcs, fd)
 			}
 			if td != nil {
 				m.Tables = append(m.Tables, td)
 			}
+			if md != nil {
+				m.Memories = append(m.Memories, md)
+			}
 			if gd != nil {
 				m.Globals = append(m.Globals, gd)
 			}
+		case "type":
+			m.Types = append(m.Types, p.parseTypeDecl(sub))
+		case "table":
+			td := p.parseTableDecl(sub)
+			m.Tables = append(m.Tables, td)
+			if td.ImportModule == "" {
+				importsClosed = true
+			}
 		case "memory":
-			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
+			md := p.parseMemoryDecl(sub)
+			m.Memories = append(m.Memories, md)
+			if md.ImportModule == "" {
+				importsClosed = true
+			}
 		case "data":
 			m.Data = append(m.Data, p.parseDataDecl(sub))
+			importsClosed = true
 		case "global":
-			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
+			gd := p.parseGlobalDecl(sub)
+			m.Globals = append(m.Globals, gd)
+			if gd.ImportModule == "" {
+				importsClosed = true
+			}
 		case "elem":
 			m.Elems = append(m.Elems, p.parseElemDecl(sub))
+			importsClosed = true
 		case "func":
-			m.Funcs = append(m.Funcs, p.parseFunction(sub))
+			fd := p.parseFunction(sub)
+			m.Funcs = append(m.Funcs, fd)
+			if fd.ImportModule == "" {
+				importsClosed = true
+			}
+		case "export":
+			// Top-level export fields are not lowered yet in this subset.
+			// Ignore so modules that also use supported inline exports can compile.
+			importsClosed = true
+		case "tag":
+			// Exception handling tags are outside the current lowering subset.
+			// Keep parsing the rest of the module fields.
 		default:
 			p.emitError(sub.loc, fmt.Sprintf("unsupported module field %q", sub.HeadKeyword()))
+			importsClosed = true
 		}
 	}
 
@@ -192,42 +233,82 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 }
 
 // parseImportField parses one top-level "(import ...)" form.
-// It currently supports table and global imports and returns at most one
-// descriptor of each kind plus a success flag.
-func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, *GlobalDecl, bool) {
+// It currently supports function/table/memory/global imports and returns at
+// most one descriptor of each kind plus a success flag.
+func (p *Parser) parseImportField(sx *SExpr) (*Function, *TableDecl, *MemoryDecl, *GlobalDecl, bool) {
 	if len(sx.list) != 4 {
 		p.emitError(sx.loc, "invalid import declaration")
-		return nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	mod := p.matchElement(sx, 1, STRING)
 	name := p.matchElement(sx, 2, STRING)
 	desc := sx.list[3]
 	switch desc.HeadKeyword() {
+	case "func":
+		fd := p.parseFuncImportDesc(desc)
+		fd.ImportModule = mod
+		fd.ImportName = name
+		return fd, nil, nil, nil, true
 	case "table":
 		td := p.parseTableDecl(desc)
 		td.ImportModule = mod
 		td.ImportName = name
-		return td, nil, true
+		return nil, td, nil, nil, true
+	case "memory":
+		md := p.parseMemoryDecl(desc)
+		md.ImportModule = mod
+		md.ImportName = name
+		return nil, nil, md, nil, true
 	case "global":
 		gd := p.parseGlobalImportDesc(desc)
 		gd.ImportModule = mod
 		gd.ImportName = name
-		return nil, gd, true
+		return nil, nil, nil, gd, true
+	case "tag":
+		// Exception tags are outside the current lowering subset.
+		// Ignore tag imports so the rest of the module can be compiled/tested.
+		return nil, nil, nil, nil, true
 	default:
 		p.emitError(desc.loc, "unsupported import descriptor")
-		return nil, nil, false
+		return nil, nil, nil, nil, false
 	}
+}
+
+// parseFuncImportDesc parses a function import descriptor "(func ...)" and
+// returns it as a Function declaration with import fields left unset.
+func (p *Parser) parseFuncImportDesc(sx *SExpr) *Function {
+	fd := p.parseFunction(sx)
+	if fd == nil {
+		return &Function{TyUse: &TypeUse{}, loc: sx.loc}
+	}
+	if len(fd.Locals) > 0 {
+		p.emitError(sx.loc, "function import descriptor must not declare locals")
+	}
+	if len(fd.Instrs) > 0 {
+		p.emitError(sx.loc, "function import descriptor must not contain a body")
+		fd.Instrs = nil
+	}
+	return fd
 }
 
 // parseGlobalImportDesc parses a global import descriptor "(global ...)".
 // It accepts either immutable "<valtype>" or mutable "(mut <valtype>)".
 func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
 	gd := &GlobalDecl{loc: sx.loc}
-	if len(sx.list) != 2 {
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == ID {
+		gd.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
 		p.emitError(sx.loc, "invalid global import descriptor")
 		return gd
 	}
-	tySx := sx.list[1]
+	tySx := sx.list[cursor]
+	if cursor+1 != len(sx.list) {
+		p.emitError(sx.loc, "invalid global import descriptor")
+		return gd
+	}
 	if tySx.IsList() && tySx.HeadKeyword() == "mut" {
 		if len(tySx.list) != 2 {
 			p.emitError(tySx.loc, "invalid mutable global type")
@@ -268,6 +349,23 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 		elem := sx.list[cursor]
 		if elem.HeadKeyword() == "type" {
 			f.TyUse.Id = p.parseTypeUseClause(elem)
+		} else if elem.HeadKeyword() == "export" {
+			name := p.matchElement(elem, 1, STRING)
+			if f.Export == "" {
+				f.Export = name
+			}
+		} else if elem.HeadKeyword() == "import" {
+			modName, fieldName, ok := p.parseImportClause(elem)
+			if !ok {
+				p.emitError(elem.loc, "invalid function import clause")
+				continue
+			}
+			if f.ImportModule != "" {
+				p.emitError(elem.loc, "duplicate function import clause")
+				continue
+			}
+			f.ImportModule = modName
+			f.ImportName = fieldName
 		} else if elem.HeadKeyword() == "param" {
 			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem)...)
 		} else if elem.HeadKeyword() == "result" {
@@ -462,19 +560,40 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 }
 
 // parseDataDecl parses one top-level "(data ...)" declaration.
-// It expects a folded offset instruction followed by one or more string chunks.
+// It expects either "(data <offset-expr> <string>+)" or
+// "(data (memory <id-or-index>) <offset-expr> <string>+)".
 func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	dd := &DataDecl{loc: sx.loc}
 	if len(sx.list) < 2 {
 		p.emitError(sx.loc, "data declaration missing offset")
 		return dd
 	}
-	if !sx.list[1].IsList() {
-		p.emitError(sx.list[1].loc, "data declaration offset must be instruction expression")
+
+	cursor := 1
+	if sx.list[cursor].HeadKeyword() == "memory" {
+		memClause := sx.list[cursor]
+		if len(memClause.list) != 2 {
+			p.emitError(memClause.loc, "data memory clause expects one memory reference")
+			return dd
+		}
+		if !memClause.list[1].IsToken() || (memClause.list[1].tok.name != ID && memClause.list[1].tok.name != INT) {
+			p.emitError(memClause.list[1].loc, "data memory reference must be ID or INT")
+			return dd
+		}
+		dd.MemoryRef = memClause.list[1].tok.value
+		cursor++
+	}
+
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "data declaration missing offset")
 		return dd
 	}
-	dd.Offset = p.parseFoldedInstr(sx.list[1])
-	dd.Strings = p.parseDataStringsFrom(sx, 2)
+	if !sx.list[cursor].IsList() {
+		p.emitError(sx.list[cursor].loc, "data declaration offset must be instruction expression")
+		return dd
+	}
+	dd.Offset = p.parseFoldedInstr(sx.list[cursor])
+	dd.Strings = p.parseDataStringsFrom(sx, cursor+1)
 	return dd
 }
 

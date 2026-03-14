@@ -141,6 +141,8 @@ const (
 	opI32WrapI64Code        byte = 0xa7
 	opI64ExtendI32SCode     byte = 0xac
 	opI64ExtendI32UCode     byte = 0xad
+	opF32ConvertI32SCode    byte = 0xb2
+	opF64ConvertI64SCode    byte = 0xb9
 	opF32CeilCode           byte = 0x8d
 	opF32FloorCode          byte = 0x8e
 	opF32TruncCode          byte = 0x8f
@@ -870,6 +872,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI64ExtendI32SCode)
 	case wasmir.InstrI64ExtendI32U:
 		out.WriteByte(opI64ExtendI32UCode)
+	case wasmir.InstrF32ConvertI32S:
+		out.WriteByte(opF32ConvertI32SCode)
+	case wasmir.InstrF64ConvertI64S:
+		out.WriteByte(opF64ConvertI64SCode)
 	case wasmir.InstrF32Add:
 		out.WriteByte(opF32AddCode)
 	case wasmir.InstrF32Sub:

@@ -123,6 +123,10 @@ type MemoryDecl struct {
 
 // DataDecl is one module-level data segment declaration "(data ...)".
 type DataDecl struct {
+	// MemoryRef is the optional memory reference from "(data (memory X) ...)".
+	// It is empty when omitted, which implies memory index 0.
+	MemoryRef string
+
 	// Offset is the active data segment offset expression.
 	Offset Instruction
 
@@ -172,6 +176,14 @@ type Function struct {
 	// Export is the optional exported name from an inline "(export "...")"
 	// clause. It is empty when no inline export was declared.
 	Export string
+
+	// ImportModule is non-empty when this function is imported and stores the
+	// import module name.
+	ImportModule string
+
+	// ImportName is non-empty when this function is imported and stores the
+	// import field name.
+	ImportName string
 
 	// TyUse is the parsed type-use information for this function, including
 	// inline parameter and result declarations.

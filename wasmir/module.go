@@ -109,6 +109,8 @@ const (
 	InstrI32WrapI64
 	InstrI64ExtendI32S
 	InstrI64ExtendI32U
+	InstrF32ConvertI32S
+	InstrF64ConvertI64S
 	InstrF32Add
 	InstrF32Sub
 	InstrF32Mul
@@ -153,7 +155,8 @@ const (
 //
 // Index-based references are resolved through these slices:
 //   - function type indices refer into Types
-//   - function indices refer into Funcs
+//   - function indices refer into imported functions first (from Imports), then
+//     function definitions in Funcs
 type Module struct {
 	// Types is the module's function type table.
 	Types []FuncType

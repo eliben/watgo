@@ -1225,6 +1225,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ExtendI32S})
 		case opI64ExtendI32UCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ExtendI32U})
+		case opF32ConvertI32SCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32ConvertI32S})
+		case opF64ConvertI64SCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ConvertI64S})
 		case opF32AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add})
 		case opF32SubCode:

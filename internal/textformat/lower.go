@@ -29,6 +29,14 @@ type moduleLowerer struct {
 	// function indices.
 	funcsByName map[string]uint32
 
+	// funcAbsIndexByAST maps each textformat Module.Funcs entry index to its
+	// absolute function index in the module function index space
+	// (imported functions first, then defined functions).
+	funcAbsIndexByAST []uint32
+
+	// funcImportCount is the number of imported functions in the module.
+	funcImportCount uint32
+
 	// typesByName maps type identifiers to type indices in out.Types.
 	typesByName map[string]uint32
 
@@ -93,6 +101,10 @@ type functionLowerer struct {
 	// labelStack tracks active structured control labels from innermost to
 	// outermost for lowering branch operands (br/br_if).
 	labelStack []labelScope
+}
+
+func isImportedFunctionDecl(f *Function) bool {
+	return f != nil && f.ImportModule != ""
 }
 
 // labelScope describes one active structured control label.
@@ -480,6 +492,15 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 			l.diags.Addf("data[%d]: nil data declaration", i)
 			continue
 		}
+		memoryIndex := uint32(0)
+		if dd.MemoryRef != "" {
+			idx, ok := l.resolveMemoryRef(dd.MemoryRef)
+			if !ok {
+				l.diags.Addf("data[%d]: unknown memory reference %q", i, dd.MemoryRef)
+				continue
+			}
+			memoryIndex = idx
+		}
 		offset, ok := l.evalI32ConstExpr(dd.Offset)
 		if !ok {
 			l.diags.Addf("data[%d]: offset must be i32.const", i)
@@ -495,7 +516,7 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 			init = append(init, b...)
 		}
 		l.out.Data = append(l.out.Data, wasmir.DataSegment{
-			MemoryIndex: 0,
+			MemoryIndex: memoryIndex,
 			OffsetI32:   offset,
 			Init:        init,
 		})
@@ -570,6 +591,13 @@ func (l *moduleLowerer) resolveFunctionRef(ref string) (uint32, bool) {
 	return parseU32Literal(ref)
 }
 
+func (l *moduleLowerer) functionIndexByASTIndex(funcIdx int) uint32 {
+	if funcIdx >= 0 && funcIdx < len(l.funcAbsIndexByAST) {
+		return l.funcAbsIndexByAST[funcIdx]
+	}
+	return uint32(funcIdx)
+}
+
 func (l *moduleLowerer) resolveTableRef(ref string) (uint32, bool) {
 	if idx, ok := l.tablesByName[ref]; ok {
 		return idx, true
@@ -577,17 +605,44 @@ func (l *moduleLowerer) resolveTableRef(ref string) (uint32, bool) {
 	return parseU32Literal(ref)
 }
 
+func (l *moduleLowerer) resolveMemoryRef(ref string) (uint32, bool) {
+	if idx, ok := l.memoriesByName[ref]; ok {
+		return idx, true
+	}
+	return parseU32Literal(ref)
+}
+
 // collectFunctionNames pre-scans astm and records named function indices.
 func (l *moduleLowerer) collectFunctionNames(astm *Module) {
+	l.funcAbsIndexByAST = make([]uint32, len(astm.Funcs))
+	var importCount uint32
+	for _, f := range astm.Funcs {
+		if isImportedFunctionDecl(f) {
+			importCount++
+		}
+	}
+	l.funcImportCount = importCount
+	importNext := uint32(0)
+	defNext := importCount
+	firstSeenAt := map[string]int{}
 	for i, f := range astm.Funcs {
+		if isImportedFunctionDecl(f) {
+			l.funcAbsIndexByAST[i] = importNext
+			importNext++
+		} else {
+			l.funcAbsIndexByAST[i] = defNext
+			defNext++
+		}
+
 		if f == nil || f.Id == "" {
 			continue
 		}
-		if prev, exists := l.funcsByName[f.Id]; exists {
+		if prev, exists := firstSeenAt[f.Id]; exists {
 			l.diags.Addf("func[%d] %s: duplicate function id (first seen at func[%d])", i, f.Id, prev)
 			continue
 		}
-		l.funcsByName[f.Id] = uint32(i)
+		firstSeenAt[f.Id] = i
+		l.funcsByName[f.Id] = l.funcAbsIndexByAST[i]
 	}
 }
 
@@ -631,6 +686,30 @@ func newFunctionLowerer(mod *moduleLowerer, funcIdx int, fn *Function) *function
 // lower lowers fl.fn into fl.mod.out and records any diagnostics.
 func (fl *functionLowerer) lower() {
 	typeIdx := fl.lowerTypeUse()
+
+	if isImportedFunctionDecl(fl.fn) {
+		if len(fl.fn.Locals) > 0 {
+			fl.diagf(fl.fn.loc.String(), "imported function must not declare locals")
+		}
+		if len(fl.fn.Instrs) > 0 {
+			fl.diagf(fl.fn.loc.String(), "imported function must not have a body")
+		}
+		fl.mod.out.Imports = append(fl.mod.out.Imports, wasmir.Import{
+			Module:  fl.fn.ImportModule,
+			Name:    fl.fn.ImportName,
+			Kind:    wasmir.ExternalKindFunction,
+			TypeIdx: typeIdx,
+		})
+		if fl.fn.Export != "" {
+			fl.mod.out.Exports = append(fl.mod.out.Exports, wasmir.Export{
+				Name:  fl.fn.Export,
+				Kind:  wasmir.ExternalKindFunction,
+				Index: fl.mod.functionIndexByASTIndex(fl.funcIdx),
+			})
+		}
+		return
+	}
+
 	fl.lowerLocals()
 
 	fl.lowerInstrs()
@@ -650,7 +729,7 @@ func (fl *functionLowerer) lower() {
 		fl.mod.out.Exports = append(fl.mod.out.Exports, wasmir.Export{
 			Name:  fl.fn.Export,
 			Kind:  wasmir.ExternalKindFunction,
-			Index: uint32(len(fl.mod.out.Funcs) - 1),
+			Index: fl.mod.functionIndexByASTIndex(fl.funcIdx),
 		})
 	}
 }
@@ -826,9 +905,21 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 // operand evaluation order for nested argument expressions.
 func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 	var typeRef string
+	tableIndex := uint32(0)
+	seenTableOperand := false
 	for _, arg := range fi.Args {
 		if arg.Operand != nil {
-			fl.diagf(arg.Operand.Loc(), "call_indirect expects nested expressions/clauses")
+			if seenTableOperand {
+				fl.diagf(arg.Operand.Loc(), "call_indirect expects at most one table operand")
+				continue
+			}
+			idx, ok := lowerTableIndexOperand(arg.Operand, fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(arg.Operand.Loc(), "invalid call_indirect table operand")
+				continue
+			}
+			tableIndex = idx
+			seenTableOperand = true
 			continue
 		}
 		nested, ok := arg.Instr.(*FoldedInstr)
@@ -863,7 +954,7 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 	fl.emitInstr(wasmir.Instruction{
 		Kind:          wasmir.InstrCallIndirect,
 		CallTypeIndex: typeIdx,
-		TableIndex:    0,
+		TableIndex:    tableIndex,
 		SourceLoc:     fi.loc.String(),
 	})
 }
@@ -1242,6 +1333,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.wrap_i64":        {kind: wasmir.InstrI32WrapI64, operandCount: 0},
 	"i64.extend_i32_s":    {kind: wasmir.InstrI64ExtendI32S, operandCount: 0},
 	"i64.extend_i32_u":    {kind: wasmir.InstrI64ExtendI32U, operandCount: 0},
+	"f32.convert_i32_s":   {kind: wasmir.InstrF32ConvertI32S, operandCount: 0},
+	"f64.convert_i64_s":   {kind: wasmir.InstrF64ConvertI64S, operandCount: 0},
 	"f32.add":             {kind: wasmir.InstrF32Add, operandCount: 0},
 	"f32.sub":             {kind: wasmir.InstrF32Sub, operandCount: 0},
 	"f32.mul":             {kind: wasmir.InstrF32Mul, operandCount: 0},

@@ -18,13 +18,16 @@ func ValidateModule(m *Module) error {
 	}
 
 	var diags diag.ErrorList
+	funcImportTypeIdx := importedFunctionTypeIndices(m)
+	funcImportCount := uint32(len(funcImportTypeIdx))
+	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 	for i, f := range m.Funcs {
-		fnCtx := functionContext(m, i)
+		fnCtx := functionContext(m, funcImportCount+uint32(i), funcImportCount)
 		if int(f.TypeIdx) >= len(m.Types) {
 			diags.Addf("%s has invalid type index %d", fnCtx, f.TypeIdx)
 			continue
 		}
-		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f)
+		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx)
 		for _, err := range funcErrs {
 			diags.Addf("%s: %v", fnCtx, err)
 		}
@@ -73,14 +76,14 @@ func ValidateModule(m *Module) error {
 			continue
 		}
 		tableTy := m.Tables[elem.TableIndex].RefType
-		if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
-			diags.Addf("element[%d]: type mismatch", i)
-		}
-		for j, funcIdx := range elem.FuncIndices {
-			if int(funcIdx) >= len(m.Funcs) {
-				diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
+			if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
+				diags.Addf("element[%d]: type mismatch", i)
 			}
-		}
+			for j, funcIdx := range elem.FuncIndices {
+				if funcIdx >= totalFuncCount {
+					diags.Addf("element[%d] func[%d] index %d out of range", i, j, funcIdx)
+				}
+			}
 		if len(elem.Exprs) > 0 {
 			if elem.RefType != tableTy {
 				diags.Addf("element[%d]: type mismatch", i)
@@ -101,7 +104,7 @@ func ValidateModule(m *Module) error {
 	for i, exp := range m.Exports {
 		switch exp.Kind {
 		case ExternalKindFunction:
-			if int(exp.Index) >= len(m.Funcs) {
+			if exp.Index >= totalFuncCount {
 				diags.Addf("export[%d] index %d out of range", i, exp.Index)
 			}
 		case ExternalKindTable:
@@ -130,9 +133,11 @@ func ValidateModule(m *Module) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft FuncType, f Function) diag.ErrorList {
+func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32) diag.ErrorList {
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
+	funcImportCount := uint32(len(funcImportTypeIdx))
+	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 
 	if len(f.Body) == 0 {
 		diags.Addf("%sempty function body", funcLocCtx)
@@ -524,34 +529,33 @@ instrLoop:
 				continue
 			}
 			stack = append(stack, ValueTypeI32)
-		case InstrCall:
-			if int(ins.FuncIndex) >= len(m.Funcs) {
-				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
-				continue
-			}
-			callee := m.Funcs[ins.FuncIndex]
-			calleeCtx := functionContext(m, int(ins.FuncIndex))
-			if int(callee.TypeIdx) >= len(m.Types) {
-				diags.Addf("%s: call target %s has invalid type index %d", insCtx, calleeCtx, callee.TypeIdx)
-				continue
-			}
-			calleeType := m.Types[callee.TypeIdx]
-			if len(stack) < len(calleeType.Params) {
-				diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
-				continue
-			}
-			base := len(stack) - len(calleeType.Params)
-			ok := true
-			for j, pt := range calleeType.Params {
-				if stack[base+j] != pt {
-					diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabel(callee, j), valueTypeName(pt))
-					ok = false
-					break
+			case InstrCall:
+				if ins.FuncIndex >= totalFuncCount {
+					diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
+					continue
 				}
-			}
-			if !ok {
-				continue
-			}
+				calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
+				calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
+				if !ok {
+					diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
+					continue
+				}
+				if len(stack) < len(calleeType.Params) {
+					diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
+					continue
+				}
+				base := len(stack) - len(calleeType.Params)
+				operandsOK := true
+				for j, pt := range calleeType.Params {
+					if stack[base+j] != pt {
+						diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), valueTypeName(pt))
+						operandsOK = false
+						break
+					}
+				}
+				if !operandsOK {
+					continue
+				}
 			stack = stack[:base]
 			stack = append(stack, calleeType.Results...)
 		case InstrCallIndirect:
@@ -1017,23 +1021,45 @@ instrLoop:
 			}
 			stack[len(stack)-1] = ValueTypeI32
 
-		case InstrI64ExtendI32S, InstrI64ExtendI32U:
-			name := instrName(ins.Kind)
-			if len(stack) < 1 {
-				diags.Addf("%s: %s needs 1 operand", insCtx, name)
-				continue
+			case InstrI64ExtendI32S, InstrI64ExtendI32U:
+				name := instrName(ins.Kind)
+				if len(stack) < 1 {
+					diags.Addf("%s: %s needs 1 operand", insCtx, name)
+					continue
 			}
 			if stack[len(stack)-1] != ValueTypeI32 {
 				diags.Addf("%s: %s expects i32 operand", insCtx, name)
 				continue
-			}
-			stack[len(stack)-1] = ValueTypeI64
+				}
+				stack[len(stack)-1] = ValueTypeI64
 
-		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
-			name := instrName(ins.Kind)
-			if len(stack) < 2 {
-				diags.Addf("%s: %s needs 2 operands", insCtx, name)
-				continue
+			case InstrF32ConvertI32S:
+				if len(stack) < 1 {
+					diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
+					continue
+				}
+				if stack[len(stack)-1] != ValueTypeI32 {
+					diags.Addf("%s: f32.convert_i32_s expects i32 operand", insCtx)
+					continue
+				}
+				stack[len(stack)-1] = ValueTypeF32
+
+			case InstrF64ConvertI64S:
+				if len(stack) < 1 {
+					diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
+					continue
+				}
+				if stack[len(stack)-1] != ValueTypeI64 {
+					diags.Addf("%s: f64.convert_i64_s expects i64 operand", insCtx)
+					continue
+				}
+				stack[len(stack)-1] = ValueTypeF64
+
+			case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
+				name := instrName(ins.Kind)
+				if len(stack) < 2 {
+					diags.Addf("%s: %s needs 2 operands", insCtx, name)
+					continue
 			}
 			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
 				diags.Addf("%s: %s expects f32 operands", insCtx, name)
@@ -1112,11 +1138,11 @@ instrLoop:
 			stack[len(stack)-1] = ValueTypeF64
 		case InstrRefNull:
 			stack = append(stack, ins.RefType)
-		case InstrRefFunc:
-			if int(ins.FuncIndex) >= len(m.Funcs) {
-				diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
-				continue
-			}
+			case InstrRefFunc:
+				if ins.FuncIndex >= totalFuncCount {
+					diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
+					continue
+				}
 			stack = append(stack, ValueTypeFuncRef)
 		case InstrRefIsNull:
 			if len(stack) < 1 {
@@ -1180,18 +1206,63 @@ instrLoop:
 	return diags
 }
 
-func functionContext(m *Module, funcIdx int) string {
+func functionContext(m *Module, funcIdx uint32, funcImportCount uint32) string {
 	ctx := fmt.Sprintf("func[%d]", funcIdx)
-	if funcIdx < 0 || funcIdx >= len(m.Funcs) {
+	if funcIdx >= moduleFunctionCount(m) {
 		return ctx
 	}
-	if name := m.Funcs[funcIdx].Name; name != "" {
-		return ctx + " " + name
+	if funcIdx >= funcImportCount {
+		defIdx := funcIdx - funcImportCount
+		if int(defIdx) < len(m.Funcs) {
+			if name := m.Funcs[defIdx].Name; name != "" {
+				return ctx + " " + name
+			}
+		}
 	}
-	if exportName, ok := functionExportName(m, uint32(funcIdx)); ok {
+	if exportName, ok := functionExportName(m, funcIdx); ok {
 		return fmt.Sprintf(`%s export %q`, ctx, exportName)
 	}
 	return ctx
+}
+
+func importedFunctionTypeIndices(m *Module) []uint32 {
+	out := make([]uint32, 0, len(m.Imports))
+	for _, imp := range m.Imports {
+		if imp.Kind == ExternalKindFunction {
+			out = append(out, imp.TypeIdx)
+		}
+	}
+	return out
+}
+
+func moduleFunctionCount(m *Module) uint32 {
+	var count uint32 = uint32(len(m.Funcs))
+	for _, imp := range m.Imports {
+		if imp.Kind == ExternalKindFunction {
+			count++
+		}
+	}
+	return count
+}
+
+func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) (FuncType, *Function, bool) {
+	importCount := uint32(len(funcImportTypeIdx))
+	if funcIdx < importCount {
+		typeIdx := funcImportTypeIdx[funcIdx]
+		if int(typeIdx) >= len(m.Types) {
+			return FuncType{}, nil, false
+		}
+		return m.Types[typeIdx], nil, true
+	}
+	defIdx := funcIdx - importCount
+	if int(defIdx) >= len(m.Funcs) {
+		return FuncType{}, nil, false
+	}
+	def := &m.Funcs[defIdx]
+	if int(def.TypeIdx) >= len(m.Types) {
+		return FuncType{}, nil, false
+	}
+	return m.Types[def.TypeIdx], def, true
 }
 
 func functionExportName(m *Module, funcIdx uint32) (string, bool) {
@@ -1215,6 +1286,13 @@ func operandLabel(callee Function, operandIndex int) string {
 		return fmt.Sprintf("%d (%s)", operandIndex, callee.ParamNames[operandIndex])
 	}
 	return fmt.Sprintf("%d", operandIndex)
+}
+
+func operandLabelFromDef(callee *Function, operandIndex int) string {
+	if callee == nil {
+		return fmt.Sprintf("%d", operandIndex)
+	}
+	return operandLabel(*callee, operandIndex)
 }
 
 func valueTypeName(vt ValueType) string {
@@ -1249,7 +1327,7 @@ func globalInitType(m *Module, init Instruction) (ValueType, bool) {
 	case InstrRefNull:
 		return init.RefType, true
 	case InstrRefFunc:
-		if int(init.FuncIndex) >= len(m.Funcs) {
+		if init.FuncIndex >= moduleFunctionCount(m) {
 			return 0, false
 		}
 		return ValueTypeFuncRef, true
@@ -1449,6 +1527,10 @@ func instrName(kind InstrKind) string {
 		return "i64.extend_i32_s"
 	case InstrI64ExtendI32U:
 		return "i64.extend_i32_u"
+	case InstrF32ConvertI32S:
+		return "f32.convert_i32_s"
+	case InstrF64ConvertI64S:
+		return "f64.convert_i64_s"
 	case InstrF32Add:
 		return "f32.add"
 	case InstrF32Sub:

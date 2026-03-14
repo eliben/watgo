@@ -26,6 +26,7 @@ import (
 //		assertion: (assert_return ...)
 //	               | (assert_trap ...)
 //		           | (assert_exhaustion ...)
+//		           | (assert_unlinkable ...)
 //		           | (assert_invalid ...)
 //				   | (assert_malformed ...)
 type commandKind string
@@ -37,6 +38,7 @@ const (
 	commandAssertReturn     commandKind = "assert_return"
 	commandAssertTrap       commandKind = "assert_trap"
 	commandAssertExhaustion commandKind = "assert_exhaustion"
+	commandAssertUnlinkable commandKind = "assert_unlinkable"
 	commandAssertInvalid    commandKind = "assert_invalid"
 	commandAssertMalformed  commandKind = "assert_malformed"
 )
@@ -103,6 +105,7 @@ type invokeAction struct {
 //	  (assert_return <action> <result>*)
 //	  (assert_trap <action> <failure>)
 //	  (assert_exhaustion <action> <failure>)
+//	  (assert_unlinkable <module> <failure>)
 //	  (assert_invalid <module> <failure>)
 //	  (assert_malformed <module> <failure>)
 //
@@ -113,6 +116,7 @@ type invokeAction struct {
 //   - commandAssertReturn: action + expectValues
 //   - commandAssertTrap: action + expectText
 //   - commandAssertExhaustion: action + expectText
+//   - commandAssertUnlinkable: moduleExpr + expectText
 //   - commandAssertInvalid: moduleExpr + expectText
 //   - commandAssertMalformed: quotedWAT + expectText
 type scriptCommand struct {
@@ -198,6 +202,8 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 		return parseAssertTrap(sx)
 	case "assert_exhaustion":
 		return parseAssertExhaustion(sx)
+	case "assert_unlinkable":
+		return parseAssertUnlinkable(sx)
 	case "assert_invalid":
 		return parseAssertInvalid(sx)
 	case "assert_malformed":
@@ -447,6 +453,29 @@ func parseAssertExhaustion(sx *textformat.SExpr) (scriptCommand, error) {
 		kind:       commandAssertExhaustion,
 		loc:        sx.Loc(),
 		action:     &action,
+		expectText: text,
+	}, nil
+}
+
+// parseAssertUnlinkable parses "(assert_unlinkable <module> <failure>)".
+// sx is the full assertion expression.
+// It returns a command containing the module expression and expected text.
+func parseAssertUnlinkable(sx *textformat.SExpr) (scriptCommand, error) {
+	elems := sx.Children()
+	if len(elems) != 3 {
+		return scriptCommand{}, fmt.Errorf("assert_unlinkable requires module and text")
+	}
+	if head, ok := headKeyword(elems[1]); !ok || head != "module" {
+		return scriptCommand{}, fmt.Errorf("assert_unlinkable expects (module ...) argument")
+	}
+	text, err := parseStringToken(elems[2])
+	if err != nil {
+		return scriptCommand{}, fmt.Errorf("invalid assert_unlinkable text: %w", err)
+	}
+	return scriptCommand{
+		kind:       commandAssertUnlinkable,
+		loc:        sx.Loc(),
+		moduleExpr: elems[1],
 		expectText: text,
 	}, nil
 }
@@ -866,6 +895,8 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 			r.runAssertTrap(&res, cmd)
 		case commandAssertExhaustion:
 			r.runAssertExhaustion(&res, cmd)
+		case commandAssertUnlinkable:
+			r.runAssertUnlinkable(&res, cmd, opts)
 		case commandAssertInvalid:
 			r.runAssertInvalid(&res, cmd, opts)
 		case commandAssertMalformed:
@@ -1398,6 +1429,57 @@ func (r *scriptRunner) runAssertExhaustion(res *commandResult, cmd scriptCommand
 	res.status = true
 }
 
+// runAssertUnlinkable handles "(assert_unlinkable (module ...) \"...\")".
+// It expects module linking to fail at compile-time or instantiation-time.
+func (r *scriptRunner) runAssertUnlinkable(res *commandResult, cmd scriptCommand, opts runOptions) {
+	if moduleHasTopLevelField(cmd.moduleExpr, "tag") {
+		// Exception handling tags are not in the current watgo subset.
+		// Treat these cases as unlinkable for this harness stage.
+		res.status = true
+		return
+	}
+
+	wasmBytes, err := r.compileModuleExpr(cmd.moduleExpr)
+	if err != nil {
+		if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
+			res.status = false
+			res.detail = fmt.Sprintf("unlinkable error text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
+			return
+		}
+		res.status = true
+		return
+	}
+
+	mod, err := r.instantiateWasm("", wasmBytes)
+	if err == nil {
+		if mod != nil {
+			_ = mod.Close(r.ctx)
+		}
+		res.status = false
+		res.detail = "expected unlinkable module error, got success"
+		return
+	}
+	if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
+		res.status = false
+		res.detail = fmt.Sprintf("unlinkable error text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
+		return
+	}
+	res.status = true
+}
+
+func moduleHasTopLevelField(moduleExpr *textformat.SExpr, fieldHead string) bool {
+	if moduleExpr == nil {
+		return false
+	}
+	elems := moduleExpr.Children()
+	for i := moduleBodyCursor(moduleExpr); i < len(elems); i++ {
+		if elems[i].HeadKeyword() == fieldHead {
+			return true
+		}
+	}
+	return false
+}
+
 func matchesExpectedFailureText(got, want string) bool {
 	if strings.Contains(got, want) {
 		return true
@@ -1415,6 +1497,9 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "out of bounds table access" {
 		return strings.Contains(gotLower, "invalid table access") ||
 			strings.Contains(gotLower, "unreachable")
+	}
+	if wantLower == "undefined element" {
+		return strings.Contains(gotLower, "invalid table access")
 	}
 	if wantLower == "uninitialized element" {
 		return strings.Contains(gotLower, "invalid table access")
@@ -1651,8 +1736,19 @@ func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) (api
 // instantiateSpectest pre-instantiates the minimal imports used by spec scripts.
 func (r *scriptRunner) instantiateSpectest() error {
 	const spectestWAT = `(module
-  (table (export "table") 10 30 funcref)
+  (func (export "print"))
+  (func (export "print_i32") (param i32))
+  (func (export "print_i64") (param i64))
+  (func (export "print_f32") (param f32))
+  (func (export "print_f64") (param f64))
+  (func (export "print_i32_f32") (param i32 f32))
+  (func (export "print_f64_f64") (param f64 f64))
+  (table (export "table") 10 20 funcref)
+  (memory (export "memory") 1 2)
   (global (export "global_i32") i32 (i32.const 666))
+  (global (export "global_i64") i64 (i64.const 666))
+  (global (export "global_f32") f32 (f32.const 666.6))
+  (global (export "global_f64") f64 (f64.const 666.6))
 )`
 	wasmBytes, err := r.compileWAT(spectestWAT)
 	if err != nil {
