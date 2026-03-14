@@ -966,7 +966,8 @@ instrLoop:
 			// i32 unary operators preserve i32 on stack.
 
 		case InstrI64Add, InstrI64Sub, InstrI64Mul, InstrI64DivS, InstrI64DivU,
-			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU:
+			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU,
+			InstrI64And, InstrI64Or, InstrI64Xor, InstrI64Rotl, InstrI64Rotr:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -979,7 +980,8 @@ instrLoop:
 			stack = stack[:len(stack)-2]
 			stack = append(stack, ValueTypeI64)
 
-		case InstrI64Eq, InstrI64LtS, InstrI64LtU, InstrI64GtS, InstrI64GtU:
+		case InstrI64Eq, InstrI64Ne, InstrI64LtS, InstrI64LtU, InstrI64GtS, InstrI64GtU,
+			InstrI64LeS, InstrI64LeU, InstrI64GeS, InstrI64GeU:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -987,17 +989,6 @@ instrLoop:
 			}
 			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
 				diags.Addf("%s: %s expects i64 operands", insCtx, name)
-				continue
-			}
-			stack = stack[:len(stack)-2]
-			stack = append(stack, ValueTypeI32)
-		case InstrI64LeU:
-			if len(stack) < 2 {
-				diags.Addf("%s: i64.le_u needs 2 operands", insCtx)
-				continue
-			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
-				diags.Addf("%s: i64.le_u expects i64 operands", insCtx)
 				continue
 			}
 			stack = stack[:len(stack)-2]
@@ -1012,6 +1003,17 @@ instrLoop:
 				continue
 			}
 			stack[len(stack)-1] = ValueTypeI32
+		case InstrI64Clz, InstrI64Ctz, InstrI64Popcnt, InstrI64Extend8S, InstrI64Extend16S, InstrI64Extend32S:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 {
+				diags.Addf("%s: %s expects i64 operand", insCtx, name)
+				continue
+			}
+			// i64 unary operators preserve i64 on stack.
 
 		case InstrI32WrapI64:
 			if len(stack) < 1 {
@@ -1518,14 +1520,28 @@ func instrName(kind InstrKind) string {
 		return "i32.extend16_s"
 	case InstrI64Add:
 		return "i64.add"
+	case InstrI64And:
+		return "i64.and"
+	case InstrI64Or:
+		return "i64.or"
+	case InstrI64Xor:
+		return "i64.xor"
 	case InstrI64Eq:
 		return "i64.eq"
+	case InstrI64Ne:
+		return "i64.ne"
 	case InstrI64Eqz:
 		return "i64.eqz"
 	case InstrI64GtS:
 		return "i64.gt_s"
 	case InstrI64GtU:
 		return "i64.gt_u"
+	case InstrI64GeS:
+		return "i64.ge_s"
+	case InstrI64GeU:
+		return "i64.ge_u"
+	case InstrI64LeS:
+		return "i64.le_s"
 	case InstrI64LeU:
 		return "i64.le_u"
 	case InstrI64Sub:
@@ -1546,10 +1562,26 @@ func instrName(kind InstrKind) string {
 		return "i64.shr_s"
 	case InstrI64ShrU:
 		return "i64.shr_u"
+	case InstrI64Rotl:
+		return "i64.rotl"
+	case InstrI64Rotr:
+		return "i64.rotr"
 	case InstrI64LtS:
 		return "i64.lt_s"
 	case InstrI64LtU:
 		return "i64.lt_u"
+	case InstrI64Clz:
+		return "i64.clz"
+	case InstrI64Ctz:
+		return "i64.ctz"
+	case InstrI64Popcnt:
+		return "i64.popcnt"
+	case InstrI64Extend8S:
+		return "i64.extend8_s"
+	case InstrI64Extend16S:
+		return "i64.extend16_s"
+	case InstrI64Extend32S:
+		return "i64.extend32_s"
 	case InstrI32WrapI64:
 		return "i32.wrap_i64"
 	case InstrI64ExtendI32S:

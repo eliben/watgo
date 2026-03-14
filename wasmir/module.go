@@ -103,10 +103,17 @@ const (
 	InstrI32Extend8S
 	InstrI32Extend16S
 	InstrI64Add
+	InstrI64And
+	InstrI64Or
+	InstrI64Xor
 	InstrI64Eq
+	InstrI64Ne
 	InstrI64Eqz
 	InstrI64GtS
 	InstrI64GtU
+	InstrI64GeS
+	InstrI64GeU
+	InstrI64LeS
 	InstrI64LeU
 	InstrI64Sub
 	InstrI64Mul
@@ -117,8 +124,16 @@ const (
 	InstrI64Shl
 	InstrI64ShrS
 	InstrI64ShrU
+	InstrI64Rotl
+	InstrI64Rotr
 	InstrI64LtS
 	InstrI64LtU
+	InstrI64Clz
+	InstrI64Ctz
+	InstrI64Popcnt
+	InstrI64Extend8S
+	InstrI64Extend16S
+	InstrI64Extend32S
 	InstrI32WrapI64
 	InstrI64ExtendI32S
 	InstrI64ExtendI32U
