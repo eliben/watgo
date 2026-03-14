@@ -104,8 +104,13 @@ func ParseModuleSExpr(sx *SExpr) (*Module, error) {
 }
 
 // emitError appends one parser diagnostic, prefixed with a source location.
-func (p *Parser) emitError(loc location, msg string) {
-	p.errs.Addf("%s: %s", loc, msg)
+// format follows fmt.Sprintf semantics.
+func (p *Parser) emitError(loc location, format string, args ...any) {
+	if len(args) == 0 {
+		p.errs.Addf("%s: %s", loc, format)
+		return
+	}
+	p.errs.Addf("%s: %s", loc, fmt.Sprintf(format, args...))
 }
 
 // matchToken expects a list sx and matches element [idx] to the given tokname.
@@ -117,17 +122,17 @@ func (p *Parser) matchElement(sx *SExpr, idx int, tokname tokenName) string {
 		return ""
 	}
 	if len(sx.list) <= idx {
-		p.emitError(sx.loc, fmt.Sprintf("expected list with at least %d items", idx+1))
+		p.emitError(sx.loc, "expected list with at least %d items", idx+1)
 		return ""
 	}
 
 	sub := sx.list[idx]
 	if !sub.IsToken() {
-		p.emitError(sub.loc, fmt.Sprintf("expected %s, found list", tokname))
+		p.emitError(sub.loc, "expected %s, found list", tokname)
 		return ""
 	}
 	if sub.tok.name != tokname {
-		p.emitError(sub.loc, fmt.Sprintf("expected %s, found %s", tokname, sub.tok.value))
+		p.emitError(sub.loc, "expected %s, found %s", tokname, sub.tok.value)
 		return ""
 	}
 
@@ -224,7 +229,7 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			// Exception handling tags are outside the current lowering subset.
 			// Keep parsing the rest of the module fields.
 		default:
-			p.emitError(sub.loc, fmt.Sprintf("unsupported module field %q", sub.HeadKeyword()))
+			p.emitError(sub.loc, "unsupported module field %q", sub.HeadKeyword())
 			importsClosed = true
 		}
 	}
@@ -263,7 +268,7 @@ func (p *Parser) parseExportDecl(sx *SExpr) *ExportDecl {
 	}
 	refElem := desc.list[1]
 	if !refElem.IsTokenAny(ID, INT) {
-		p.emitError(refElem.loc, fmt.Sprintf("export %s reference must be ID or INT", head))
+		p.emitError(refElem.loc, "export %s reference must be ID or INT", head)
 		return nil
 	}
 
@@ -1061,7 +1066,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 			continue
 		}
 		if !elem.IsTokenKind(KEYWORD) {
-			p.emitError(elem.loc, fmt.Sprintf("expected instruction keyword, found %s", elem.tok.name))
+			p.emitError(elem.loc, "expected instruction keyword, found %s", elem.tok.name)
 			cursor++
 			continue
 		}
@@ -1070,20 +1075,20 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 		switch name {
 		case "local.get", "local.set", "local.tee", "call", "br", "br_if", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
 			if cursor+1 >= len(sx.list) {
-				p.emitError(elem.loc, fmt.Sprintf("%s expects one operand", name))
+				p.emitError(elem.loc, "%s expects one operand", name)
 				cursor++
 				continue
 			}
 			operandSx := sx.list[cursor+1]
 			operand := p.parseOperand(operandSx)
 			if operand == nil {
-				p.emitError(operandSx.loc, fmt.Sprintf("invalid operand for %s", name))
+				p.emitError(operandSx.loc, "invalid operand for %s", name)
 				cursor += 2
 				continue
 			}
 
 			if !isValidPlainOperand(name, operand) {
-				p.emitError(operandSx.loc, fmt.Sprintf("invalid operand for %s", name))
+				p.emitError(operandSx.loc, "invalid operand for %s", name)
 				cursor += 2
 				continue
 			}
@@ -1149,7 +1154,7 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 		if elem.IsList() {
 			child := p.parseFoldedInstr(elem)
 			if child == nil {
-				p.emitError(elem.loc, fmt.Sprintf("invalid nested instruction for %s", name))
+				p.emitError(elem.loc, "invalid nested instruction for %s", name)
 				continue
 			}
 			args = append(args, FoldedArg{Instr: child})
@@ -1158,7 +1163,7 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 
 		op := p.parseOperand(elem)
 		if op == nil {
-			p.emitError(elem.loc, fmt.Sprintf("invalid operand for %s", name))
+			p.emitError(elem.loc, "invalid operand for %s", name)
 			continue
 		}
 		args = append(args, FoldedArg{Operand: op})
