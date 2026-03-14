@@ -160,8 +160,7 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	importsClosed := false
 	for i := cursor; i < len(sx.list); i++ {
 		sub := sx.list[i]
-		head := sub.HeadKeyword()
-		switch head {
+		switch sub.HeadKeyword() {
 		case "import":
 			if importsClosed {
 				p.emitError(sub.loc, "import after module field")
@@ -308,7 +307,7 @@ func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
 		p.emitError(sx.loc, "invalid global import descriptor")
 		return gd
 	}
-	if tySx.IsList() && tySx.HeadKeyword() == "mut" {
+	if tySx.HeadKeyword() == "mut" {
 		if len(tySx.list) != 2 {
 			p.emitError(tySx.loc, "invalid mutable global type")
 			return gd
@@ -346,14 +345,15 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 	for ; cursor < len(sx.list); cursor++ {
 		// TODO: enforce order on param/result/local clauses?
 		elem := sx.list[cursor]
-		if elem.HeadKeyword() == "type" {
+		switch elem.HeadKeyword() {
+		case "type":
 			f.TyUse.Id = p.parseTypeUseClause(elem)
-		} else if elem.HeadKeyword() == "export" {
+		case "export":
 			name := p.matchElement(elem, 1, STRING)
 			if f.Export == "" {
 				f.Export = name
 			}
-		} else if elem.HeadKeyword() == "import" {
+		case "import":
 			modName, fieldName, ok := p.parseImportClause(elem)
 			if !ok {
 				p.emitError(elem.loc, "invalid function import clause")
@@ -365,17 +365,17 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 			}
 			f.ImportModule = modName
 			f.ImportName = fieldName
-		} else if elem.HeadKeyword() == "param" {
+		case "param":
 			f.TyUse.Params = append(f.TyUse.Params, p.parseParamDecl(elem)...)
-		} else if elem.HeadKeyword() == "result" {
+		case "result":
 			f.TyUse.Results = append(f.TyUse.Results, p.parseResultDecl(elem)...)
-		} else if elem.HeadKeyword() == "local" {
+		case "local":
 			f.Locals = append(f.Locals, p.parseLocalDecl(elem)...)
-		} else {
+		default:
 			// Neither of these, so the instruction sequence started. Parse the
 			// entire instruction sequence.
 			f.Instrs = p.parseInstrs(sx, cursor)
-			break
+			return f
 		}
 	}
 
@@ -599,7 +599,7 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 // parseDataStrings parses a "(data ...)" clause payload and returns only its
 // string chunks.
 func (p *Parser) parseDataStrings(dataClause *SExpr) []string {
-	if dataClause == nil || !dataClause.IsList() || dataClause.HeadKeyword() != "data" {
+	if dataClause == nil || dataClause.HeadKeyword() != "data" {
 		return nil
 	}
 	return p.parseDataStringsFrom(dataClause, 1)
@@ -650,7 +650,7 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		return gd
 	}
 	tySx := sx.list[cursor]
-	if tySx.IsList() && tySx.HeadKeyword() == "mut" {
+	if tySx.HeadKeyword() == "mut" {
 		if len(tySx.list) != 2 {
 			p.emitError(tySx.loc, "invalid mutable global type")
 		} else {
@@ -823,7 +823,7 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 // parseType parses a value/reference type syntax node and returns the
 // corresponding AST type, or nil after emitting diagnostics.
 func (p *Parser) parseType(sx *SExpr) Type {
-	if sx.IsList() && sx.HeadKeyword() == "ref" {
+	if sx.HeadKeyword() == "ref" {
 		elems := sx.Children()
 		if len(elems) == 2 && elems[1].IsTokenAny(KEYWORD, ID) {
 			return &RefType{Nullable: false, HeapType: elems[1].tok.value}
@@ -922,8 +922,7 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	}
 
 	if ed.Mode != ElemModeDeclarative && cursor < len(sx.list) && sx.list[cursor].IsList() {
-		head := sx.list[cursor].HeadKeyword()
-		switch head {
+		switch sx.list[cursor].HeadKeyword() {
 		case "offset":
 			if len(sx.list[cursor].list) != 2 || !sx.list[cursor].list[1].IsList() {
 				p.emitError(sx.list[cursor].loc, "elem offset clause expects one instruction list")
@@ -953,7 +952,7 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 			cursor++
 		} else if (elem.IsTokenKind(KEYWORD) &&
 			(elem.tok.value == "funcref" || elem.tok.value == "externref")) ||
-			(elem.IsList() && elem.HeadKeyword() == "ref") {
+			elem.HeadKeyword() == "ref" {
 			ed.RefTy = p.parseType(elem)
 			cursor++
 		}
