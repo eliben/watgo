@@ -157,11 +157,12 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 
 	for i := cursor; i < len(sx.list); i++ {
 		sub := sx.list[i]
-		if sub.HeadKeyword() == "type" {
+		switch sub.HeadKeyword() {
+		case "type":
 			m.Types = append(m.Types, p.parseTypeDecl(sub))
-		} else if sub.HeadKeyword() == "table" {
+		case "table":
 			m.Tables = append(m.Tables, p.parseTableDecl(sub))
-		} else if sub.HeadKeyword() == "import" {
+		case "import":
 			td, gd, ok := p.parseImportField(sub)
 			if !ok {
 				continue
@@ -172,17 +173,17 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			if gd != nil {
 				m.Globals = append(m.Globals, gd)
 			}
-		} else if sub.HeadKeyword() == "memory" {
+		case "memory":
 			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
-		} else if sub.HeadKeyword() == "data" {
+		case "data":
 			m.Data = append(m.Data, p.parseDataDecl(sub))
-		} else if sub.HeadKeyword() == "global" {
+		case "global":
 			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
-		} else if sub.HeadKeyword() == "elem" {
+		case "elem":
 			m.Elems = append(m.Elems, p.parseElemDecl(sub))
-		} else if sub.HeadKeyword() == "func" {
+		case "func":
 			m.Funcs = append(m.Funcs, p.parseFunction(sub))
-		} else {
+		default:
 			p.emitError(sub.loc, fmt.Sprintf("unsupported module field %q", sub.HeadKeyword()))
 		}
 	}
