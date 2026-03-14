@@ -39,6 +39,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	seenExport := false
 	seenElement := false
 	seenCode := false
+	seenData := false
 
 	for !atEOF(r) {
 		sectionID, err := readByte(r)
@@ -82,6 +83,8 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 				switch imp.Kind {
 				case wasmir.ExternalKindTable:
 					out.Tables = append(out.Tables, imp.Table)
+				case wasmir.ExternalKindMemory:
+					out.Memories = append(out.Memories, imp.Memory)
 				case wasmir.ExternalKindGlobal:
 					out.Globals = append(out.Globals, wasmir.Global{
 						Type:         imp.GlobalType,
@@ -115,7 +118,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 				break
 			}
 			seenMemory = true
-			out.Memories = decodeMemorySection(sr, &diags)
+			out.Memories = append(out.Memories, decodeMemorySection(sr, &diags)...)
 
 		case sectionGlobalID:
 			if seenGlobal {
@@ -148,6 +151,13 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			}
 			seenCode = true
 			funcBodies = decodeCodeSection(sr, &diags)
+		case sectionDataID:
+			if seenData {
+				diags.Addf("duplicate data section")
+				break
+			}
+			seenData = true
+			out.Data = decodeDataSection(sr, &diags)
 
 		default:
 			diags.Addf("unsupported section id %d", sectionID)
@@ -285,13 +295,20 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				ImportName:   name,
 			}
 		case importKindMemoryCode:
-			min, _, _, err := decodeLimits(r)
+			min, hasMax, max, err := decodeLimits(r)
 			if err != nil {
 				diags.Addf("import[%d]: invalid memory limits: %v", i, err)
 				break
 			}
 			imp.Kind = wasmir.ExternalKindMemory
-			imp.Memory = wasmir.Memory{Min: min}
+			imp.Memory = wasmir.Memory{
+				Min:          min,
+				HasMax:       hasMax,
+				Max:          max,
+				Imported:     true,
+				ImportModule: moduleName,
+				ImportName:   name,
+			}
 		case importKindGlobalCode:
 			tyCode, err := readByte(r)
 			if err != nil {
@@ -379,12 +396,12 @@ func decodeMemorySection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Memory
 	}
 	out := make([]wasmir.Memory, 0, n)
 	for i := uint32(0); i < n; i++ {
-		min, _, _, err := decodeLimits(r)
+		min, hasMax, max, err := decodeLimits(r)
 		if err != nil {
 			diags.Addf("memory[%d]: invalid limits: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.Memory{Min: min})
+		out = append(out, wasmir.Memory{Min: min, HasMax: hasMax, Max: max})
 	}
 	return out
 }
@@ -543,6 +560,51 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 	return out
 }
 
+func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegment {
+	n, err := readU32(r)
+	if err != nil {
+		diags.Addf("data section: invalid vector length: %v", err)
+		return nil
+	}
+	out := make([]wasmir.DataSegment, 0, n)
+	for i := uint32(0); i < n; i++ {
+		flags, err := readByte(r)
+		if err != nil {
+			diags.Addf("data[%d]: missing flags: %v", i, err)
+			break
+		}
+		if flags != 0x00 {
+			diags.Addf("data[%d]: unsupported flags 0x%x", i, flags)
+			break
+		}
+		offsetInstr, err := decodeConstExpr(r)
+		if err != nil {
+			diags.Addf("data[%d]: invalid offset expr: %v", i, err)
+			break
+		}
+		if offsetInstr.Kind != wasmir.InstrI32Const {
+			diags.Addf("data[%d]: offset expr must be i32.const", i)
+			break
+		}
+		size, err := readU32(r)
+		if err != nil {
+			diags.Addf("data[%d]: invalid payload size: %v", i, err)
+			break
+		}
+		init, err := readN(r, int(size))
+		if err != nil {
+			diags.Addf("data[%d]: invalid payload bytes: %v", i, err)
+			break
+		}
+		out = append(out, wasmir.DataSegment{
+			MemoryIndex: 0,
+			OffsetI32:   offsetInstr.I32Const,
+			Init:        init,
+		})
+	}
+	return out
+}
+
 func decodeElemFuncIndices(r *bytes.Reader, elemIdx uint32, diags *diag.ErrorList) []uint32 {
 	funcCount, err := readU32(r)
 	if err != nil {
@@ -559,6 +621,22 @@ func decodeElemFuncIndices(r *bytes.Reader, elemIdx uint32, diags *diag.ErrorLis
 		funcIndices = append(funcIndices, idx)
 	}
 	return funcIndices
+}
+
+func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
+	align, err := readU32(r)
+	if err != nil {
+		return wasmir.Instruction{}, err
+	}
+	offset, err := readU32(r)
+	if err != nil {
+		return wasmir.Instruction{}, err
+	}
+	return wasmir.Instruction{
+		Kind:         kind,
+		MemoryAlign:  align,
+		MemoryOffset: offset,
+	}, nil
 }
 
 func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
@@ -897,37 +975,173 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				TableIndex:    tableIndex,
 			})
 		case opI32LoadCode:
-			align, err := readU32(r)
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Load)
 			if err != nil {
-				diags.Addf("code[%d]: i32.load invalid align immediate: %v", funcIdx, err)
+				diags.Addf("code[%d]: i32.load invalid memarg: %v", funcIdx, err)
 				return out
 			}
-			offset, err := readU32(r)
+			out = append(out, ins)
+		case opI64LoadCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load)
 			if err != nil {
-				diags.Addf("code[%d]: i32.load invalid offset immediate: %v", funcIdx, err)
+				diags.Addf("code[%d]: i64.load invalid memarg: %v", funcIdx, err)
 				return out
 			}
-			out = append(out, wasmir.Instruction{
-				Kind:         wasmir.InstrI32Load,
-				MemoryAlign:  align,
-				MemoryOffset: offset,
-			})
+			out = append(out, ins)
+		case opF32LoadCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrF32Load)
+			if err != nil {
+				diags.Addf("code[%d]: f32.load invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opF64LoadCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrF64Load)
+			if err != nil {
+				diags.Addf("code[%d]: f64.load invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI32Load8SCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Load8S)
+			if err != nil {
+				diags.Addf("code[%d]: i32.load8_s invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI32Load8UCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Load8U)
+			if err != nil {
+				diags.Addf("code[%d]: i32.load8_u invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI32Load16SCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Load16S)
+			if err != nil {
+				diags.Addf("code[%d]: i32.load16_s invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI32Load16UCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Load16U)
+			if err != nil {
+				diags.Addf("code[%d]: i32.load16_u invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load8SCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load8S)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load8_s invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load8UCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load8U)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load8_u invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load16SCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load16S)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load16_s invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load16UCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load16U)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load16_u invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load32SCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load32S)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load32_s invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Load32UCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Load32U)
+			if err != nil {
+				diags.Addf("code[%d]: i64.load32_u invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
 		case opI32StoreCode:
-			align, err := readU32(r)
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Store)
 			if err != nil {
-				diags.Addf("code[%d]: i32.store invalid align immediate: %v", funcIdx, err)
+				diags.Addf("code[%d]: i32.store invalid memarg: %v", funcIdx, err)
 				return out
 			}
-			offset, err := readU32(r)
+			out = append(out, ins)
+		case opI64StoreCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Store)
 			if err != nil {
-				diags.Addf("code[%d]: i32.store invalid offset immediate: %v", funcIdx, err)
+				diags.Addf("code[%d]: i64.store invalid memarg: %v", funcIdx, err)
 				return out
 			}
-			out = append(out, wasmir.Instruction{
-				Kind:         wasmir.InstrI32Store,
-				MemoryAlign:  align,
-				MemoryOffset: offset,
-			})
+			out = append(out, ins)
+		case opI32Store8Code:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Store8)
+			if err != nil {
+				diags.Addf("code[%d]: i32.store8 invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI32Store16Code:
+			ins, err := decodeMemInstr(r, wasmir.InstrI32Store16)
+			if err != nil {
+				diags.Addf("code[%d]: i32.store16 invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Store8Code:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Store8)
+			if err != nil {
+				diags.Addf("code[%d]: i64.store8 invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Store16Code:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Store16)
+			if err != nil {
+				diags.Addf("code[%d]: i64.store16 invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opI64Store32Code:
+			ins, err := decodeMemInstr(r, wasmir.InstrI64Store32)
+			if err != nil {
+				diags.Addf("code[%d]: i64.store32 invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opF32StoreCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrF32Store)
+			if err != nil {
+				diags.Addf("code[%d]: f32.store invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opF64StoreCode:
+			ins, err := decodeMemInstr(r, wasmir.InstrF64Store)
+			if err != nil {
+				diags.Addf("code[%d]: f64.store invalid memarg: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, ins)
+		case opMemorySizeCode:
+			memIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: memory.size missing/invalid memory immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemorySize, MemoryIndex: memIndex})
 		case opMemoryGrowCode:
 			memIndex, err := readU32(r)
 			if err != nil {
@@ -969,6 +1183,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeU})
 		case opI32GeUCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeU})
+		case opI32AndCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32And})
 		case opI64AddCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
 		case opI64EqCode:
@@ -1059,6 +1275,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Trunc})
 		case opF64NearestCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Nearest})
+		case opF64EqCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Eq})
+		case opF64ReinterpretI64Code:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ReinterpretI64})
 		case opRefNullCode:
 			refTypeCode, err := readByte(r)
 			if err != nil {

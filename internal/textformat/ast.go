@@ -24,6 +24,9 @@ type Module struct {
 	// Memories contains parsed memory declarations in source order.
 	Memories []*MemoryDecl
 
+	// Data contains parsed module-level data segment declarations.
+	Data []*DataDecl
+
 	// Globals contains parsed global declarations in source order.
 	Globals []*GlobalDecl
 
@@ -90,10 +93,43 @@ type MemoryDecl struct {
 	// Id is the optional memory identifier (for example "$m").
 	Id string
 
+	// Export is the optional exported name from an inline "(export \"...\")"
+	// clause.
+	Export string
+
+	// ImportModule is non-empty when this memory is imported and stores the
+	// import module name.
+	ImportModule string
+
+	// ImportName is non-empty when this memory is imported and stores the
+	// import field name.
+	ImportName string
+
 	// Min is the minimum memory size in pages.
 	Min uint32
 
+	// HasMax reports whether a maximum memory size was specified.
+	HasMax bool
+
+	// Max is the maximum memory size in pages when HasMax is true.
+	Max uint32
+
+	// InlineData contains raw string tokens from "(memory (data ...))" sugar.
+	InlineData []string
+
 	// loc is the source location of the memory declaration form head.
+	loc location
+}
+
+// DataDecl is one module-level data segment declaration "(data ...)".
+type DataDecl struct {
+	// Offset is the active data segment offset expression.
+	Offset Instruction
+
+	// Strings contains raw STRING token payloads from source.
+	Strings []string
+
+	// loc is the source location of the data declaration form head.
 	loc location
 }
 

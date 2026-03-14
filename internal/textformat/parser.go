@@ -103,6 +103,7 @@ func ParseModuleSExpr(sx *SExpr) (*Module, error) {
 	}
 }
 
+// emitError appends one parser diagnostic, prefixed with a source location.
 func (p *Parser) emitError(loc location, msg string) {
 	p.errs.Addf("%s: %s", loc, msg)
 }
@@ -133,6 +134,8 @@ func (p *Parser) matchElement(sx *SExpr, idx int, tokname tokenName) string {
 	return sub.tok.value
 }
 
+// parseModule parses one "(module ...)" S-expression into a typed module AST.
+// Unsupported or malformed fields are reported to parser diagnostics.
 func (p *Parser) parseModule(sx *SExpr) *Module {
 	if sx.HeadKeyword() != "module" {
 		p.emitError(sx.loc, "expected 'module'")
@@ -171,6 +174,8 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			}
 		} else if sub.HeadKeyword() == "memory" {
 			m.Memories = append(m.Memories, p.parseMemoryDecl(sub))
+		} else if sub.HeadKeyword() == "data" {
+			m.Data = append(m.Data, p.parseDataDecl(sub))
 		} else if sub.HeadKeyword() == "global" {
 			m.Globals = append(m.Globals, p.parseGlobalDecl(sub))
 		} else if sub.HeadKeyword() == "elem" {
@@ -185,6 +190,9 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	return m
 }
 
+// parseImportField parses one top-level "(import ...)" form.
+// It currently supports table and global imports and returns at most one
+// descriptor of each kind plus a success flag.
 func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, *GlobalDecl, bool) {
 	if len(sx.list) != 4 {
 		p.emitError(sx.loc, "invalid import declaration")
@@ -210,6 +218,8 @@ func (p *Parser) parseImportField(sx *SExpr) (*TableDecl, *GlobalDecl, bool) {
 	}
 }
 
+// parseGlobalImportDesc parses a global import descriptor "(global ...)".
+// It accepts either immutable "<valtype>" or mutable "(mut <valtype>)".
 func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
 	gd := &GlobalDecl{loc: sx.loc}
 	if len(sx.list) != 2 {
@@ -230,6 +240,8 @@ func (p *Parser) parseGlobalImportDesc(sx *SExpr) *GlobalDecl {
 	return gd
 }
 
+// parseFunction parses one module-level "(func ...)" declaration, including
+// optional ID/export/type use, local declarations, and instruction body.
 func (p *Parser) parseFunction(sx *SExpr) *Function {
 	f := &Function{
 		TyUse: &TypeUse{},
@@ -386,9 +398,12 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 
 // parseMemoryDecl parses one module-level "(memory ...)" declaration.
 //
-// Supported forms:
+// Supported forms include:
 //   - (memory 1)
-//   - (memory $m 1)
+//   - (memory 1 2)
+//   - (memory $m (export "mem") 1 2)
+//   - (memory (import "M" "m") 1 2)
+//   - (memory (data "abc" "..."))
 func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	md := &MemoryDecl{loc: sx.loc}
 	cursor := 1
@@ -396,10 +411,30 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 		md.Id = sx.list[cursor].tok.value
 		cursor++
 	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
+		md.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		cursor++
+	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
+		modName, fieldName, ok := p.parseImportClause(sx.list[cursor])
+		if !ok {
+			p.emitError(sx.list[cursor].loc, "invalid memory import clause")
+			return md
+		}
+		md.ImportModule = modName
+		md.ImportName = fieldName
+		cursor++
+	}
 	if cursor >= len(sx.list) {
 		p.emitError(sx.loc, "memory declaration missing minimum size")
 		return md
 	}
+
+	if sx.list[cursor].IsList() && sx.list[cursor].HeadKeyword() == "data" {
+		md.InlineData = p.parseDataStrings(sx.list[cursor])
+		return md
+	}
+
 	minTok := sx.list[cursor]
 	if !minTok.IsToken() || minTok.tok.name != INT {
 		p.emitError(minTok.loc, "memory minimum must be INT")
@@ -411,7 +446,58 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 		return md
 	}
 	md.Min = min
+	cursor++
+
+	if cursor < len(sx.list) && sx.list[cursor].IsToken() && sx.list[cursor].tok.name == INT {
+		max, ok := parseU32Token(sx.list[cursor].tok.value)
+		if !ok {
+			p.emitError(sx.list[cursor].loc, "invalid memory maximum size")
+			return md
+		}
+		md.HasMax = true
+		md.Max = max
+	}
 	return md
+}
+
+// parseDataDecl parses one top-level "(data ...)" declaration.
+// It expects a folded offset instruction followed by one or more string chunks.
+func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
+	dd := &DataDecl{loc: sx.loc}
+	if len(sx.list) < 2 {
+		p.emitError(sx.loc, "data declaration missing offset")
+		return dd
+	}
+	if !sx.list[1].IsList() {
+		p.emitError(sx.list[1].loc, "data declaration offset must be instruction expression")
+		return dd
+	}
+	dd.Offset = p.parseFoldedInstr(sx.list[1])
+	dd.Strings = p.parseDataStringsFrom(sx, 2)
+	return dd
+}
+
+// parseDataStrings parses a "(data ...)" clause payload and returns only its
+// string chunks.
+func (p *Parser) parseDataStrings(dataClause *SExpr) []string {
+	if dataClause == nil || !dataClause.IsList() || dataClause.HeadKeyword() != "data" {
+		return nil
+	}
+	return p.parseDataStringsFrom(dataClause, 1)
+}
+
+// parseDataStringsFrom parses STRING tokens in sx starting at start and returns
+// their raw token values. Non-STRING entries are reported as diagnostics.
+func (p *Parser) parseDataStringsFrom(sx *SExpr, start int) []string {
+	var out []string
+	for i := start; i < len(sx.list); i++ {
+		if !sx.list[i].IsToken() || sx.list[i].tok.name != STRING {
+			p.emitError(sx.list[i].loc, "data string must be STRING")
+			continue
+		}
+		out = append(out, sx.list[i].tok.value)
+	}
+	return out
 }
 
 // parseGlobalDecl parses one module-level "(global ...)" declaration.
@@ -615,6 +701,8 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 	return out
 }
 
+// parseType parses a value/reference type syntax node and returns the
+// corresponding AST type, or nil after emitting diagnostics.
 func (p *Parser) parseType(sx *SExpr) Type {
 	if sx.IsList() && sx.HeadKeyword() == "ref" {
 		elems := sx.Children()
@@ -640,6 +728,9 @@ func (p *Parser) parseType(sx *SExpr) Type {
 	return nil
 }
 
+// parseElemRefs parses an inline "(elem ...)" payload inside a table
+// declaration. It accepts function references by ID/INT and folded item
+// expressions.
 func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
 	if elemClause.HeadKeyword() != "elem" {
 		p.emitError(elemClause.loc, `table declaration expects "(elem ...)"`)
@@ -671,6 +762,8 @@ func (p *Parser) parseElemRefs(td *TableDecl, elemClause *SExpr) {
 	}
 }
 
+// parseImportClause parses "(import \"mod\" \"name\")" and returns module/name.
+// It returns ok=false on malformed input.
 func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 	if sx.HeadKeyword() != "import" {
 		return "", "", false
@@ -686,6 +779,9 @@ func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 	return mod, field, true
 }
 
+// parseElemDecl parses one module-level "(elem ...)" declaration.
+// It handles active/passive/declarative forms and both function-ref and
+// expression payloads.
 func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	ed := &ElemDecl{Mode: ElemModeActive, loc: sx.loc}
 	cursor := 1
@@ -776,6 +872,8 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	return ed
 }
 
+// parseElemItemExprs parses an "(item ...)" element payload and returns exactly
+// one expression instruction when valid.
 func (p *Parser) parseElemItemExprs(item *SExpr) []Instruction {
 	if len(item.list) < 2 {
 		p.emitError(item.loc, "elem item must contain an expression")
@@ -915,6 +1013,8 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	return &FoldedInstr{Name: name, Args: args, loc: head.loc}
 }
 
+// parseOperand parses a token node as an instruction operand.
+// It returns nil for non-token nodes or unsupported token kinds.
 func (p *Parser) parseOperand(sx *SExpr) Operand {
 	if !sx.IsToken() {
 		return nil
@@ -936,6 +1036,8 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 	}
 }
 
+// isValidPlainOperand validates operand type constraints for plain (flat) WAT
+// instructions that have one immediate operand.
 func isValidPlainOperand(name string, op Operand) bool {
 	switch name {
 	case "local.get", "local.set", "local.tee", "call", "br", "br_if", "global.get", "global.set", "ref.func":
@@ -967,6 +1069,8 @@ func isValidPlainOperand(name string, op Operand) bool {
 	}
 }
 
+// parseU32Token parses an INT token text into uint32, accepting '_' separators
+// and base prefixes supported by strconv.ParseInt.
 func parseU32Token(s string) (uint32, bool) {
 	clean := strings.ReplaceAll(s, "_", "")
 	n, err := strconv.ParseInt(clean, 0, 64)

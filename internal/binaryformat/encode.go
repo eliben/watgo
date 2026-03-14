@@ -26,6 +26,7 @@ const (
 	sectionExportID   byte = 7
 	sectionElementID  byte = 9
 	sectionCodeID     byte = 10
+	sectionDataID     byte = 11
 
 	// typeCodeFunc tags a function type entry in the type section.
 	typeCodeFunc byte = 0x60
@@ -50,101 +51,126 @@ const (
 	refTypeExternRefCode byte = 0x6f
 
 	// Opcodes for the currently supported instruction subset.
-	opBlockCode         byte = 0x02
-	opLoopCode          byte = 0x03
-	opIfCode            byte = 0x04
-	opElseCode          byte = 0x05
-	opBrCode            byte = 0x0c
-	opBrIfCode          byte = 0x0d
-	opBrTableCode       byte = 0x0e
-	opUnreachableCode   byte = 0x00
-	opNopCode           byte = 0x01
-	opReturnCode        byte = 0x0f
-	opEndCode           byte = 0x0b
-	opI32ConstCode      byte = 0x41
-	opI64ConstCode      byte = 0x42
-	opF32ConstCode      byte = 0x43
-	opF64ConstCode      byte = 0x44
-	opDropCode          byte = 0x1a
-	opSelectCode        byte = 0x1b
-	opLocalGetCode      byte = 0x20
-	opLocalSetCode      byte = 0x21
-	opLocalTeeCode      byte = 0x22
-	opGlobalGetCode     byte = 0x23
-	opGlobalSetCode     byte = 0x24
-	opTableGetCode      byte = 0x25
-	opTableSetCode      byte = 0x26
-	opCallCode          byte = 0x10
-	opCallIndirectCode  byte = 0x11
-	opI32LoadCode       byte = 0x28
-	opI32StoreCode      byte = 0x36
-	opMemoryGrowCode    byte = 0x40
-	opI32EqCode         byte = 0x46
-	opF32GtCode         byte = 0x5e
-	opI32AddCode        byte = 0x6a
-	opI32SubCode        byte = 0x6b
-	opI32MulCode        byte = 0x6c
-	opI32CtzCode        byte = 0x68
-	opI32DivSCode       byte = 0x6d
-	opI32DivUCode       byte = 0x6e
-	opI32RemSCode       byte = 0x6f
-	opI32RemUCode       byte = 0x70
-	opI32ShlCode        byte = 0x74
-	opI32ShrSCode       byte = 0x75
-	opI32ShrUCode       byte = 0x76
-	opI32EqzCode        byte = 0x45
-	opI32LtSCode        byte = 0x48
-	opI32LtUCode        byte = 0x49
-	opI32LeUCode        byte = 0x4d
-	opI32GeUCode        byte = 0x4f
-	opI64AddCode        byte = 0x7c
-	opI64EqCode         byte = 0x51
-	opI64EqzCode        byte = 0x50
-	opI64GtSCode        byte = 0x55
-	opI64GtUCode        byte = 0x56
-	opI64LeUCode        byte = 0x58
-	opI64SubCode        byte = 0x7d
-	opI64MulCode        byte = 0x7e
-	opI64DivSCode       byte = 0x7f
-	opI64DivUCode       byte = 0x80
-	opI64RemSCode       byte = 0x81
-	opI64RemUCode       byte = 0x82
-	opI64ShlCode        byte = 0x86
-	opI64ShrSCode       byte = 0x87
-	opI64ShrUCode       byte = 0x88
-	opI64LtSCode        byte = 0x53
-	opI64LtUCode        byte = 0x54
-	opI32WrapI64Code    byte = 0xa7
-	opI64ExtendI32SCode byte = 0xac
-	opI64ExtendI32UCode byte = 0xad
-	opF32CeilCode       byte = 0x8d
-	opF32FloorCode      byte = 0x8e
-	opF32TruncCode      byte = 0x8f
-	opF32NearestCode    byte = 0x90
-	opF32SqrtCode       byte = 0x91
-	opF32NegCode        byte = 0x8c
-	opF32AddCode        byte = 0x92
-	opF32SubCode        byte = 0x93
-	opF32MulCode        byte = 0x94
-	opF32DivCode        byte = 0x95
-	opF32MinCode        byte = 0x96
-	opF32MaxCode        byte = 0x97
-	opF64CeilCode       byte = 0x9b
-	opF64FloorCode      byte = 0x9c
-	opF64TruncCode      byte = 0x9d
-	opF64NearestCode    byte = 0x9e
-	opF64SqrtCode       byte = 0x9f
-	opF64NegCode        byte = 0x9a
-	opF64AddCode        byte = 0xa0
-	opF64SubCode        byte = 0xa1
-	opF64MulCode        byte = 0xa2
-	opF64DivCode        byte = 0xa3
-	opF64MinCode        byte = 0xa4
-	opF64MaxCode        byte = 0xa5
-	opRefNullCode       byte = 0xd0
-	opRefIsNullCode     byte = 0xd1
-	opRefFuncCode       byte = 0xd2
-	opPrefixFCCode      byte = 0xfc
+	opBlockCode             byte = 0x02
+	opLoopCode              byte = 0x03
+	opIfCode                byte = 0x04
+	opElseCode              byte = 0x05
+	opBrCode                byte = 0x0c
+	opBrIfCode              byte = 0x0d
+	opBrTableCode           byte = 0x0e
+	opUnreachableCode       byte = 0x00
+	opNopCode               byte = 0x01
+	opReturnCode            byte = 0x0f
+	opEndCode               byte = 0x0b
+	opI32ConstCode          byte = 0x41
+	opI64ConstCode          byte = 0x42
+	opF32ConstCode          byte = 0x43
+	opF64ConstCode          byte = 0x44
+	opDropCode              byte = 0x1a
+	opSelectCode            byte = 0x1b
+	opLocalGetCode          byte = 0x20
+	opLocalSetCode          byte = 0x21
+	opLocalTeeCode          byte = 0x22
+	opGlobalGetCode         byte = 0x23
+	opGlobalSetCode         byte = 0x24
+	opTableGetCode          byte = 0x25
+	opTableSetCode          byte = 0x26
+	opCallCode              byte = 0x10
+	opCallIndirectCode      byte = 0x11
+	opI32LoadCode           byte = 0x28
+	opI64LoadCode           byte = 0x29
+	opF32LoadCode           byte = 0x2a
+	opF64LoadCode           byte = 0x2b
+	opI32Load8SCode         byte = 0x2c
+	opI32Load8UCode         byte = 0x2d
+	opI32Load16SCode        byte = 0x2e
+	opI32Load16UCode        byte = 0x2f
+	opI64Load8SCode         byte = 0x30
+	opI64Load8UCode         byte = 0x31
+	opI64Load16SCode        byte = 0x32
+	opI64Load16UCode        byte = 0x33
+	opI64Load32SCode        byte = 0x34
+	opI64Load32UCode        byte = 0x35
+	opI32StoreCode          byte = 0x36
+	opI64StoreCode          byte = 0x37
+	opF32StoreCode          byte = 0x38
+	opF64StoreCode          byte = 0x39
+	opI32Store8Code         byte = 0x3a
+	opI32Store16Code        byte = 0x3b
+	opI64Store8Code         byte = 0x3c
+	opI64Store16Code        byte = 0x3d
+	opI64Store32Code        byte = 0x3e
+	opMemorySizeCode        byte = 0x3f
+	opMemoryGrowCode        byte = 0x40
+	opI32EqCode             byte = 0x46
+	opF32GtCode             byte = 0x5e
+	opI32AddCode            byte = 0x6a
+	opI32SubCode            byte = 0x6b
+	opI32MulCode            byte = 0x6c
+	opI32CtzCode            byte = 0x68
+	opI32DivSCode           byte = 0x6d
+	opI32DivUCode           byte = 0x6e
+	opI32RemSCode           byte = 0x6f
+	opI32RemUCode           byte = 0x70
+	opI32ShlCode            byte = 0x74
+	opI32ShrSCode           byte = 0x75
+	opI32ShrUCode           byte = 0x76
+	opI32EqzCode            byte = 0x45
+	opI32LtSCode            byte = 0x48
+	opI32LtUCode            byte = 0x49
+	opI32LeUCode            byte = 0x4d
+	opI32GeUCode            byte = 0x4f
+	opI32AndCode            byte = 0x71
+	opI64AddCode            byte = 0x7c
+	opI64EqCode             byte = 0x51
+	opI64EqzCode            byte = 0x50
+	opI64GtSCode            byte = 0x55
+	opI64GtUCode            byte = 0x56
+	opI64LeUCode            byte = 0x58
+	opI64SubCode            byte = 0x7d
+	opI64MulCode            byte = 0x7e
+	opI64DivSCode           byte = 0x7f
+	opI64DivUCode           byte = 0x80
+	opI64RemSCode           byte = 0x81
+	opI64RemUCode           byte = 0x82
+	opI64ShlCode            byte = 0x86
+	opI64ShrSCode           byte = 0x87
+	opI64ShrUCode           byte = 0x88
+	opI64LtSCode            byte = 0x53
+	opI64LtUCode            byte = 0x54
+	opI32WrapI64Code        byte = 0xa7
+	opI64ExtendI32SCode     byte = 0xac
+	opI64ExtendI32UCode     byte = 0xad
+	opF32CeilCode           byte = 0x8d
+	opF32FloorCode          byte = 0x8e
+	opF32TruncCode          byte = 0x8f
+	opF32NearestCode        byte = 0x90
+	opF32SqrtCode           byte = 0x91
+	opF32NegCode            byte = 0x8c
+	opF32AddCode            byte = 0x92
+	opF32SubCode            byte = 0x93
+	opF32MulCode            byte = 0x94
+	opF32DivCode            byte = 0x95
+	opF32MinCode            byte = 0x96
+	opF32MaxCode            byte = 0x97
+	opF64CeilCode           byte = 0x9b
+	opF64FloorCode          byte = 0x9c
+	opF64TruncCode          byte = 0x9d
+	opF64NearestCode        byte = 0x9e
+	opF64EqCode             byte = 0x61
+	opF64SqrtCode           byte = 0x9f
+	opF64NegCode            byte = 0x9a
+	opF64AddCode            byte = 0xa0
+	opF64SubCode            byte = 0xa1
+	opF64MulCode            byte = 0xa2
+	opF64DivCode            byte = 0xa3
+	opF64MinCode            byte = 0xa4
+	opF64MaxCode            byte = 0xa5
+	opRefNullCode           byte = 0xd0
+	opRefIsNullCode         byte = 0xd1
+	opRefFuncCode           byte = 0xd2
+	opPrefixFCCode          byte = 0xfc
+	opF64ReinterpretI64Code byte = 0xbf
 
 	// FC-prefixed table instruction subopcodes.
 	subopTableGrowCode uint32 = 0x0f
@@ -238,6 +264,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 		writeSection(&out, sectionCodeID, codeSection)
 	}
 
+	dataSection := encodeDataSection(m.Data, &diags)
+	if len(dataSection) > 0 {
+		writeSection(&out, sectionDataID, dataSection)
+	}
+
 	if diags.HasAny() {
 		return nil, diags
 	}
@@ -322,7 +353,7 @@ func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte 
 			writeLimits(&payload, imp.Table.Min, imp.Table.HasMax, imp.Table.Max)
 		case wasmir.ExternalKindMemory:
 			payload.WriteByte(importKindMemoryCode)
-			writeLimits(&payload, imp.Memory.Min, false, 0)
+			writeLimits(&payload, imp.Memory.Min, imp.Memory.HasMax, imp.Memory.Max)
 		case wasmir.ExternalKindGlobal:
 			payload.WriteByte(importKindGlobalCode)
 			vt, ok := valueTypeCode(imp.GlobalType)
@@ -386,16 +417,24 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 	return payload.Bytes()
 }
 
-// encodeMemorySection emits section 5 as a vector of memory definitions.
-// This encoder currently supports min-only limits.
+// encodeMemorySection emits section 5 as a vector of defined memory entries.
 func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
-	if len(memories) == 0 {
+	definedCount := 0
+	for _, mem := range memories {
+		if !mem.Imported {
+			definedCount++
+		}
+	}
+	if definedCount == 0 {
 		return nil
 	}
 	var payload bytes.Buffer
-	writeULEB128(&payload, uint32(len(memories)))
+	writeULEB128(&payload, uint32(definedCount))
 	for _, mem := range memories {
-		writeLimits(&payload, mem.Min, false, 0)
+		if mem.Imported {
+			continue
+		}
+		writeLimits(&payload, mem.Min, mem.HasMax, mem.Max)
 	}
 	return payload.Bytes()
 }
@@ -475,6 +514,29 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 		for _, idx := range elem.FuncIndices {
 			writeULEB128(&payload, idx)
 		}
+	}
+	return payload.Bytes()
+}
+
+// encodeDataSection emits section 11 as active data segments for memory 0.
+func encodeDataSection(data []wasmir.DataSegment, diags *diag.ErrorList) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(data)))
+	for i, seg := range data {
+		if seg.MemoryIndex != 0 {
+			diags.Addf("data[%d]: only memory index 0 is supported", i)
+			payload.WriteByte(0x00)
+		} else {
+			payload.WriteByte(0x00)
+		}
+		payload.WriteByte(opI32ConstCode)
+		writeSLEB128(&payload, int64(seg.OffsetI32))
+		payload.WriteByte(opEndCode)
+		writeULEB128(&payload, uint32(len(seg.Init)))
+		payload.Write(seg.Init)
 	}
 	return payload.Bytes()
 }
@@ -636,20 +698,99 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrI32Load:
 		out.WriteByte(opI32LoadCode)
-		align := instr.MemoryAlign
-		if align == 0 {
-			align = 2
-		}
-		writeULEB128(out, align)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load:
+		out.WriteByte(opI64LoadCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrF32Load:
+		out.WriteByte(opF32LoadCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrF64Load:
+		out.WriteByte(opF64LoadCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Load8S:
+		out.WriteByte(opI32Load8SCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Load8U:
+		out.WriteByte(opI32Load8UCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Load16S:
+		out.WriteByte(opI32Load16SCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Load16U:
+		out.WriteByte(opI32Load16UCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load8S:
+		out.WriteByte(opI64Load8SCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load8U:
+		out.WriteByte(opI64Load8UCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load16S:
+		out.WriteByte(opI64Load16SCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load16U:
+		out.WriteByte(opI64Load16UCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load32S:
+		out.WriteByte(opI64Load32SCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Load32U:
+		out.WriteByte(opI64Load32UCode)
+		writeULEB128(out, instr.MemoryAlign)
 		writeULEB128(out, instr.MemoryOffset)
 	case wasmir.InstrI32Store:
 		out.WriteByte(opI32StoreCode)
-		align := instr.MemoryAlign
-		if align == 0 {
-			align = 2
-		}
-		writeULEB128(out, align)
+		writeULEB128(out, instr.MemoryAlign)
 		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Store:
+		out.WriteByte(opI64StoreCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Store8:
+		out.WriteByte(opI32Store8Code)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI32Store16:
+		out.WriteByte(opI32Store16Code)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Store8:
+		out.WriteByte(opI64Store8Code)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Store16:
+		out.WriteByte(opI64Store16Code)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrI64Store32:
+		out.WriteByte(opI64Store32Code)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrF32Store:
+		out.WriteByte(opF32StoreCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrF64Store:
+		out.WriteByte(opF64StoreCode)
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+	case wasmir.InstrMemorySize:
+		out.WriteByte(opMemorySizeCode)
+		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrMemoryGrow:
 		out.WriteByte(opMemoryGrowCode)
 		writeULEB128(out, instr.MemoryIndex)
@@ -687,6 +828,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opI32LeUCode)
 	case wasmir.InstrI32GeU:
 		out.WriteByte(opI32GeUCode)
+	case wasmir.InstrI32And:
+		out.WriteByte(opI32AndCode)
 	case wasmir.InstrI64Add:
 		out.WriteByte(opI64AddCode)
 	case wasmir.InstrI64Eq:
@@ -777,6 +920,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64TruncCode)
 	case wasmir.InstrF64Nearest:
 		out.WriteByte(opF64NearestCode)
+	case wasmir.InstrF64Eq:
+		out.WriteByte(opF64EqCode)
+	case wasmir.InstrF64ReinterpretI64:
+		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
 		refCode, ok := refTypeCode(instr.RefType)

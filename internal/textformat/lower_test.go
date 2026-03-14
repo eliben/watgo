@@ -142,7 +142,7 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	wat := `(module
   (func (param $a i32) (result i32)
     local.get $missing
-    i32.and
+    i32.rotl
   )
 )`
 

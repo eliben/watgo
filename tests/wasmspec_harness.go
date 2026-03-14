@@ -741,7 +741,10 @@ func sexprToWAT(sx *textformat.SExpr) (string, error) {
 		}
 		switch kind {
 		case "STRING":
-			return strconv.Quote(value), nil
+			// STRING token payload already preserves WAT escape syntax from the
+			// source text. Re-quote without re-escaping so sequences like "\a7"
+			// remain byte escapes in reconstructed WAT.
+			return `"` + value + `"`, nil
 		case "EMPTY":
 			return "()", nil
 		default:

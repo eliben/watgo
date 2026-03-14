@@ -10,6 +10,8 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+const wasmPageSizeBytes = 65536
+
 // moduleLowerer owns module-wide lowering state.
 type moduleLowerer struct {
 	// out is the semantic module being constructed during lowering. All
@@ -35,6 +37,9 @@ type moduleLowerer struct {
 
 	// tablesByName maps table identifiers to their indices in out.Tables.
 	tablesByName map[string]uint32
+
+	// memoriesByName maps memory identifiers to their indices in out.Memories.
+	memoriesByName map[string]uint32
 
 	// tableNonNullable records whether each lowered table index has
 	// non-nullable reference type semantics (for example "(ref func)").
@@ -122,6 +127,7 @@ func newModuleLowerer() *moduleLowerer {
 		typesByName:       map[string]uint32{},
 		globalsByName:     map[string]uint32{},
 		tablesByName:      map[string]uint32{},
+		memoriesByName:    map[string]uint32{},
 		tableNonNullable:  map[uint32]bool{},
 		elemRefTypeByName: map[string]wasmir.ValueType{},
 	}
@@ -136,6 +142,7 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 	l.collectTableDecls(astm)
 	l.collectElemDecls(astm)
 	l.collectMemoryDecls(astm)
+	l.collectDataDecls(astm)
 	for i, f := range astm.Funcs {
 		if f == nil {
 			l.diags.Addf("func[%d]: nil function", i)
@@ -407,7 +414,91 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 			l.diags.Addf("memory[%d]: nil memory declaration", i)
 			continue
 		}
-		l.out.Memories = append(l.out.Memories, wasmir.Memory{Min: md.Min})
+
+		mem := wasmir.Memory{
+			Min:          md.Min,
+			HasMax:       md.HasMax,
+			Max:          md.Max,
+			Imported:     md.ImportModule != "",
+			ImportModule: md.ImportModule,
+			ImportName:   md.ImportName,
+		}
+		if md.ImportModule != "" {
+			l.out.Imports = append(l.out.Imports, wasmir.Import{
+				Module: md.ImportModule,
+				Name:   md.ImportName,
+				Kind:   wasmir.ExternalKindMemory,
+				Memory: mem,
+			})
+		}
+
+		memIdx := uint32(len(l.out.Memories))
+		l.out.Memories = append(l.out.Memories, mem)
+		if md.Id != "" {
+			if prev, exists := l.memoriesByName[md.Id]; exists {
+				l.diags.Addf("memory[%d] %s: duplicate memory id (first seen at memory[%d])", i, md.Id, prev)
+			} else {
+				l.memoriesByName[md.Id] = memIdx
+			}
+		}
+		if md.Export != "" {
+			l.out.Exports = append(l.out.Exports, wasmir.Export{
+				Name:  md.Export,
+				Kind:  wasmir.ExternalKindMemory,
+				Index: memIdx,
+			})
+		}
+
+		if len(md.InlineData) > 0 {
+			var init []byte
+			for j, s := range md.InlineData {
+				b, err := decodeWATStringBytes(s)
+				if err != nil {
+					l.diags.Addf("memory[%d] inline data[%d]: %v", i, j, err)
+					continue
+				}
+				init = append(init, b...)
+			}
+			needPages := uint32((len(init) + wasmPageSizeBytes - 1) / wasmPageSizeBytes)
+			if mem.Min < needPages {
+				l.out.Memories[memIdx].Min = needPages
+			}
+			l.out.Data = append(l.out.Data, wasmir.DataSegment{
+				MemoryIndex: memIdx,
+				OffsetI32:   0,
+				Init:        init,
+			})
+		}
+	}
+}
+
+// collectDataDecls lowers module-level data declarations into active memory
+// segments targeting memory index 0.
+func (l *moduleLowerer) collectDataDecls(astm *Module) {
+	for i, dd := range astm.Data {
+		if dd == nil {
+			l.diags.Addf("data[%d]: nil data declaration", i)
+			continue
+		}
+		offset, ok := l.evalI32ConstExpr(dd.Offset)
+		if !ok {
+			l.diags.Addf("data[%d]: offset must be i32.const", i)
+			continue
+		}
+		var init []byte
+		for j, s := range dd.Strings {
+			b, err := decodeWATStringBytes(s)
+			if err != nil {
+				l.diags.Addf("data[%d] string[%d]: %v", i, j, err)
+				continue
+			}
+			init = append(init, b...)
+		}
+		l.out.Data = append(l.out.Data, wasmir.DataSegment{
+			MemoryIndex: 0,
+			OffsetI32:   offset,
+			Init:        init,
+		})
 	}
 }
 
@@ -1082,95 +1173,123 @@ type loweringSpec struct {
 // It returns true on success and false when operands are invalid.
 type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool
 
+var memoryInstrKinds = map[string]wasmir.InstrKind{
+	"i32.load":     wasmir.InstrI32Load,
+	"i64.load":     wasmir.InstrI64Load,
+	"f32.load":     wasmir.InstrF32Load,
+	"f64.load":     wasmir.InstrF64Load,
+	"i32.load8_s":  wasmir.InstrI32Load8S,
+	"i32.load8_u":  wasmir.InstrI32Load8U,
+	"i32.load16_s": wasmir.InstrI32Load16S,
+	"i32.load16_u": wasmir.InstrI32Load16U,
+	"i64.load8_s":  wasmir.InstrI64Load8S,
+	"i64.load8_u":  wasmir.InstrI64Load8U,
+	"i64.load16_s": wasmir.InstrI64Load16S,
+	"i64.load16_u": wasmir.InstrI64Load16U,
+	"i64.load32_s": wasmir.InstrI64Load32S,
+	"i64.load32_u": wasmir.InstrI64Load32U,
+	"i32.store":    wasmir.InstrI32Store,
+	"i64.store":    wasmir.InstrI64Store,
+	"i32.store8":   wasmir.InstrI32Store8,
+	"i32.store16":  wasmir.InstrI32Store16,
+	"i64.store8":   wasmir.InstrI64Store8,
+	"i64.store16":  wasmir.InstrI64Store16,
+	"i64.store32":  wasmir.InstrI64Store32,
+	"f32.store":    wasmir.InstrF32Store,
+	"f64.store":    wasmir.InstrF64Store,
+}
+
 // loweringSpecs maps plain instruction names to table-driven lowering rules.
 var loweringSpecs = map[string]loweringSpec{
-	"nop":              {kind: wasmir.InstrNop, operandCount: 0},
-	"else":             {kind: wasmir.InstrElse, operandCount: 0},
-	"end":              {kind: wasmir.InstrEnd, operandCount: 0},
-	"drop":             {kind: wasmir.InstrDrop, operandCount: 0},
-	"select":           {kind: wasmir.InstrSelect, operandCount: 0},
-	"i32.add":          {kind: wasmir.InstrI32Add, operandCount: 0},
-	"i32.sub":          {kind: wasmir.InstrI32Sub, operandCount: 0},
-	"i32.mul":          {kind: wasmir.InstrI32Mul, operandCount: 0},
-	"i32.div_s":        {kind: wasmir.InstrI32DivS, operandCount: 0},
-	"i32.div_u":        {kind: wasmir.InstrI32DivU, operandCount: 0},
-	"i32.rem_s":        {kind: wasmir.InstrI32RemS, operandCount: 0},
-	"i32.rem_u":        {kind: wasmir.InstrI32RemU, operandCount: 0},
-	"i32.shl":          {kind: wasmir.InstrI32Shl, operandCount: 0},
-	"i32.shr_s":        {kind: wasmir.InstrI32ShrS, operandCount: 0},
-	"i32.shr_u":        {kind: wasmir.InstrI32ShrU, operandCount: 0},
-	"i32.eqz":          {kind: wasmir.InstrI32Eqz, operandCount: 0},
-	"i32.lt_s":         {kind: wasmir.InstrI32LtS, operandCount: 0},
-	"i32.lt_u":         {kind: wasmir.InstrI32LtU, operandCount: 0},
-	"i32.le_u":         {kind: wasmir.InstrI32LeU, operandCount: 0},
-	"i32.ge_u":         {kind: wasmir.InstrI32GeU, operandCount: 0},
-	"i64.add":          {kind: wasmir.InstrI64Add, operandCount: 0},
-	"i64.eq":           {kind: wasmir.InstrI64Eq, operandCount: 0},
-	"i64.eqz":          {kind: wasmir.InstrI64Eqz, operandCount: 0},
-	"i64.gt_s":         {kind: wasmir.InstrI64GtS, operandCount: 0},
-	"i64.gt_u":         {kind: wasmir.InstrI64GtU, operandCount: 0},
-	"i64.le_u":         {kind: wasmir.InstrI64LeU, operandCount: 0},
-	"i64.sub":          {kind: wasmir.InstrI64Sub, operandCount: 0},
-	"i64.mul":          {kind: wasmir.InstrI64Mul, operandCount: 0},
-	"i64.div_s":        {kind: wasmir.InstrI64DivS, operandCount: 0},
-	"i64.div_u":        {kind: wasmir.InstrI64DivU, operandCount: 0},
-	"i64.rem_s":        {kind: wasmir.InstrI64RemS, operandCount: 0},
-	"i64.rem_u":        {kind: wasmir.InstrI64RemU, operandCount: 0},
-	"i64.shl":          {kind: wasmir.InstrI64Shl, operandCount: 0},
-	"i64.shr_s":        {kind: wasmir.InstrI64ShrS, operandCount: 0},
-	"i64.shr_u":        {kind: wasmir.InstrI64ShrU, operandCount: 0},
-	"i64.lt_s":         {kind: wasmir.InstrI64LtS, operandCount: 0},
-	"i64.lt_u":         {kind: wasmir.InstrI64LtU, operandCount: 0},
-	"i32.wrap_i64":     {kind: wasmir.InstrI32WrapI64, operandCount: 0},
-	"i64.extend_i32_s": {kind: wasmir.InstrI64ExtendI32S, operandCount: 0},
-	"i64.extend_i32_u": {kind: wasmir.InstrI64ExtendI32U, operandCount: 0},
-	"f32.add":          {kind: wasmir.InstrF32Add, operandCount: 0},
-	"f32.sub":          {kind: wasmir.InstrF32Sub, operandCount: 0},
-	"f32.mul":          {kind: wasmir.InstrF32Mul, operandCount: 0},
-	"f32.div":          {kind: wasmir.InstrF32Div, operandCount: 0},
-	"f32.sqrt":         {kind: wasmir.InstrF32Sqrt, operandCount: 0},
-	"f32.neg":          {kind: wasmir.InstrF32Neg, operandCount: 0},
-	"f32.min":          {kind: wasmir.InstrF32Min, operandCount: 0},
-	"f32.max":          {kind: wasmir.InstrF32Max, operandCount: 0},
-	"f32.ceil":         {kind: wasmir.InstrF32Ceil, operandCount: 0},
-	"f32.floor":        {kind: wasmir.InstrF32Floor, operandCount: 0},
-	"f32.trunc":        {kind: wasmir.InstrF32Trunc, operandCount: 0},
-	"f32.nearest":      {kind: wasmir.InstrF32Nearest, operandCount: 0},
-	"f64.add":          {kind: wasmir.InstrF64Add, operandCount: 0},
-	"f64.sub":          {kind: wasmir.InstrF64Sub, operandCount: 0},
-	"f64.mul":          {kind: wasmir.InstrF64Mul, operandCount: 0},
-	"f64.div":          {kind: wasmir.InstrF64Div, operandCount: 0},
-	"f64.sqrt":         {kind: wasmir.InstrF64Sqrt, operandCount: 0},
-	"f64.neg":          {kind: wasmir.InstrF64Neg, operandCount: 0},
-	"f64.min":          {kind: wasmir.InstrF64Min, operandCount: 0},
-	"f64.max":          {kind: wasmir.InstrF64Max, operandCount: 0},
-	"f64.ceil":         {kind: wasmir.InstrF64Ceil, operandCount: 0},
-	"f64.floor":        {kind: wasmir.InstrF64Floor, operandCount: 0},
-	"f64.trunc":        {kind: wasmir.InstrF64Trunc, operandCount: 0},
-	"f64.nearest":      {kind: wasmir.InstrF64Nearest, operandCount: 0},
-	"local.get":        {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
-	"local.set":        {kind: wasmir.InstrLocalSet, operandCount: 1, decode: decodeLocalSetOperands},
-	"local.tee":        {kind: wasmir.InstrLocalTee, operandCount: 1, decode: decodeLocalTeeOperands},
-	"call":             {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
-	"br":               {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
-	"br_if":            {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
-	"global.get":       {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
-	"global.set":       {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
-	"i32.load":         {kind: wasmir.InstrI32Load, operandCount: 0},
-	"i32.store":        {kind: wasmir.InstrI32Store, operandCount: 0},
-	"memory.grow":      {kind: wasmir.InstrMemoryGrow, operandCount: 0},
-	"unreachable":      {kind: wasmir.InstrUnreachable, operandCount: 0},
-	"return":           {kind: wasmir.InstrReturn, operandCount: 0},
-	"i32.eq":           {kind: wasmir.InstrI32Eq, operandCount: 0},
-	"i32.ctz":          {kind: wasmir.InstrI32Ctz, operandCount: 0},
-	"f32.gt":           {kind: wasmir.InstrF32Gt, operandCount: 0},
-	"i32.const":        {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
-	"i64.const":        {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
-	"f32.const":        {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
-	"f64.const":        {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
-	"ref.null":         {kind: wasmir.InstrRefNull, operandCount: 1, decode: decodeRefNullOperands},
-	"ref.is_null":      {kind: wasmir.InstrRefIsNull, operandCount: 0},
-	"ref.func":         {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
+	"nop":                 {kind: wasmir.InstrNop, operandCount: 0},
+	"else":                {kind: wasmir.InstrElse, operandCount: 0},
+	"end":                 {kind: wasmir.InstrEnd, operandCount: 0},
+	"drop":                {kind: wasmir.InstrDrop, operandCount: 0},
+	"select":              {kind: wasmir.InstrSelect, operandCount: 0},
+	"i32.add":             {kind: wasmir.InstrI32Add, operandCount: 0},
+	"i32.sub":             {kind: wasmir.InstrI32Sub, operandCount: 0},
+	"i32.mul":             {kind: wasmir.InstrI32Mul, operandCount: 0},
+	"i32.div_s":           {kind: wasmir.InstrI32DivS, operandCount: 0},
+	"i32.div_u":           {kind: wasmir.InstrI32DivU, operandCount: 0},
+	"i32.rem_s":           {kind: wasmir.InstrI32RemS, operandCount: 0},
+	"i32.rem_u":           {kind: wasmir.InstrI32RemU, operandCount: 0},
+	"i32.shl":             {kind: wasmir.InstrI32Shl, operandCount: 0},
+	"i32.shr_s":           {kind: wasmir.InstrI32ShrS, operandCount: 0},
+	"i32.shr_u":           {kind: wasmir.InstrI32ShrU, operandCount: 0},
+	"i32.eqz":             {kind: wasmir.InstrI32Eqz, operandCount: 0},
+	"i32.lt_s":            {kind: wasmir.InstrI32LtS, operandCount: 0},
+	"i32.lt_u":            {kind: wasmir.InstrI32LtU, operandCount: 0},
+	"i32.le_u":            {kind: wasmir.InstrI32LeU, operandCount: 0},
+	"i32.ge_u":            {kind: wasmir.InstrI32GeU, operandCount: 0},
+	"i32.and":             {kind: wasmir.InstrI32And, operandCount: 0},
+	"i64.add":             {kind: wasmir.InstrI64Add, operandCount: 0},
+	"i64.eq":              {kind: wasmir.InstrI64Eq, operandCount: 0},
+	"i64.eqz":             {kind: wasmir.InstrI64Eqz, operandCount: 0},
+	"i64.gt_s":            {kind: wasmir.InstrI64GtS, operandCount: 0},
+	"i64.gt_u":            {kind: wasmir.InstrI64GtU, operandCount: 0},
+	"i64.le_u":            {kind: wasmir.InstrI64LeU, operandCount: 0},
+	"i64.sub":             {kind: wasmir.InstrI64Sub, operandCount: 0},
+	"i64.mul":             {kind: wasmir.InstrI64Mul, operandCount: 0},
+	"i64.div_s":           {kind: wasmir.InstrI64DivS, operandCount: 0},
+	"i64.div_u":           {kind: wasmir.InstrI64DivU, operandCount: 0},
+	"i64.rem_s":           {kind: wasmir.InstrI64RemS, operandCount: 0},
+	"i64.rem_u":           {kind: wasmir.InstrI64RemU, operandCount: 0},
+	"i64.shl":             {kind: wasmir.InstrI64Shl, operandCount: 0},
+	"i64.shr_s":           {kind: wasmir.InstrI64ShrS, operandCount: 0},
+	"i64.shr_u":           {kind: wasmir.InstrI64ShrU, operandCount: 0},
+	"i64.lt_s":            {kind: wasmir.InstrI64LtS, operandCount: 0},
+	"i64.lt_u":            {kind: wasmir.InstrI64LtU, operandCount: 0},
+	"i32.wrap_i64":        {kind: wasmir.InstrI32WrapI64, operandCount: 0},
+	"i64.extend_i32_s":    {kind: wasmir.InstrI64ExtendI32S, operandCount: 0},
+	"i64.extend_i32_u":    {kind: wasmir.InstrI64ExtendI32U, operandCount: 0},
+	"f32.add":             {kind: wasmir.InstrF32Add, operandCount: 0},
+	"f32.sub":             {kind: wasmir.InstrF32Sub, operandCount: 0},
+	"f32.mul":             {kind: wasmir.InstrF32Mul, operandCount: 0},
+	"f32.div":             {kind: wasmir.InstrF32Div, operandCount: 0},
+	"f32.sqrt":            {kind: wasmir.InstrF32Sqrt, operandCount: 0},
+	"f32.neg":             {kind: wasmir.InstrF32Neg, operandCount: 0},
+	"f32.min":             {kind: wasmir.InstrF32Min, operandCount: 0},
+	"f32.max":             {kind: wasmir.InstrF32Max, operandCount: 0},
+	"f32.ceil":            {kind: wasmir.InstrF32Ceil, operandCount: 0},
+	"f32.floor":           {kind: wasmir.InstrF32Floor, operandCount: 0},
+	"f32.trunc":           {kind: wasmir.InstrF32Trunc, operandCount: 0},
+	"f32.nearest":         {kind: wasmir.InstrF32Nearest, operandCount: 0},
+	"f64.add":             {kind: wasmir.InstrF64Add, operandCount: 0},
+	"f64.sub":             {kind: wasmir.InstrF64Sub, operandCount: 0},
+	"f64.mul":             {kind: wasmir.InstrF64Mul, operandCount: 0},
+	"f64.div":             {kind: wasmir.InstrF64Div, operandCount: 0},
+	"f64.sqrt":            {kind: wasmir.InstrF64Sqrt, operandCount: 0},
+	"f64.neg":             {kind: wasmir.InstrF64Neg, operandCount: 0},
+	"f64.min":             {kind: wasmir.InstrF64Min, operandCount: 0},
+	"f64.max":             {kind: wasmir.InstrF64Max, operandCount: 0},
+	"f64.ceil":            {kind: wasmir.InstrF64Ceil, operandCount: 0},
+	"f64.floor":           {kind: wasmir.InstrF64Floor, operandCount: 0},
+	"f64.trunc":           {kind: wasmir.InstrF64Trunc, operandCount: 0},
+	"f64.nearest":         {kind: wasmir.InstrF64Nearest, operandCount: 0},
+	"f64.eq":              {kind: wasmir.InstrF64Eq, operandCount: 0},
+	"f64.reinterpret_i64": {kind: wasmir.InstrF64ReinterpretI64, operandCount: 0},
+	"local.get":           {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
+	"local.set":           {kind: wasmir.InstrLocalSet, operandCount: 1, decode: decodeLocalSetOperands},
+	"local.tee":           {kind: wasmir.InstrLocalTee, operandCount: 1, decode: decodeLocalTeeOperands},
+	"call":                {kind: wasmir.InstrCall, operandCount: 1, decode: decodeCallOperands},
+	"br":                  {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
+	"br_if":               {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
+	"global.get":          {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
+	"global.set":          {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
+	"memory.size":         {kind: wasmir.InstrMemorySize, operandCount: 0},
+	"memory.grow":         {kind: wasmir.InstrMemoryGrow, operandCount: 0},
+	"unreachable":         {kind: wasmir.InstrUnreachable, operandCount: 0},
+	"return":              {kind: wasmir.InstrReturn, operandCount: 0},
+	"i32.eq":              {kind: wasmir.InstrI32Eq, operandCount: 0},
+	"i32.ctz":             {kind: wasmir.InstrI32Ctz, operandCount: 0},
+	"f32.gt":              {kind: wasmir.InstrF32Gt, operandCount: 0},
+	"i32.const":           {kind: wasmir.InstrI32Const, operandCount: 1, decode: decodeI32ConstOperands},
+	"i64.const":           {kind: wasmir.InstrI64Const, operandCount: 1, decode: decodeI64ConstOperands},
+	"f32.const":           {kind: wasmir.InstrF32Const, operandCount: 1, decode: decodeF32ConstOperands},
+	"f64.const":           {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
+	"ref.null":            {kind: wasmir.InstrRefNull, operandCount: 1, decode: decodeRefNullOperands},
+	"ref.is_null":         {kind: wasmir.InstrRefIsNull, operandCount: 0},
+	"ref.func":            {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
 }
 
 // lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
@@ -1212,6 +1331,9 @@ func operandCountText(count int) string {
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
+	if fl.lowerMemoryInstr(pi, instrLoc) {
+		return
+	}
 	if fl.lowerBySpec(pi, instrLoc) {
 		return
 	}
@@ -1352,6 +1474,97 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	default:
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
 	}
+}
+
+// lowerMemoryInstr lowers load/store instructions with optional memarg
+// keywords (for example align=1 offset=8).
+func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) bool {
+	kind, ok := memoryInstrKinds[pi.Name]
+	if !ok {
+		return false
+	}
+	align, offset, ok := parseMemArgOperands(pi.Operands)
+	if !ok {
+		fl.diagf(instrLoc, "invalid %s memory operands", pi.Name)
+		return true
+	}
+	fl.emitInstr(wasmir.Instruction{
+		Kind:         kind,
+		MemoryAlign:  align,
+		MemoryOffset: offset,
+		SourceLoc:    instrLoc,
+	})
+	return true
+}
+
+// parseMemArgOperands parses optional memory-immediate operands from a plain
+// load/store instruction.
+//
+// Return values:
+//   1. alignExp: alignment exponent stored in the binary memarg immediate
+//      (for example align=4 -> 2, align=1 -> 0). If align is omitted, this is 0.
+//   2. offset: byte offset immediate. If offset is omitted, this is 0.
+//   3. ok: true when all operands are valid memarg keywords; false on any
+//      malformed/duplicate/unknown operand.
+//
+// Examples:
+//   - [] -> (0, 0, true)
+//   - ["align=4"] -> (2, 0, true)
+//   - ["offset=8"] -> (0, 8, true)
+//   - ["offset=8", "align=2"] -> (1, 8, true)
+//   - ["align=3"] -> (0, 0, false) // not a power-of-two byte alignment
+func parseMemArgOperands(operands []Operand) (uint32, uint32, bool) {
+	var align uint32
+	var offset uint32
+	seenAlign := false
+	seenOffset := false
+	for _, op := range operands {
+		kw, ok := op.(*KeywordOperand)
+		if !ok {
+			return 0, 0, false
+		}
+		parts := strings.SplitN(kw.Value, "=", 2)
+		if len(parts) != 2 {
+			return 0, 0, false
+		}
+		value, ok := parseU32Literal(parts[1])
+		if !ok {
+			return 0, 0, false
+		}
+		switch parts[0] {
+		case "align":
+			if seenAlign {
+				return 0, 0, false
+			}
+			exp, ok := alignToExponent(value)
+			if !ok {
+				return 0, 0, false
+			}
+			align = exp
+			seenAlign = true
+		case "offset":
+			if seenOffset {
+				return 0, 0, false
+			}
+			offset = value
+			seenOffset = true
+		default:
+			return 0, 0, false
+		}
+	}
+	return align, offset, true
+}
+
+func alignToExponent(alignBytes uint32) (uint32, bool) {
+	if alignBytes == 0 || (alignBytes&(alignBytes-1)) != 0 {
+		return 0, false
+	}
+	var exp uint32
+	for alignBytes > 1 {
+		alignBytes >>= 1
+		exp++
+	}
+	return exp, true
 }
 
 // decodeLocalGetOperands decodes operands into ins.LocalIndex for local.get.
@@ -1894,6 +2107,62 @@ func parseU32Literal(s string) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(value), true
+}
+
+// decodeWATStringBytes decodes a WAT STRING token payload to raw bytes.
+func decodeWATStringBytes(s string) ([]byte, error) {
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch != '\\' {
+			out = append(out, ch)
+			continue
+		}
+		if i+1 >= len(s) {
+			return nil, fmt.Errorf("trailing backslash")
+		}
+		next := s[i+1]
+		if i+2 < len(s) && isASCIIHexDigit(next) && isASCIIHexDigit(s[i+2]) {
+			hi := hexNibble(next)
+			lo := hexNibble(s[i+2])
+			out = append(out, (hi<<4)|lo)
+			i += 2
+			continue
+		}
+		switch next {
+		case 't':
+			out = append(out, '\t')
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case '"':
+			out = append(out, '"')
+		case '\'':
+			out = append(out, '\'')
+		case '\\':
+			out = append(out, '\\')
+		default:
+			return nil, fmt.Errorf("unsupported escape \\%c", next)
+		}
+		i++
+	}
+	return out, nil
+}
+
+func isASCIIHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+func hexNibble(b byte) byte {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0'
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10
+	default:
+		return b - 'A' + 10
+	}
 }
 
 // lowerValueType lowers ty from textformat type syntax into semantic wasmir

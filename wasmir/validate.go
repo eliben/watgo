@@ -6,6 +6,8 @@ import (
 	"github.com/eliben/watgo/diag"
 )
 
+const maxMemoryPages = 65536
+
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
@@ -39,6 +41,29 @@ func ValidateModule(m *Module) error {
 		}
 		if initType != g.Type {
 			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, valueTypeName(initType), valueTypeName(g.Type))
+		}
+	}
+
+	if len(m.Memories) > 1 {
+		diags.Addf("duplicate memory")
+	}
+	for i, mem := range m.Memories {
+		if mem.Min > maxMemoryPages {
+			diags.Addf("memory[%d]: memory size", i)
+		}
+		if mem.HasMax {
+			if mem.Max > maxMemoryPages {
+				diags.Addf("memory[%d]: memory size", i)
+			}
+			if mem.Min > mem.Max {
+				diags.Addf("memory[%d]: size minimum must not be greater than maximum", i)
+			}
+		}
+	}
+
+	for i, data := range m.Data {
+		if int(data.MemoryIndex) >= len(m.Memories) {
+			diags.Addf("data[%d]: unknown memory", i)
 		}
 	}
 
@@ -612,6 +637,76 @@ instrLoop:
 				continue
 			}
 			// i32 address replaced by loaded i32 value.
+		case InstrI64Load:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: i64.load requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: i64.load needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: i64.load expects i32 address operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI64
+		case InstrF32Load:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: f32.load requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: f32.load needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: f32.load expects i32 address operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeF32
+		case InstrF64Load:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: f64.load requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: f64.load needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: f64.load expects i32 address operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeF64
+		case InstrI32Load8S, InstrI32Load8U, InstrI32Load16S, InstrI32Load16U:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 address operand", insCtx, instrName(ins.Kind))
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI32
+		case InstrI64Load8S, InstrI64Load8U, InstrI64Load16S, InstrI64Load16U, InstrI64Load32S, InstrI64Load32U:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 address operand", insCtx, instrName(ins.Kind))
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeI64
 		case InstrI32Store:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i32.store requires memory", insCtx)
@@ -626,6 +721,86 @@ instrLoop:
 				continue
 			}
 			stack = stack[:len(stack)-2]
+		case InstrI64Store:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: i64.store requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: i64.store needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: i64.store expects i64 value and i32 address operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrI32Store8, InstrI32Store16:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i32 value and i32 address operands", insCtx, instrName(ins.Kind))
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrI64Store8, InstrI64Store16, InstrI64Store32:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: %s expects i64 value and i32 address operands", insCtx, instrName(ins.Kind))
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrF32Store:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: f32.store requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: f32.store needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: f32.store expects f32 value and i32 address operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrF64Store:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: f64.store requires memory", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: f64.store needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: f64.store expects f64 value and i32 address operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+		case InstrMemorySize:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: memory.size requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.size memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			stack = append(stack, ValueTypeI32)
 		case InstrMemoryGrow:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: memory.grow requires memory", insCtx)
@@ -737,7 +912,7 @@ instrLoop:
 			break instrLoop
 
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU,
-			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU:
+			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU, InstrI32And:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -914,6 +1089,27 @@ instrLoop:
 				continue
 			}
 			// Unary f64 operators preserve top-of-stack type.
+		case InstrF64Eq:
+			if len(stack) < 2 {
+				diags.Addf("%s: f64.eq needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeF64 {
+				diags.Addf("%s: f64.eq expects f64 operands", insCtx)
+				continue
+			}
+			stack = stack[:len(stack)-2]
+			stack = append(stack, ValueTypeI32)
+		case InstrF64ReinterpretI64:
+			if len(stack) < 1 {
+				diags.Addf("%s: f64.reinterpret_i64 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI64 {
+				diags.Addf("%s: f64.reinterpret_i64 expects i64 operand", insCtx)
+				continue
+			}
+			stack[len(stack)-1] = ValueTypeF64
 		case InstrRefNull:
 			stack = append(stack, ins.RefType)
 		case InstrRefFunc:
@@ -1129,8 +1325,52 @@ func instrName(kind InstrKind) string {
 		return "table.size"
 	case InstrI32Load:
 		return "i32.load"
+	case InstrI64Load:
+		return "i64.load"
+	case InstrF32Load:
+		return "f32.load"
+	case InstrF64Load:
+		return "f64.load"
+	case InstrI32Load8S:
+		return "i32.load8_s"
+	case InstrI32Load8U:
+		return "i32.load8_u"
+	case InstrI32Load16S:
+		return "i32.load16_s"
+	case InstrI32Load16U:
+		return "i32.load16_u"
+	case InstrI64Load8S:
+		return "i64.load8_s"
+	case InstrI64Load8U:
+		return "i64.load8_u"
+	case InstrI64Load16S:
+		return "i64.load16_s"
+	case InstrI64Load16U:
+		return "i64.load16_u"
+	case InstrI64Load32S:
+		return "i64.load32_s"
+	case InstrI64Load32U:
+		return "i64.load32_u"
 	case InstrI32Store:
 		return "i32.store"
+	case InstrI64Store:
+		return "i64.store"
+	case InstrI32Store8:
+		return "i32.store8"
+	case InstrI32Store16:
+		return "i32.store16"
+	case InstrI64Store8:
+		return "i64.store8"
+	case InstrI64Store16:
+		return "i64.store16"
+	case InstrI64Store32:
+		return "i64.store32"
+	case InstrF32Store:
+		return "f32.store"
+	case InstrF64Store:
+		return "f64.store"
+	case InstrMemorySize:
+		return "memory.size"
 	case InstrMemoryGrow:
 		return "memory.grow"
 	case InstrI32Eq:
@@ -1167,6 +1407,8 @@ func instrName(kind InstrKind) string {
 		return "i32.le_u"
 	case InstrI32GeU:
 		return "i32.ge_u"
+	case InstrI32And:
+		return "i32.and"
 	case InstrI64Add:
 		return "i64.add"
 	case InstrI64Eq:
@@ -1257,6 +1499,10 @@ func instrName(kind InstrKind) string {
 		return "f64.trunc"
 	case InstrF64Nearest:
 		return "f64.nearest"
+	case InstrF64Eq:
+		return "f64.eq"
+	case InstrF64ReinterpretI64:
+		return "f64.reinterpret_i64"
 	case InstrRefNull:
 		return "ref.null"
 	case InstrRefIsNull:

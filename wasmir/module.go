@@ -45,6 +45,28 @@ const (
 	InstrTableSize
 	InstrI32Load
 	InstrI32Store
+	InstrI64Load
+	InstrF32Load
+	InstrF64Load
+	InstrI32Load8S
+	InstrI32Load8U
+	InstrI32Load16S
+	InstrI32Load16U
+	InstrI64Load8S
+	InstrI64Load8U
+	InstrI64Load16S
+	InstrI64Load16U
+	InstrI64Load32S
+	InstrI64Load32U
+	InstrI64Store
+	InstrI32Store8
+	InstrI32Store16
+	InstrI64Store8
+	InstrI64Store16
+	InstrI64Store32
+	InstrF32Store
+	InstrF64Store
+	InstrMemorySize
 	InstrMemoryGrow
 	InstrRefNull
 	InstrRefIsNull
@@ -66,6 +88,7 @@ const (
 	InstrI32LtU
 	InstrI32LeU
 	InstrI32GeU
+	InstrI32And
 	InstrI64Add
 	InstrI64Eq
 	InstrI64Eqz
@@ -111,6 +134,8 @@ const (
 	InstrF64Floor
 	InstrF64Trunc
 	InstrF64Nearest
+	InstrF64Eq
+	InstrF64ReinterpretI64
 	InstrEnd
 )
 
@@ -147,6 +172,9 @@ type Module struct {
 
 	// Globals is the global definition list in index order.
 	Globals []Global
+
+	// Data is the list of active data segments used to initialize memories.
+	Data []DataSegment
 
 	// Exports is the list of exported definitions.
 	Exports []Export
@@ -259,6 +287,33 @@ type Table struct {
 type Memory struct {
 	// Min is the minimum memory size in 64KiB pages.
 	Min uint32
+
+	// HasMax reports whether Max is present.
+	HasMax bool
+
+	// Max is the maximum memory size in 64KiB pages when HasMax is true.
+	Max uint32
+
+	// Imported reports whether this memory is imported.
+	Imported bool
+
+	// ImportModule is set when Imported is true.
+	ImportModule string
+
+	// ImportName is set when Imported is true.
+	ImportName string
+}
+
+// DataSegment is one active linear-memory data segment.
+type DataSegment struct {
+	// MemoryIndex is the target memory index.
+	MemoryIndex uint32
+
+	// OffsetI32 is the i32.const offset used by the active segment.
+	OffsetI32 int32
+
+	// Init is the raw byte payload copied into memory at instantiation.
+	Init []byte
 }
 
 // Global is one global definition.
