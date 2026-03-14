@@ -36,7 +36,26 @@ type Module struct {
 	// Funcs contains parsed function declarations in source order.
 	Funcs []*Function
 
+	// Exports contains parsed top-level export declarations in source order.
+	Exports []*ExportDecl
+
 	// loc is the source location of the module form head.
+	loc location
+}
+
+// ExportDecl is one top-level export declaration "(export ...)".
+type ExportDecl struct {
+	// Name is the exported external name string.
+	Name string
+
+	// Kind is the export descriptor kind keyword: "func", "global", "table",
+	// or "memory".
+	Kind string
+
+	// Ref is the exported item reference token text (identifier or index).
+	Ref string
+
+	// loc is the source location of the export declaration form head.
 	loc location
 }
 

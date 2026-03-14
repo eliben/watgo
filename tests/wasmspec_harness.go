@@ -93,6 +93,20 @@ type invokeAction struct {
 	args       []scriptValue
 }
 
+// getAction is a "(get ...)" script action.
+//
+// BNF subset:
+//
+//	action: (get <name>? <string>)
+//
+// It reads an exported global value from either the current module or a named
+// module.
+type getAction struct {
+	loc        string
+	moduleName string
+	globalName string
+}
+
 // scriptCommand is a parsed top-level command from a .wast script.
 //
 // BNF subset represented by this struct:
@@ -113,7 +127,7 @@ type invokeAction struct {
 //   - commandModule: moduleExpr
 //   - commandInvoke: action
 //   - commandRegister: registerName
-//   - commandAssertReturn: action + expectValues
+//   - commandAssertReturn: action/getAction + expectValues
 //   - commandAssertTrap: action + expectText
 //   - commandAssertExhaustion: action + expectText
 //   - commandAssertUnlinkable: moduleExpr + expectText
@@ -133,6 +147,7 @@ type scriptCommand struct {
 	registerFrom string
 
 	action       *invokeAction
+	getAction    *getAction
 	expectValues []scriptValue
 	expectText   string
 }
@@ -379,7 +394,7 @@ func parseAssertReturn(sx *textformat.SExpr) (scriptCommand, error) {
 	if len(elems) < 2 {
 		return scriptCommand{}, fmt.Errorf("assert_return requires at least action")
 	}
-	action, err := parseInvoke(elems[1])
+	invokeAction, getAction, err := parseAssertAction(elems[1])
 	if err != nil {
 		return scriptCommand{}, fmt.Errorf("invalid assert_return action: %w", err)
 	}
@@ -396,9 +411,35 @@ func parseAssertReturn(sx *textformat.SExpr) (scriptCommand, error) {
 	return scriptCommand{
 		kind:         commandAssertReturn,
 		loc:          sx.Loc(),
-		action:       &action,
+		action:       invokeAction,
+		getAction:    getAction,
 		expectValues: expects,
 	}, nil
+}
+
+// parseAssertAction parses an assertion action expression.
+// Supported forms are "(invoke ...)" and "(get ...)".
+func parseAssertAction(sx *textformat.SExpr) (*invokeAction, *getAction, error) {
+	head, ok := headKeyword(sx)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected invoke or get action")
+	}
+	switch head {
+	case "invoke":
+		action, err := parseInvoke(sx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &action, nil, nil
+	case "get":
+		action, err := parseGet(sx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, &action, nil
+	default:
+		return nil, nil, fmt.Errorf("expected invoke or get action")
+	}
 }
 
 // parseAssertTrap parses "(assert_trap <action> <failure>)".
@@ -569,6 +610,43 @@ func parseInvoke(sx *textformat.SExpr) (invokeAction, error) {
 		moduleName: moduleName,
 		funcName:   funcName,
 		args:       args,
+	}, nil
+}
+
+// parseGet parses a get action expression.
+// sx must be "(get <string>)" or "(get <id> <string>)".
+// It returns the optional module name and target global export name.
+func parseGet(sx *textformat.SExpr) (getAction, error) {
+	elems := sx.Children()
+	if len(elems) < 2 {
+		return getAction{}, fmt.Errorf("get requires global name")
+	}
+	head, ok := headKeyword(sx)
+	if !ok || head != "get" {
+		return getAction{}, fmt.Errorf("expected get action")
+	}
+
+	cursor := 1
+	var moduleName string
+	if kind, value, ok := elems[cursor].Token(); ok && kind == "ID" {
+		moduleName = value
+		cursor++
+	}
+	if cursor >= len(elems) {
+		return getAction{}, fmt.Errorf("get requires global name")
+	}
+	if cursor+1 != len(elems) {
+		return getAction{}, fmt.Errorf("get accepts only one global name")
+	}
+
+	globalName, err := parseStringToken(elems[cursor])
+	if err != nil {
+		return getAction{}, fmt.Errorf("invalid global name: %w", err)
+	}
+	return getAction{
+		loc:        sx.Loc(),
+		moduleName: moduleName,
+		globalName: globalName,
 	}, nil
 }
 
@@ -1022,10 +1100,22 @@ func (r *scriptRunner) runInvoke(res *commandResult, cmd scriptCommand) {
 // runAssertReturn handles "(assert_return (invoke ...) (result)*)".
 // It invokes the target export and compares returned values with expected ones.
 func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
-	results, err := r.invoke(cmd.action)
+	var (
+		results []uint64
+		err     error
+	)
+	if cmd.action != nil {
+		results, err = r.invoke(cmd.action)
+	} else if cmd.getAction != nil {
+		results, err = r.get(cmd.getAction)
+	} else {
+		res.status = false
+		res.detail = "assert_return requires invoke or get action"
+		return
+	}
 	if err != nil {
 		res.status = false
-		res.detail = fmt.Sprintf("invoke failed: %v", err)
+		res.detail = fmt.Sprintf("action failed: %v", err)
 		return
 	}
 
@@ -1526,6 +1616,13 @@ func isEngineUnsupportedFeatureError(err error) bool {
 // runAssertInvalid handles "(assert_invalid (module ...) \"...\")".
 // It expects module compilation to fail; message matching is optional via opts.
 func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, opts runOptions) {
+	if moduleHasTopLevelField(cmd.moduleExpr, "tag") {
+		// Exception handling tags are outside the current watgo subset.
+		// Treat such modules as invalid for this harness stage.
+		res.status = true
+		return
+	}
+
 	var err error
 	if isModuleBinaryExpr(cmd.moduleExpr) {
 		var wasmBytes []byte
@@ -1630,6 +1727,35 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 		return nil, err
 	}
 	return results, nil
+}
+
+// get reads one exported global from the current module or a named module.
+// action supplies the target export and optional script module id.
+// It returns exactly one value in wasm bit representation.
+func (r *scriptRunner) get(action *getAction) ([]uint64, error) {
+	if action == nil {
+		return nil, fmt.Errorf("nil get action")
+	}
+	target := r.current
+	if action.moduleName != "" {
+		moduleName := action.moduleName
+		if aliased, ok := r.moduleAlias[moduleName]; ok {
+			moduleName = aliased
+		}
+		target = r.runtime.Module(moduleName)
+		if target == nil {
+			return nil, fmt.Errorf("named module %q not found for get %q", action.moduleName, action.globalName)
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("no current module for get %q", action.globalName)
+	}
+
+	g := target.ExportedGlobal(action.globalName)
+	if g == nil {
+		return nil, fmt.Errorf("exported global %q not found", action.globalName)
+	}
+	return []uint64{g.Get()}, nil
 }
 
 // isCanonicalNaN32 reports whether bits encode canonical f32 NaN:

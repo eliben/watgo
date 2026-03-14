@@ -162,6 +162,7 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 		}
 		l.lowerFunction(i, f)
 	}
+	l.collectModuleExports(astm)
 }
 
 // collectElemDecls lowers module-level elem declarations.
@@ -610,6 +611,68 @@ func (l *moduleLowerer) resolveMemoryRef(ref string) (uint32, bool) {
 		return idx, true
 	}
 	return parseU32Literal(ref)
+}
+
+func (l *moduleLowerer) resolveGlobalRef(ref string) (uint32, bool) {
+	if idx, ok := l.globalsByName[ref]; ok {
+		return idx, true
+	}
+	return parseU32Literal(ref)
+}
+
+// collectModuleExports lowers top-level "(export ...)" declarations.
+func (l *moduleLowerer) collectModuleExports(astm *Module) {
+	for i, ed := range astm.Exports {
+		if ed == nil {
+			l.diags.Addf("export[%d]: nil export declaration", i)
+			continue
+		}
+
+		var (
+			kind  wasmir.ExternalKind
+			index uint32
+			ok    bool
+		)
+		switch ed.Kind {
+		case "func":
+			kind = wasmir.ExternalKindFunction
+			index, ok = l.resolveFunctionRef(ed.Ref)
+			if !ok {
+				l.diags.Addf("export[%d]: unknown function %q", i, ed.Ref)
+				continue
+			}
+		case "global":
+			kind = wasmir.ExternalKindGlobal
+			index, ok = l.resolveGlobalRef(ed.Ref)
+			if !ok {
+				l.diags.Addf("export[%d]: unknown global %q", i, ed.Ref)
+				continue
+			}
+		case "table":
+			kind = wasmir.ExternalKindTable
+			index, ok = l.resolveTableRef(ed.Ref)
+			if !ok {
+				l.diags.Addf("export[%d]: unknown table %q", i, ed.Ref)
+				continue
+			}
+		case "memory":
+			kind = wasmir.ExternalKindMemory
+			index, ok = l.resolveMemoryRef(ed.Ref)
+			if !ok {
+				l.diags.Addf("export[%d]: unknown memory %q", i, ed.Ref)
+				continue
+			}
+		default:
+			l.diags.Addf("export[%d]: unsupported export kind %q", i, ed.Kind)
+			continue
+		}
+
+		l.out.Exports = append(l.out.Exports, wasmir.Export{
+			Name:  ed.Name,
+			Kind:  kind,
+			Index: index,
+		})
+	}
 }
 
 // collectFunctionNames pre-scans astm and records named function indices.

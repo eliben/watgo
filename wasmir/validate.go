@@ -101,7 +101,13 @@ func ValidateModule(m *Module) error {
 		}
 	}
 
+	exportNameFirstSeen := map[string]int{}
 	for i, exp := range m.Exports {
+		if prev, exists := exportNameFirstSeen[exp.Name]; exists {
+			diags.Addf("export[%d]: duplicate export name %q (first seen at export[%d])", i, exp.Name, prev)
+		} else {
+			exportNameFirstSeen[exp.Name] = i
+		}
 		switch exp.Kind {
 		case ExternalKindFunction:
 			if exp.Index >= totalFuncCount {

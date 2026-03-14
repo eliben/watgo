@@ -215,8 +215,10 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 				importsClosed = true
 			}
 		case "export":
-			// Top-level export fields are not lowered yet in this subset.
-			// Ignore so modules that also use supported inline exports can compile.
+			ed := p.parseExportDecl(sub)
+			if ed != nil {
+				m.Exports = append(m.Exports, ed)
+			}
 			importsClosed = true
 		case "tag":
 			// Exception handling tags are outside the current lowering subset.
@@ -228,6 +230,49 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 	}
 
 	return m
+}
+
+// parseExportDecl parses a top-level "(export ...)" declaration.
+//
+// Supported descriptor forms:
+//   - (export "name" (func X))
+//   - (export "name" (global X))
+//   - (export "name" (table X))
+//   - (export "name" (memory X))
+//
+// where X is an identifier or integer index token.
+func (p *Parser) parseExportDecl(sx *SExpr) *ExportDecl {
+	if len(sx.list) != 3 {
+		p.emitError(sx.loc, "invalid export declaration")
+		return nil
+	}
+	name := p.matchElement(sx, 1, STRING)
+	desc := sx.list[2]
+	head := desc.HeadKeyword()
+	switch head {
+	case "func", "global", "table", "memory":
+		// Supported export descriptor kinds.
+	default:
+		// Unsupported export kinds (for example tags) are ignored in this
+		// lowering subset so the rest of the module can still be processed.
+		return nil
+	}
+	if !desc.IsList() || len(desc.list) != 2 {
+		p.emitError(desc.loc, "invalid export descriptor")
+		return nil
+	}
+	refElem := desc.list[1]
+	if !refElem.IsTokenAny(ID, INT) {
+		p.emitError(refElem.loc, fmt.Sprintf("export %s reference must be ID or INT", head))
+		return nil
+	}
+
+	return &ExportDecl{
+		Name: name,
+		Kind: head,
+		Ref:  refElem.tok.value,
+		loc:  sx.loc,
+	}
 }
 
 // parseImportField parses one top-level "(import ...)" form.
