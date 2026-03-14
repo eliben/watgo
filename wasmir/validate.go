@@ -168,6 +168,14 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		unreachable bool
 	}
 	var controlStack []controlFrame
+	// The function body is typed under an implicit outer block whose label
+	// carries the function result types. This makes top-level br/br_if/br_table
+	// depth 0 target the function return arity/types.
+	controlStack = append(controlStack, controlFrame{
+		kind:        controlKindBlock,
+		entryHeight: 0,
+		resultTypes: append([]ValueType(nil), ft.Results...),
+	})
 
 	validateFrameResult := func(insCtx string, frame controlFrame, context string) {
 		wantHeight := frame.entryHeight + len(frame.resultTypes)

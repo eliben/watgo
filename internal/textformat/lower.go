@@ -824,6 +824,10 @@ func (fl *functionLowerer) lowerLocals() {
 			fl.diagf("", "nil local declaration")
 			continue
 		}
+		if _, nullable, ok := lowerRefTypeInfo(ld.Ty); ok && !nullable {
+			fl.diagf(ld.loc.String(), "uninitialized local")
+			continue
+		}
 		vt, ok := lowerValueType(ld.Ty)
 		if !ok {
 			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)

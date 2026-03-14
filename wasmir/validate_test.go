@@ -112,8 +112,9 @@ func TestValidateModule_ResultArityMismatch(t *testing.T) {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
 	errs := asErrorList(t, err)
-	if !errorListContains(errs, "result arity mismatch") {
-		t.Fatalf("got errors %q, want result arity mismatch", errs.Error())
+	if !errorListContains(errs, "result arity mismatch") &&
+		!errorListContains(errs, "block stack height mismatch") {
+		t.Fatalf("got errors %q, want result arity mismatch or equivalent block stack mismatch", errs.Error())
 	}
 }
 
