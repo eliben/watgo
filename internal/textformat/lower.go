@@ -239,14 +239,31 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 				seg.Exprs = append(seg.Exprs, ce.Instr)
 			}
 		} else {
-			seg.FuncIndices = make([]uint32, 0, len(ed.FuncRefs))
-			for j, ref := range ed.FuncRefs {
-				funcIdx, ok := l.resolveFunctionRef(ref)
-				if !ok {
-					l.diags.Addf("elem[%d] func[%d]: unknown function reference %q", i, j, ref)
-					continue
+			tableRefType := wasmir.RefTypeFunc(true)
+			if seg.Mode == wasmir.ElemSegmentModeActive && int(seg.TableIndex) < len(l.out.Tables) {
+				tableRefType = l.out.Tables[seg.TableIndex].RefType
+			}
+			if seg.Mode == wasmir.ElemSegmentModeActive && usesExprElementSegment(tableRefType) {
+				seg.RefType = tableRefType
+				seg.Exprs = make([]wasmir.Instruction, 0, len(ed.FuncRefs))
+				for j, ref := range ed.FuncRefs {
+					funcIdx, ok := l.resolveFunctionRef(ref)
+					if !ok {
+						l.diags.Addf("elem[%d] func[%d]: unknown function reference %q", i, j, ref)
+						continue
+					}
+					seg.Exprs = append(seg.Exprs, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx})
 				}
-				seg.FuncIndices = append(seg.FuncIndices, funcIdx)
+			} else {
+				seg.FuncIndices = make([]uint32, 0, len(ed.FuncRefs))
+				for j, ref := range ed.FuncRefs {
+					funcIdx, ok := l.resolveFunctionRef(ref)
+					if !ok {
+						l.diags.Addf("elem[%d] func[%d]: unknown function reference %q", i, j, ref)
+						continue
+					}
+					seg.FuncIndices = append(seg.FuncIndices, funcIdx)
+				}
 			}
 		}
 		l.out.Elements = append(l.out.Elements, seg)
@@ -271,6 +288,10 @@ func (l *moduleLowerer) inferElemPayloadRefType(ed *ElemDecl) (wasmir.ValueType,
 		return ci.Type, true
 	}
 	return wasmir.ValueType{}, false
+}
+
+func usesExprElementSegment(refType wasmir.ValueType) bool {
+	return refType.UsesTypeIndex() || (refType.IsRef() && !refType.Nullable)
 }
 
 // collectTypeDecls lowers module-level type declarations and records named
@@ -363,18 +384,33 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		}
 
 		if len(td.ElemRefs) > 0 {
-			seg := wasmir.ElementSegment{
-				TableIndex:  tableIdx,
-				OffsetI32:   0,
-				FuncIndices: make([]uint32, 0, len(td.ElemRefs)),
-			}
-			for _, ref := range td.ElemRefs {
-				idx, ok := l.resolveFunctionRef(ref)
-				if !ok {
-					l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
-					continue
+			seg := wasmir.ElementSegment{TableIndex: tableIdx, OffsetI32: 0}
+			if usesExprElementSegment(refType) {
+				// Typed or non-null function tables cannot use the legacy
+				// function-index element encoding. For example,
+				//   (table $t (ref null $t) (elem $tf))
+				// must lower to ref-expression payloads like `(ref.func $tf)`
+				// so the element segment carries the table's precise ref type.
+				seg.RefType = refType
+				seg.Exprs = make([]wasmir.Instruction, 0, len(td.ElemRefs))
+				for _, ref := range td.ElemRefs {
+					idx, ok := l.resolveFunctionRef(ref)
+					if !ok {
+						l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
+						continue
+					}
+					seg.Exprs = append(seg.Exprs, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: idx})
 				}
-				seg.FuncIndices = append(seg.FuncIndices, idx)
+			} else {
+				seg.FuncIndices = make([]uint32, 0, len(td.ElemRefs))
+				for _, ref := range td.ElemRefs {
+					idx, ok := l.resolveFunctionRef(ref)
+					if !ok {
+						l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
+						continue
+					}
+					seg.FuncIndices = append(seg.FuncIndices, idx)
+				}
 			}
 			l.out.Elements = append(l.out.Elements, seg)
 		}

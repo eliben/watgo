@@ -1153,30 +1153,27 @@ instrLoop:
 				diags.Addf("%s: br_table requires at least default target", insCtx)
 				continue
 			}
-			var refTypes []validatedValue
-			for j, depth := range targetDepths {
-				target, _, _, ok := validateBranchTarget(insCtx, depth, "br_table")
-				if !ok {
-					continue
-				}
-				types := branchTargetTypes(target)
-				if j == 0 {
-					refTypes = append([]validatedValue(nil), types...)
-					continue
-				}
-				if len(types) != len(refTypes) {
-					diags.Addf("%s: br_table target arity mismatch", insCtx)
-					continue
-				}
-				for k := range types {
-					if !sameValidatedValue(types[k], refTypes[k]) {
-						diags.Addf("%s: br_table target type mismatch", insCtx)
-						break
+			target, targetValues, base, ok := validateBranchTarget(insCtx, targetDepths[0], "br_table")
+			if ok {
+				for _, depth := range targetDepths[1:] {
+					if int(depth) >= len(controlStack) {
+						diags.Addf("%s: br_table depth %d out of range", insCtx, depth)
+						continue
+					}
+					otherTarget := controlStack[len(controlStack)-1-int(depth)]
+					otherValues := branchTargetTypes(otherTarget)
+					if len(otherValues) != len(targetValues) {
+						diags.Addf("%s: br_table target arity mismatch", insCtx)
+						continue
+					}
+					for k, want := range otherValues {
+						got := stackValue(base + k)
+						if !matchesExpectedValue(got, want) {
+							diags.Addf("%s: br_table depth %d target type mismatch at %d: got %s want %s", insCtx, depth, k, validatedValueName(got), validatedValueName(want))
+							break
+						}
 					}
 				}
-			}
-			target, _, _, ok := validateBranchTarget(insCtx, targetDepths[0], "br_table")
-			if ok {
 				_ = target
 				markCurrentFrameUnreachable()
 			}

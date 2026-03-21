@@ -487,8 +487,10 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		return td
 	}
 
-	// Legacy shorthand: (table funcref (elem ...))
-	if sx.list[cursor].IsTokenKind(KEYWORD) {
+	// Inline element shorthand:
+	//   (table funcref (elem ...))
+	//   (table (ref null $t) (elem ...))
+	if sx.list[cursor].IsTokenKind(KEYWORD) || sx.list[cursor].HeadKeyword() == "ref" {
 		td.RefTy = p.parseType(sx.list[cursor])
 		cursor++
 		if cursor >= len(sx.list) {
