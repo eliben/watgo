@@ -1601,9 +1601,9 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 	case valueTypeF64Code:
 		return wasmir.ValueTypeF64, true
 	case refTypeFuncRefCode:
-		return wasmir.ValueTypeFuncRef, true
+		return wasmir.RefTypeFunc(true), true
 	case valueTypeExternRefCode:
-		return wasmir.ValueTypeExternRef, true
+		return wasmir.RefTypeExtern(true), true
 	default:
 		return wasmir.ValueType{}, false
 	}

@@ -144,7 +144,7 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, elem := range m.Elements {
-		tableTy := ValueTypeFuncRef
+		tableTy := RefTypeFunc(true)
 		if elem.Mode == ElemSegmentModeActive {
 			if int(elem.TableIndex) >= len(m.Tables) {
 				diags.Addf("element[%d] has invalid table index %d", i, elem.TableIndex)

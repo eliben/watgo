@@ -261,7 +261,7 @@ func (l *moduleLowerer) inferElemPayloadRefType(ed *ElemDecl) (wasmir.ValueType,
 		return lowerValueType(ed.RefTy, l.typesByName)
 	}
 	if len(ed.FuncRefs) > 0 {
-		return wasmir.ValueTypeFuncRef, true
+		return wasmir.RefTypeFunc(true), true
 	}
 	if len(ed.Exprs) > 0 {
 		ci, ok := l.lowerConstInstr(ed.Exprs[0])
@@ -2335,10 +2335,10 @@ func equalValueTypeSlices(a, b []wasmir.ValueType) bool {
 // used where a declaration expects want.
 //
 // This is intentionally weaker than strict equality for references:
-// - a concrete typed funcref `(ref $t)` is accepted where plain `funcref` or
-//   `(ref func)` is expected
-// - nullability must still respect the destination, so nullable refs do not
-//   match non-nullable expectations
+//   - a concrete typed funcref `(ref $t)` is accepted where plain `funcref` or
+//     `(ref func)` is expected
+//   - nullability must still respect the destination, so nullable refs do not
+//     match non-nullable expectations
 func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 	if got == want {
 		return true
@@ -2487,9 +2487,9 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 		case "f64":
 			return wasmir.ValueTypeF64, true
 		case "funcref":
-			return wasmir.ValueTypeFuncRef, true
+			return wasmir.RefTypeFunc(true), true
 		case "externref":
-			return wasmir.ValueTypeExternRef, true
+			return wasmir.RefTypeExtern(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}
@@ -2509,9 +2509,9 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 	case *BasicType:
 		switch t.Name {
 		case "funcref":
-			return wasmir.ValueTypeFuncRef, true
+			return wasmir.RefTypeFunc(true), true
 		case "externref":
-			return wasmir.ValueTypeExternRef, true
+			return wasmir.RefTypeExtern(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}

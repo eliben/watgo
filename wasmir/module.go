@@ -41,22 +41,26 @@ type ValueType struct {
 }
 
 var (
-	ValueTypeI32       = ValueType{Kind: ValueKindI32}
-	ValueTypeI64       = ValueType{Kind: ValueKindI64}
-	ValueTypeF32       = ValueType{Kind: ValueKindF32}
-	ValueTypeF64       = ValueType{Kind: ValueKindF64}
-	ValueTypeFuncRef   = ValueType{Kind: ValueKindRef, Nullable: true, HeapType: HeapType{Kind: HeapKindFunc}}
-	ValueTypeExternRef = ValueType{Kind: ValueKindRef, Nullable: true, HeapType: HeapType{Kind: HeapKindExtern}}
+	ValueTypeI32 = ValueType{Kind: ValueKindI32}
+	ValueTypeI64 = ValueType{Kind: ValueKindI64}
+	ValueTypeF32 = ValueType{Kind: ValueKindF32}
+	ValueTypeF64 = ValueType{Kind: ValueKindF64}
 )
 
+// RefTypeFunc returns a function-reference value type with the requested
+// nullability.
 func RefTypeFunc(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindFunc}}
 }
 
+// RefTypeExtern returns an extern-reference value type with the requested
+// nullability.
 func RefTypeExtern(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExtern}}
 }
 
+// RefTypeIndexed returns a typed function reference to the given type index
+// with the requested nullability.
 func RefTypeIndexed(typeIndex uint32, nullable bool) ValueType {
 	return ValueType{
 		Kind:     ValueKindRef,
@@ -74,41 +78,37 @@ func (vt ValueType) UsesTypeIndex() bool {
 }
 
 func (vt ValueType) String() string {
-	switch vt {
-	case ValueTypeI32:
+	switch vt.Kind {
+	case ValueKindI32:
 		return "i32"
-	case ValueTypeI64:
+	case ValueKindI64:
 		return "i64"
-	case ValueTypeF32:
+	case ValueKindF32:
 		return "f32"
-	case ValueTypeF64:
+	case ValueKindF64:
 		return "f64"
-	case ValueTypeFuncRef:
-		return "funcref"
-	case ValueTypeExternRef:
-		return "externref"
-	}
-	if !vt.IsRef() {
-		return fmt.Sprintf("value_type(kind=%d)", vt.Kind)
-	}
-	switch vt.HeapType.Kind {
-	case HeapKindFunc:
-		if vt.Nullable {
-			return "funcref"
+	case ValueKindRef:
+		switch vt.HeapType.Kind {
+		case HeapKindFunc:
+			if vt.Nullable {
+				return "funcref"
+			}
+			return "(ref func)"
+		case HeapKindExtern:
+			if vt.Nullable {
+				return "externref"
+			}
+			return "(ref extern)"
+		case HeapKindTypeIndex:
+			if vt.Nullable {
+				return fmt.Sprintf("(ref null type[%d])", vt.HeapType.TypeIndex)
+			}
+			return fmt.Sprintf("(ref type[%d])", vt.HeapType.TypeIndex)
+		default:
+			return fmt.Sprintf("ref(kind=%d nullable=%t)", vt.HeapType.Kind, vt.Nullable)
 		}
-		return "(ref func)"
-	case HeapKindExtern:
-		if vt.Nullable {
-			return "externref"
-		}
-		return "(ref extern)"
-	case HeapKindTypeIndex:
-		if vt.Nullable {
-			return fmt.Sprintf("(ref null type[%d])", vt.HeapType.TypeIndex)
-		}
-		return fmt.Sprintf("(ref type[%d])", vt.HeapType.TypeIndex)
 	default:
-		return fmt.Sprintf("ref(kind=%d nullable=%t)", vt.HeapType.Kind, vt.Nullable)
+		return fmt.Sprintf("value_type(kind=%d)", vt.Kind)
 	}
 }
 

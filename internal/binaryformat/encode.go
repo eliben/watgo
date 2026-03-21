@@ -1129,19 +1129,27 @@ func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string
 }
 
 func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
-	switch vt {
-	case wasmir.ValueTypeI32:
+	switch vt.Kind {
+	case wasmir.ValueKindI32:
 		return valueTypeI32Code, true
-	case wasmir.ValueTypeI64:
+	case wasmir.ValueKindI64:
 		return valueTypeI64Code, true
-	case wasmir.ValueTypeF32:
+	case wasmir.ValueKindF32:
 		return valueTypeF32Code, true
-	case wasmir.ValueTypeF64:
+	case wasmir.ValueKindF64:
 		return valueTypeF64Code, true
-	case wasmir.ValueTypeFuncRef:
-		return refTypeFuncRefCode, true
-	case wasmir.ValueTypeExternRef:
-		return valueTypeExternRefCode, true
+	case wasmir.ValueKindRef:
+		if !vt.Nullable {
+			return 0, false
+		}
+		switch vt.HeapType.Kind {
+		case wasmir.HeapKindFunc:
+			return refTypeFuncRefCode, true
+		case wasmir.HeapKindExtern:
+			return valueTypeExternRefCode, true
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -1198,10 +1206,13 @@ func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
 }
 
 func refTypeCode(vt wasmir.ValueType) (byte, bool) {
-	switch vt {
-	case wasmir.ValueTypeFuncRef, wasmir.RefTypeFunc(false):
+	if vt.Kind != wasmir.ValueKindRef {
+		return 0, false
+	}
+	switch vt.HeapType.Kind {
+	case wasmir.HeapKindFunc:
 		return refTypeFuncRefCode, true
-	case wasmir.ValueTypeExternRef, wasmir.RefTypeExtern(false):
+	case wasmir.HeapKindExtern:
 		return refTypeExternRefCode, true
 	default:
 		return 0, false
