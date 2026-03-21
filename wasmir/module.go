@@ -1,16 +1,116 @@
 package wasmir
 
-// ValueType is a WebAssembly numeric value type.
-type ValueType byte
+import "fmt"
+
+// ValueKind classifies the broad kind of a WebAssembly value type.
+type ValueKind uint8
 
 const (
-	ValueTypeI32 ValueType = iota
-	ValueTypeI64
-	ValueTypeF32
-	ValueTypeF64
-	ValueTypeFuncRef
-	ValueTypeExternRef
+	ValueKindInvalid ValueKind = iota
+	ValueKindI32
+	ValueKindI64
+	ValueKindF32
+	ValueKindF64
+	ValueKindRef
 )
+
+// HeapKind classifies the heap type component of a reference type.
+type HeapKind uint8
+
+const (
+	HeapKindInvalid HeapKind = iota
+	HeapKindFunc
+	HeapKindExtern
+	HeapKindTypeIndex
+)
+
+// HeapType describes the heap type referenced by a reference value type.
+type HeapType struct {
+	Kind      HeapKind
+	TypeIndex uint32
+}
+
+// ValueType is a WebAssembly value type.
+//
+// Numeric value types use only Kind. Reference value types use Kind=ValueKindRef
+// and carry nullability plus heap type information.
+type ValueType struct {
+	Kind     ValueKind
+	Nullable bool
+	HeapType HeapType
+}
+
+var (
+	ValueTypeI32       = ValueType{Kind: ValueKindI32}
+	ValueTypeI64       = ValueType{Kind: ValueKindI64}
+	ValueTypeF32       = ValueType{Kind: ValueKindF32}
+	ValueTypeF64       = ValueType{Kind: ValueKindF64}
+	ValueTypeFuncRef   = ValueType{Kind: ValueKindRef, Nullable: true, HeapType: HeapType{Kind: HeapKindFunc}}
+	ValueTypeExternRef = ValueType{Kind: ValueKindRef, Nullable: true, HeapType: HeapType{Kind: HeapKindExtern}}
+)
+
+func RefTypeFunc(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindFunc}}
+}
+
+func RefTypeExtern(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExtern}}
+}
+
+func RefTypeIndexed(typeIndex uint32, nullable bool) ValueType {
+	return ValueType{
+		Kind:     ValueKindRef,
+		Nullable: nullable,
+		HeapType: HeapType{Kind: HeapKindTypeIndex, TypeIndex: typeIndex},
+	}
+}
+
+func (vt ValueType) IsRef() bool {
+	return vt.Kind == ValueKindRef
+}
+
+func (vt ValueType) UsesTypeIndex() bool {
+	return vt.IsRef() && vt.HeapType.Kind == HeapKindTypeIndex
+}
+
+func (vt ValueType) String() string {
+	switch vt {
+	case ValueTypeI32:
+		return "i32"
+	case ValueTypeI64:
+		return "i64"
+	case ValueTypeF32:
+		return "f32"
+	case ValueTypeF64:
+		return "f64"
+	case ValueTypeFuncRef:
+		return "funcref"
+	case ValueTypeExternRef:
+		return "externref"
+	}
+	if !vt.IsRef() {
+		return fmt.Sprintf("value_type(kind=%d)", vt.Kind)
+	}
+	switch vt.HeapType.Kind {
+	case HeapKindFunc:
+		if vt.Nullable {
+			return "funcref"
+		}
+		return "(ref func)"
+	case HeapKindExtern:
+		if vt.Nullable {
+			return "externref"
+		}
+		return "(ref extern)"
+	case HeapKindTypeIndex:
+		if vt.Nullable {
+			return fmt.Sprintf("(ref null type[%d])", vt.HeapType.TypeIndex)
+		}
+		return fmt.Sprintf("(ref type[%d])", vt.HeapType.TypeIndex)
+	default:
+		return fmt.Sprintf("ref(kind=%d nullable=%t)", vt.HeapType.Kind, vt.Nullable)
+	}
+}
 
 // InstrKind identifies one supported instruction opcode in semantic IR form.
 type InstrKind uint8
@@ -226,31 +326,9 @@ type FuncType struct {
 	// Params is the ordered parameter type list.
 	Params []ValueType
 
-	// ParamRefs carries reference-type metadata aligned with Params.
-	// Zero-value entries mean the corresponding parameter is not a typed ref.
-	ParamRefs []RefTypeInfo
-
 	// Results is the ordered result type list.
 	// For MVP this is typically length 0 or 1, but multi-value is representable.
 	Results []ValueType
-
-	// ResultRefs carries reference-type metadata aligned with Results.
-	// Zero-value entries mean the corresponding result is not a typed ref.
-	ResultRefs []RefTypeInfo
-}
-
-// RefTypeInfo carries extra information for reference-typed values when the
-// generic ValueType enum is not expressive enough.
-type RefTypeInfo struct {
-	// Nullable reports whether this reference type admits null values.
-	Nullable bool
-
-	// UsesTypeIndex reports that the heap type is a concrete type index rather
-	// than an abstract heap type like "func" or "extern".
-	UsesTypeIndex bool
-
-	// TypeIndex is the concrete heap type index when UsesTypeIndex is true.
-	TypeIndex uint32
 }
 
 // Function is a function definition with locals and body instructions.
@@ -272,10 +350,6 @@ type Function struct {
 
 	// Locals is the ordered list of non-parameter local variable types.
 	Locals []ValueType
-
-	// LocalRefs carries reference-type metadata aligned with Locals.
-	// Zero-value entries mean the corresponding local is not a typed ref.
-	LocalRefs []RefTypeInfo
 
 	// Body is the function instruction stream.
 	// Encoders/validators expect it to end with InstrEnd.
@@ -336,6 +410,13 @@ type Table struct {
 
 	// RefType is the table element reference type.
 	RefType ValueType
+
+	// HasInit reports whether this table carries an inline initializer
+	// expression in the table section.
+	HasInit bool
+
+	// Init is the repeated initializer value used when HasInit is true.
+	Init Instruction
 
 	// Imported reports whether this table is imported.
 	Imported bool
@@ -452,10 +533,6 @@ type Instruction struct {
 
 	// RefType is the reference value type immediate used by InstrRefNull.
 	RefType ValueType
-
-	// RefInfo carries extra metadata for reference-typed immediates such as
-	// ref.null, when present.
-	RefInfo RefTypeInfo
 
 	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
 	CallTypeIndex uint32

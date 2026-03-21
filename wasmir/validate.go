@@ -9,92 +9,58 @@ import (
 const maxMemoryPages = 65536
 
 type validatedValue struct {
-	Type    ValueType
-	RefInfo RefTypeInfo
+	Type ValueType
 }
 
 func isRefValueType(vt ValueType) bool {
-	return vt == ValueTypeFuncRef || vt == ValueTypeExternRef
-}
-
-func validatedValueFromParts(vt ValueType, refInfo RefTypeInfo, hasRefInfo bool) validatedValue {
-	if !isRefValueType(vt) {
-		return validatedValue{Type: vt}
-	}
-	if !hasRefInfo {
-		refInfo = RefTypeInfo{Nullable: true}
-	}
-	return validatedValue{Type: vt, RefInfo: refInfo}
+	return vt.IsRef()
 }
 
 func validatedValueFromType(vt ValueType) validatedValue {
-	return validatedValueFromParts(vt, RefTypeInfo{}, false)
-}
-
-func validatedValueFromAligned(types []ValueType, refs []RefTypeInfo, i int) validatedValue {
-	var refInfo RefTypeInfo
-	hasRefInfo := i < len(refs)
-	if hasRefInfo {
-		refInfo = refs[i]
-	}
-	return validatedValueFromParts(types[i], refInfo, hasRefInfo)
-}
-
-func validatedValuesFromAligned(types []ValueType, refs []RefTypeInfo) []validatedValue {
-	out := make([]validatedValue, len(types))
-	for i := range types {
-		out[i] = validatedValueFromAligned(types, refs, i)
-	}
-	return out
+	return validatedValue{Type: vt}
 }
 
 func sameValidatedValue(got, want validatedValue) bool {
-	return got.Type == want.Type && got.RefInfo == want.RefInfo
+	return got.Type == want.Type
 }
 
 func matchesExpectedValue(got, want validatedValue) bool {
 	if got.Type != want.Type {
-		return false
-	}
-	if !isRefValueType(want.Type) {
-		return true
-	}
-	if want.RefInfo.UsesTypeIndex {
-		if !got.RefInfo.UsesTypeIndex || got.RefInfo.TypeIndex != want.RefInfo.TypeIndex {
+		if !got.Type.IsRef() || !want.Type.IsRef() {
 			return false
 		}
+		if want.Type.UsesTypeIndex() {
+			if !got.Type.UsesTypeIndex() || got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
+				return false
+			}
+		} else {
+			switch want.Type.HeapType.Kind {
+			case HeapKindFunc:
+				if got.Type.HeapType.Kind != HeapKindFunc && got.Type.HeapType.Kind != HeapKindTypeIndex {
+					return false
+				}
+			case HeapKindExtern:
+				if got.Type.HeapType.Kind != HeapKindExtern {
+					return false
+				}
+			default:
+				return false
+			}
+		}
 	}
-	if got.RefInfo.Nullable && !want.RefInfo.Nullable {
+	if got.Type.IsRef() && got.Type.Nullable && !want.Type.Nullable {
 		return false
 	}
 	return true
 }
 
 func validatedValueName(v validatedValue) string {
-	if !isRefValueType(v.Type) {
-		return valueTypeName(v.Type)
-	}
-	if v.Type == ValueTypeFuncRef {
-		switch {
-		case v.RefInfo.UsesTypeIndex && v.RefInfo.Nullable:
-			return fmt.Sprintf("(ref null type[%d])", v.RefInfo.TypeIndex)
-		case v.RefInfo.UsesTypeIndex:
-			return fmt.Sprintf("(ref type[%d])", v.RefInfo.TypeIndex)
-		case v.RefInfo.Nullable:
-			return "funcref"
-		default:
-			return "(ref func)"
-		}
-	}
-	if v.RefInfo.Nullable {
-		return "externref"
-	}
-	return "(ref extern)"
+	return v.Type.String()
 }
 
 func refinedNonNullValue(v validatedValue) validatedValue {
 	if isRefValueType(v.Type) {
-		v.RefInfo.Nullable = false
+		v.Type.Nullable = false
 	}
 	return v
 }
@@ -133,8 +99,24 @@ func ValidateModule(m *Module) error {
 			diags.Addf("global[%d]: unsupported initializer instruction kind %d", i, g.Init.Kind)
 			continue
 		}
-		if initType != g.Type {
+		if !matchesExpectedValue(validatedValue{Type: initType}, validatedValue{Type: g.Type}) {
 			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, valueTypeName(initType), valueTypeName(g.Type))
+		}
+	}
+
+	for i, table := range m.Tables {
+		if table.HasMax && table.Min > table.Max {
+			diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
+		}
+		if table.HasInit {
+			initType, ok := globalInitType(m, table.Init)
+			if !ok {
+				diags.Addf("table[%d]: invalid initializer", i)
+				continue
+			}
+			if !matchesExpectedValue(validatedValue{Type: initType}, validatedValue{Type: table.RefType}) {
+				diags.Addf("table[%d]: type mismatch", i)
+			}
 		}
 	}
 
@@ -169,7 +151,7 @@ func ValidateModule(m *Module) error {
 				continue
 			}
 			tableTy = m.Tables[elem.TableIndex].RefType
-			if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
+			if len(elem.FuncIndices) > 0 && tableTy.HeapType.Kind != HeapKindFunc && tableTy.HeapType.Kind != HeapKindTypeIndex {
 				diags.Addf("element[%d]: type mismatch", i)
 			}
 		}
@@ -179,7 +161,7 @@ func ValidateModule(m *Module) error {
 			}
 		}
 		if len(elem.Exprs) > 0 {
-			if elem.RefType != tableTy {
+			if !matchesExpectedValue(validatedValue{Type: elem.RefType}, validatedValue{Type: tableTy}) {
 				diags.Addf("element[%d]: type mismatch", i)
 			}
 			for j, expr := range elem.Exprs {
@@ -188,7 +170,7 @@ func ValidateModule(m *Module) error {
 					diags.Addf("element[%d] expr[%d]: constant expression required", i, j)
 					continue
 				}
-				if ty != elem.RefType {
+				if !matchesExpectedValue(validatedValue{Type: ty}, validatedValue{Type: elem.RefType}) {
 					diags.Addf("element[%d] expr[%d]: type mismatch", i, j)
 				}
 			}
@@ -248,50 +230,29 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		return diags
 	}
 
-	alignedRefs := func(types []ValueType, refs []RefTypeInfo) []RefTypeInfo {
-		out := make([]RefTypeInfo, len(types))
-		for i, vt := range types {
-			if i < len(refs) {
-				out[i] = refs[i]
-			} else if isRefValueType(vt) {
-				out[i] = RefTypeInfo{Nullable: true}
-			}
-		}
-		return out
+	valueAt := func(types []ValueType, i int) validatedValue {
+		return validatedValue{Type: types[i]}
 	}
-	valueAt := func(types []ValueType, refs []RefTypeInfo, i int) validatedValue {
-		return validatedValue{Type: types[i], RefInfo: refs[i]}
-	}
-	valuesOf := func(types []ValueType, refs []RefTypeInfo) []validatedValue {
+	valuesOf := func(types []ValueType) []validatedValue {
 		out := make([]validatedValue, len(types))
 		for i := range types {
-			out[i] = valueAt(types, refs, i)
+			out[i] = valueAt(types, i)
 		}
 		return out
 	}
 
-	localRefs := make([]RefTypeInfo, 0, len(ft.Params)+len(f.Locals))
-	localRefs = append(localRefs, alignedRefs(ft.Params, ft.ParamRefs)...)
-	localRefs = append(localRefs, alignedRefs(f.Locals, f.LocalRefs)...)
 	locals := make([]ValueType, 0, len(ft.Params)+len(f.Locals))
 	locals = append(locals, ft.Params...)
 	locals = append(locals, f.Locals...)
 
-	funcResultRefs := alignedRefs(ft.Results, ft.ResultRefs)
-	funcResultValues := valuesOf(ft.Results, funcResultRefs)
+	funcResultValues := valuesOf(ft.Results)
 
 	stack := make([]ValueType, 0)
-	stackRefs := make([]RefTypeInfo, 0)
 	stackValue := func(i int) validatedValue {
-		return validatedValue{Type: stack[i], RefInfo: stackRefs[i]}
+		return validatedValue{Type: stack[i]}
 	}
 	appendStackValue := func(v validatedValue) {
 		stack = append(stack, v.Type)
-		if isRefValueType(v.Type) {
-			stackRefs = append(stackRefs, v.RefInfo)
-		} else {
-			stackRefs = append(stackRefs, RefTypeInfo{})
-		}
 	}
 	appendStackType := func(vt ValueType) {
 		appendStackValue(validatedValueFromType(vt))
@@ -303,15 +264,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 	}
 	truncateStack := func(n int) {
 		stack = stack[:n]
-		stackRefs = stackRefs[:n]
 	}
 	setStackValue := func(i int, v validatedValue) {
 		stack[i] = v.Type
-		if isRefValueType(v.Type) {
-			stackRefs[i] = v.RefInfo
-		} else {
-			stackRefs[i] = RefTypeInfo{}
-		}
 	}
 	type controlKind uint8
 	const (
@@ -323,9 +278,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		kind        controlKind
 		entryHeight int
 		paramTypes  []ValueType
-		paramRefs   []RefTypeInfo
 		resultTypes []ValueType
-		resultRefs  []RefTypeInfo
 		sawElse     bool
 		unreachable bool
 	}
@@ -337,7 +290,6 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		kind:        controlKindBlock,
 		entryHeight: 0,
 		resultTypes: append([]ValueType(nil), ft.Results...),
-		resultRefs:  append([]RefTypeInfo(nil), funcResultRefs...),
 	})
 
 	validateFrameResult := func(insCtx string, frame controlFrame, context string) {
@@ -346,10 +298,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			diags.Addf("%s: %s stack height mismatch: got %d want %d", insCtx, context, len(stack), wantHeight)
 			return
 		}
-		wantRefs := alignedRefs(frame.resultTypes, frame.resultRefs)
 		for i := range frame.resultTypes {
 			got := stackValue(frame.entryHeight + i)
-			want := valueAt(frame.resultTypes, wantRefs, i)
+			want := valueAt(frame.resultTypes, i)
 			if !matchesExpectedValue(got, want) {
 				diags.Addf("%s: %s result type mismatch at %d: got %s want %s", insCtx, context, i, validatedValueName(got), validatedValueName(want))
 				return
@@ -364,12 +315,10 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 		target := controlStack[len(controlStack)-1-int(depth)]
 		targetTypes := target.resultTypes
-		targetRefs := alignedRefs(target.resultTypes, target.resultRefs)
 		if target.kind == controlKindLoop {
 			targetTypes = target.paramTypes
-			targetRefs = alignedRefs(target.paramTypes, target.paramRefs)
 		}
-		targetValues := valuesOf(targetTypes, targetRefs)
+		targetValues := valuesOf(targetTypes)
 		minHeight := target.entryHeight + len(targetValues)
 		if len(stack) < minHeight {
 			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opName, depth)
@@ -399,9 +348,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 	branchTargetTypes := func(target controlFrame) []validatedValue {
 		if target.kind == controlKindLoop {
-			return valuesOf(target.paramTypes, alignedRefs(target.paramTypes, target.paramRefs))
+			return valuesOf(target.paramTypes)
 		}
-		return valuesOf(target.resultTypes, alignedRefs(target.resultTypes, target.resultRefs))
+		return valuesOf(target.resultTypes)
 	}
 
 	markCurrentFrameUnreachable := func() {
@@ -414,19 +363,19 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		controlStack[len(controlStack)-1] = frame
 	}
 
-	controlSignature := func(ins Instruction, insCtx, opname string) ([]ValueType, []RefTypeInfo, []ValueType, []RefTypeInfo, bool) {
+	controlSignature := func(ins Instruction, insCtx, opname string) ([]ValueType, []ValueType, bool) {
 		if ins.BlockTypeUsesIndex {
 			if int(ins.BlockTypeIndex) >= len(m.Types) {
 				diags.Addf("%s: %s has invalid block type index %d", insCtx, opname, ins.BlockTypeIndex)
-				return nil, nil, nil, nil, false
+				return nil, nil, false
 			}
 			ft := m.Types[ins.BlockTypeIndex]
-			return ft.Params, alignedRefs(ft.Params, ft.ParamRefs), ft.Results, alignedRefs(ft.Results, ft.ResultRefs), true
+			return ft.Params, ft.Results, true
 		}
 		if ins.BlockHasResult {
-			return nil, nil, []ValueType{ins.BlockType}, alignedRefs([]ValueType{ins.BlockType}, nil), true
+			return nil, []ValueType{ins.BlockType}, true
 		}
-		return nil, nil, nil, nil, true
+		return nil, nil, true
 	}
 
 	returned := false
@@ -441,7 +390,7 @@ instrLoop:
 			switch ins.Kind {
 			case InstrBlock, InstrLoop, InstrIf:
 				opname := instrName(ins.Kind)
-				params, paramRefs, results, resultRefs, ok := controlSignature(ins, insCtx, opname)
+				params, results, ok := controlSignature(ins, insCtx, opname)
 				if !ok {
 					continue
 				}
@@ -456,9 +405,7 @@ instrLoop:
 					kind:        kind,
 					entryHeight: len(stack),
 					paramTypes:  params,
-					paramRefs:   paramRefs,
 					resultTypes: results,
-					resultRefs:  resultRefs,
 					unreachable: true,
 				})
 				continue
@@ -482,7 +429,7 @@ instrLoop:
 				frame := controlStack[len(controlStack)-1]
 				controlStack = controlStack[:len(controlStack)-1]
 				truncateStack(frame.entryHeight)
-				appendStackValues(valuesOf(frame.resultTypes, alignedRefs(frame.resultTypes, frame.resultRefs)))
+				appendStackValues(valuesOf(frame.resultTypes))
 				continue
 			default:
 				// Unreachable code is stack-polymorphic; ignore non-structural ops.
@@ -493,7 +440,7 @@ instrLoop:
 		case InstrNop:
 			// No stack effect.
 		case InstrBlock:
-			params, paramRefs, results, resultRefs, ok := controlSignature(ins, insCtx, "block")
+			params, results, ok := controlSignature(ins, insCtx, "block")
 			if !ok {
 				continue
 			}
@@ -504,7 +451,7 @@ instrLoop:
 			base := len(stack) - len(params)
 			matched := true
 			for j := range params {
-				want := valueAt(params, paramRefs, j)
+				want := valueAt(params, j)
 				got := stackValue(base + j)
 				if !matchesExpectedValue(got, want) {
 					diags.Addf("%s: block parameter %d expects %s", insCtx, j, validatedValueName(want))
@@ -516,18 +463,16 @@ instrLoop:
 				continue
 			}
 			for j := range params {
-				setStackValue(base+j, valueAt(params, paramRefs, j))
+				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
 				kind:        controlKindBlock,
 				entryHeight: len(stack) - len(params),
 				paramTypes:  params,
-				paramRefs:   paramRefs,
 				resultTypes: results,
-				resultRefs:  resultRefs,
 			})
 		case InstrLoop:
-			params, paramRefs, results, resultRefs, ok := controlSignature(ins, insCtx, "loop")
+			params, results, ok := controlSignature(ins, insCtx, "loop")
 			if !ok {
 				continue
 			}
@@ -538,7 +483,7 @@ instrLoop:
 			base := len(stack) - len(params)
 			matched := true
 			for j := range params {
-				want := valueAt(params, paramRefs, j)
+				want := valueAt(params, j)
 				got := stackValue(base + j)
 				if !matchesExpectedValue(got, want) {
 					diags.Addf("%s: loop parameter %d expects %s", insCtx, j, validatedValueName(want))
@@ -550,18 +495,16 @@ instrLoop:
 				continue
 			}
 			for j := range params {
-				setStackValue(base+j, valueAt(params, paramRefs, j))
+				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
 				kind:        controlKindLoop,
 				entryHeight: len(stack) - len(params),
 				paramTypes:  params,
-				paramRefs:   paramRefs,
 				resultTypes: results,
-				resultRefs:  resultRefs,
 			})
 		case InstrIf:
-			params, paramRefs, results, resultRefs, ok := controlSignature(ins, insCtx, "if")
+			params, results, ok := controlSignature(ins, insCtx, "if")
 			if !ok {
 				continue
 			}
@@ -581,7 +524,7 @@ instrLoop:
 			base := len(stack) - len(params)
 			matched := true
 			for j := range params {
-				want := valueAt(params, paramRefs, j)
+				want := valueAt(params, j)
 				got := stackValue(base + j)
 				if !matchesExpectedValue(got, want) {
 					diags.Addf("%s: if parameter %d expects %s", insCtx, j, validatedValueName(want))
@@ -593,15 +536,13 @@ instrLoop:
 				continue
 			}
 			for j := range params {
-				setStackValue(base+j, valueAt(params, paramRefs, j))
+				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
 				kind:        controlKindIf,
 				entryHeight: len(stack) - len(params),
 				paramTypes:  params,
-				paramRefs:   paramRefs,
 				resultTypes: results,
-				resultRefs:  resultRefs,
 			})
 		case InstrElse:
 			if len(controlStack) == 0 {
@@ -629,7 +570,7 @@ instrLoop:
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
-			appendStackValue(valueAt(locals, localRefs, int(ins.LocalIndex)))
+			appendStackValue(valueAt(locals, int(ins.LocalIndex)))
 		case InstrLocalSet:
 			if int(ins.LocalIndex) >= len(locals) {
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
@@ -639,7 +580,7 @@ instrLoop:
 				diags.Addf("%s: local.set needs 1 operand", insCtx)
 				continue
 			}
-			want := valueAt(locals, localRefs, int(ins.LocalIndex))
+			want := valueAt(locals, int(ins.LocalIndex))
 			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
 				diags.Addf("%s: local.set expects %s operand", insCtx, validatedValueName(want))
 				continue
@@ -654,7 +595,7 @@ instrLoop:
 				diags.Addf("%s: local.tee needs 1 operand", insCtx)
 				continue
 			}
-			want := valueAt(locals, localRefs, int(ins.LocalIndex))
+			want := valueAt(locals, int(ins.LocalIndex))
 			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
 				diags.Addf("%s: local.tee expects %s operand", insCtx, validatedValueName(want))
 				continue
@@ -762,9 +703,8 @@ instrLoop:
 			}
 			base := len(stack) - len(calleeType.Params)
 			operandsOK := true
-			paramRefs := alignedRefs(calleeType.Params, calleeType.ParamRefs)
 			for j := range calleeType.Params {
-				want := valueAt(calleeType.Params, paramRefs, j)
+				want := valueAt(calleeType.Params, j)
 				if !matchesExpectedValue(stackValue(base+j), want) {
 					diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), validatedValueName(want))
 					operandsOK = false
@@ -775,7 +715,7 @@ instrLoop:
 				continue
 			}
 			truncateStack(base)
-			appendStackValues(valuesOf(calleeType.Results, alignedRefs(calleeType.Results, calleeType.ResultRefs)))
+			appendStackValues(valuesOf(calleeType.Results))
 		case InstrCallIndirect:
 			if int(ins.TableIndex) >= len(m.Tables) {
 				diags.Addf("%s: call_indirect table index %d out of range", insCtx, ins.TableIndex)
@@ -797,9 +737,8 @@ instrLoop:
 			}
 			base := len(stack) - 1 - len(calleeType.Params)
 			ok := true
-			paramRefs := alignedRefs(calleeType.Params, calleeType.ParamRefs)
 			for j := range calleeType.Params {
-				want := valueAt(calleeType.Params, paramRefs, j)
+				want := valueAt(calleeType.Params, j)
 				if !matchesExpectedValue(stackValue(base+j), want) {
 					diags.Addf("%s: call_indirect expects operand %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
@@ -810,7 +749,7 @@ instrLoop:
 				continue
 			}
 			truncateStack(base)
-			appendStackValues(valuesOf(calleeType.Results, alignedRefs(calleeType.Results, calleeType.ResultRefs)))
+			appendStackValues(valuesOf(calleeType.Results))
 		case InstrCallRef:
 			if int(ins.CallTypeIndex) >= len(m.Types) {
 				diags.Addf("%s: call_ref type index %d out of range", insCtx, ins.CallTypeIndex)
@@ -822,16 +761,15 @@ instrLoop:
 				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
 				continue
 			}
-			calleeRefWant := validatedValue{Type: ValueTypeFuncRef, RefInfo: RefTypeInfo{UsesTypeIndex: true, TypeIndex: ins.CallTypeIndex}}
+			calleeRefWant := validatedValue{Type: RefTypeIndexed(ins.CallTypeIndex, false)}
 			if !matchesExpectedValue(stackValue(len(stack)-1), calleeRefWant) {
 				diags.Addf("%s: call_ref expects operand of type %s", insCtx, validatedValueName(calleeRefWant))
 				continue
 			}
 			base := len(stack) - 1 - len(calleeType.Params)
 			ok := true
-			paramRefs := alignedRefs(calleeType.Params, calleeType.ParamRefs)
 			for j := range calleeType.Params {
-				want := valueAt(calleeType.Params, paramRefs, j)
+				want := valueAt(calleeType.Params, j)
 				if !matchesExpectedValue(stackValue(base+j), want) {
 					diags.Addf("%s: call_ref expects operand %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
@@ -842,7 +780,7 @@ instrLoop:
 				continue
 			}
 			truncateStack(base)
-			appendStackValues(valuesOf(calleeType.Results, alignedRefs(calleeType.Results, calleeType.ResultRefs)))
+			appendStackValues(valuesOf(calleeType.Results))
 
 		case InstrI32Const:
 			appendStackType(ValueTypeI32)
@@ -1206,7 +1144,7 @@ instrLoop:
 			base := len(stack) - len(ft.Results)
 			ok := true
 			for j := range ft.Results {
-				want := valueAt(ft.Results, funcResultRefs, j)
+				want := valueAt(ft.Results, j)
 				if !matchesExpectedValue(stackValue(base+j), want) {
 					diags.Addf("%s: return expects result %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
@@ -1450,11 +1388,7 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF64))
 		case InstrRefNull:
-			refInfo := ins.RefInfo
-			if !refInfo.UsesTypeIndex {
-				refInfo.Nullable = true
-			}
-			appendStackValue(validatedValue{Type: ins.RefType, RefInfo: refInfo})
+			appendStackValue(validatedValue{Type: ins.RefType})
 		case InstrRefFunc:
 			if ins.FuncIndex >= totalFuncCount {
 				diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
@@ -1465,7 +1399,7 @@ instrLoop:
 				diags.Addf("%s: ref.func function index %d has invalid type", insCtx, ins.FuncIndex)
 				continue
 			}
-			appendStackValue(validatedValue{Type: ValueTypeFuncRef, RefInfo: RefTypeInfo{UsesTypeIndex: true, TypeIndex: typeIdx}})
+			appendStackValue(validatedValue{Type: RefTypeIndexed(typeIdx, false)})
 		case InstrRefIsNull:
 			if len(stack) < 1 {
 				diags.Addf("%s: ref.is_null needs 1 operand", insCtx)
@@ -1497,7 +1431,7 @@ instrLoop:
 				}
 
 				truncateStack(frame.entryHeight)
-				appendStackValues(valuesOf(frame.resultTypes, alignedRefs(frame.resultTypes, frame.resultRefs)))
+				appendStackValues(valuesOf(frame.resultTypes))
 				continue
 			}
 			if i != len(f.Body)-1 {
@@ -1521,7 +1455,7 @@ instrLoop:
 	}
 	for i := range stack {
 		got := stackValue(i)
-		want := valueAt(ft.Results, funcResultRefs, i)
+		want := valueAt(ft.Results, i)
 		if !matchesExpectedValue(got, want) {
 			diags.Addf("%sresult type mismatch at %d: got %s want %s", funcLocCtx, i, validatedValueName(got), validatedValueName(want))
 		}
@@ -1640,22 +1574,7 @@ func operandLabelFromDef(callee *Function, operandIndex int) string {
 }
 
 func valueTypeName(vt ValueType) string {
-	switch vt {
-	case ValueTypeI32:
-		return "i32"
-	case ValueTypeI64:
-		return "i64"
-	case ValueTypeF32:
-		return "f32"
-	case ValueTypeF64:
-		return "f64"
-	case ValueTypeFuncRef:
-		return "funcref"
-	case ValueTypeExternRef:
-		return "externref"
-	default:
-		return fmt.Sprintf("value_type(%d)", vt)
-	}
+	return vt.String()
 }
 
 func globalInitType(m *Module, init Instruction) (ValueType, bool) {
@@ -1672,20 +1591,24 @@ func globalInitType(m *Module, init Instruction) (ValueType, bool) {
 		return init.RefType, true
 	case InstrRefFunc:
 		if init.FuncIndex >= moduleFunctionCount(m) {
-			return 0, false
+			return ValueType{}, false
 		}
-		return ValueTypeFuncRef, true
+		typeIdx, ok := functionTypeIndexAtIndex(m, importedFunctionTypeIndices(m), init.FuncIndex)
+		if !ok {
+			return ValueType{}, false
+		}
+		return RefTypeIndexed(typeIdx, false), true
 	case InstrGlobalGet:
 		if int(init.GlobalIndex) >= len(m.Globals) {
-			return 0, false
+			return ValueType{}, false
 		}
 		g := m.Globals[init.GlobalIndex]
 		if g.Mutable {
-			return 0, false
+			return ValueType{}, false
 		}
 		return g.Type, true
 	default:
-		return 0, false
+		return ValueType{}, false
 	}
 }
 

@@ -2017,22 +2017,27 @@ func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, e
 }
 
 func valueTypeString(vt wasmir.ValueType) (string, error) {
-	switch vt {
-	case wasmir.ValueTypeI32:
+	if vt == wasmir.ValueTypeI32 {
 		return "i32", nil
-	case wasmir.ValueTypeI64:
-		return "i64", nil
-	case wasmir.ValueTypeF32:
-		return "f32", nil
-	case wasmir.ValueTypeF64:
-		return "f64", nil
-	case wasmir.ValueTypeFuncRef:
-		return "funcref", nil
-	case wasmir.ValueTypeExternRef:
-		return "externref", nil
-	default:
-		return "", fmt.Errorf("unsupported value type %d", vt)
 	}
+	if vt == wasmir.ValueTypeI64 {
+		return "i64", nil
+	}
+	if vt == wasmir.ValueTypeF32 {
+		return "f32", nil
+	}
+	if vt == wasmir.ValueTypeF64 {
+		return "f64", nil
+	}
+	if vt.IsRef() {
+		switch vt.HeapType.Kind {
+		case wasmir.HeapKindFunc, wasmir.HeapKindTypeIndex:
+			return "funcref", nil
+		case wasmir.HeapKindExtern:
+			return "externref", nil
+		}
+	}
+	return "", fmt.Errorf("unsupported value type %s", vt)
 }
 
 func decodeNodeValue(v nodeValue) (uint64, error) {

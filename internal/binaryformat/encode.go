@@ -224,6 +224,8 @@ const (
 	limitsFlagMinOnly byte = 0x00
 	// limitsFlagMinMax encodes limits with both minimum and maximum bounds.
 	limitsFlagMinMax byte = 0x01
+	// tableFlagHasInit marks a table definition carrying an inline init expr.
+	tableFlagHasInit byte = 0x40
 
 	// elemSegmentFlagActiveTable0FuncIndices encodes an active element segment
 	// for table 0 using function indices (legacy/table-0 form).
@@ -343,16 +345,16 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 
 		writeULEB128(&payload, uint32(len(ft.Params)))
 		for j, p := range ft.Params {
-			if !encodeValueType(&payload, p, refTypeInfoAt(ft.ParamRefs, j)) {
-				diags.Addf("type[%d] param[%d]: unsupported value type %d", i, j, p)
+			if !encodeValueType(&payload, p) {
+				diags.Addf("type[%d] param[%d]: unsupported value type %s", i, j, p)
 				payload.WriteByte(0)
 			}
 		}
 
 		writeULEB128(&payload, uint32(len(ft.Results)))
 		for j, r := range ft.Results {
-			if !encodeValueType(&payload, r, refTypeInfoAt(ft.ResultRefs, j)) {
-				diags.Addf("type[%d] result[%d]: unsupported value type %d", i, j, r)
+			if !encodeValueType(&payload, r) {
+				diags.Addf("type[%d] result[%d]: unsupported value type %s", i, j, r)
 				payload.WriteByte(0)
 			}
 		}
@@ -384,24 +386,20 @@ func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte 
 			writeULEB128(&payload, imp.TypeIdx)
 		case wasmir.ExternalKindTable:
 			payload.WriteByte(importKindTableCode)
-			refCode, ok := refTypeCode(imp.Table.RefType)
-			if !ok {
-				diags.Addf("import[%d]: unsupported table ref type %d", i, imp.Table.RefType)
-				refCode = refTypeFuncRefCode
+			if !encodeValueType(&payload, imp.Table.RefType) {
+				diags.Addf("import[%d]: unsupported table ref type %s", i, imp.Table.RefType)
+				payload.WriteByte(refTypeFuncRefCode)
 			}
-			payload.WriteByte(refCode)
 			writeLimits(&payload, imp.Table.Min, imp.Table.HasMax, imp.Table.Max)
 		case wasmir.ExternalKindMemory:
 			payload.WriteByte(importKindMemoryCode)
 			writeLimits(&payload, imp.Memory.Min, imp.Memory.HasMax, imp.Memory.Max)
 		case wasmir.ExternalKindGlobal:
 			payload.WriteByte(importKindGlobalCode)
-			vt, ok := valueTypeCode(imp.GlobalType)
-			if !ok {
-				diags.Addf("import[%d]: unsupported global value type %d", i, imp.GlobalType)
-				vt = valueTypeI32Code
+			if !encodeValueType(&payload, imp.GlobalType) {
+				diags.Addf("import[%d]: unsupported global value type %s", i, imp.GlobalType)
+				payload.WriteByte(valueTypeI32Code)
 			}
-			payload.WriteByte(vt)
 			if imp.GlobalMutable {
 				payload.WriteByte(globalMutabilityVarCode)
 			} else {
@@ -446,12 +444,21 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 		if tb.Imported {
 			continue
 		}
-		refCode, ok := refTypeCode(tb.RefType)
-		if !ok {
-			diags.Addf("table[%d]: unsupported ref type %d", i, tb.RefType)
-			refCode = refTypeFuncRefCode
+		if tb.HasInit {
+			payload.WriteByte(tableFlagHasInit)
+			payload.WriteByte(0x00)
+			if !encodeValueType(&payload, tb.RefType) {
+				diags.Addf("table[%d]: unsupported ref type %s", i, tb.RefType)
+				payload.WriteByte(refTypeFuncRefCode)
+			}
+			writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
+			encodeConstExpr(&payload, fmt.Sprintf("table[%d]", i), tb.Init, diags)
+			continue
 		}
-		payload.WriteByte(refCode)
+		if !encodeValueType(&payload, tb.RefType) {
+			diags.Addf("table[%d]: unsupported ref type %s", i, tb.RefType)
+			payload.WriteByte(refTypeFuncRefCode)
+		}
 		writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
 	}
 	return payload.Bytes()
@@ -496,12 +503,10 @@ func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte 
 		if g.Imported {
 			continue
 		}
-		vt, ok := valueTypeCode(g.Type)
-		if !ok {
-			diags.Addf("global[%d]: unsupported value type %d", i, g.Type)
-			vt = valueTypeI32Code
+		if !encodeValueType(&payload, g.Type) {
+			diags.Addf("global[%d]: unsupported value type %s", i, g.Type)
+			payload.WriteByte(valueTypeI32Code)
 		}
-		payload.WriteByte(vt)
 		if g.Mutable {
 			payload.WriteByte(globalMutabilityVarCode)
 		} else {
@@ -534,12 +539,10 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 				payload.WriteByte(opEndCode)
 			}
 
-			refCode, ok := refTypeCode(elem.RefType)
-			if !ok {
-				diags.Addf("element[%d]: unsupported expr ref type %d", i, elem.RefType)
-				refCode = refTypeFuncRefCode
+			if !encodeValueType(&payload, elem.RefType) {
+				diags.Addf("element[%d]: unsupported expr ref type %s", i, elem.RefType)
+				payload.WriteByte(refTypeFuncRefCode)
 			}
-			payload.WriteByte(refCode)
 
 			writeULEB128(&payload, uint32(len(elem.Exprs)))
 			for j, expr := range elem.Exprs {
@@ -645,8 +648,8 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 		writeULEB128(&body, uint32(len(fn.Locals)))
 		for j, localTy := range fn.Locals {
 			writeULEB128(&body, 1)
-			if !encodeValueType(&body, localTy, refTypeInfoAt(fn.LocalRefs, j)) {
-				diags.Addf("func[%d] local[%d]: unsupported value type %d", i, j, localTy)
+			if !encodeValueType(&body, localTy) {
+				diags.Addf("func[%d] local[%d]: unsupported value type %s", i, j, localTy)
 				body.WriteByte(0)
 			}
 		}
@@ -1047,13 +1050,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
-		if instr.RefInfo.UsesTypeIndex {
-			writeSLEB128(out, int64(instr.RefInfo.TypeIndex))
+		if instr.RefType.UsesTypeIndex() {
+			writeSLEB128(out, int64(instr.RefType.HeapType.TypeIndex))
 			break
 		}
 		refCode, ok := refTypeCode(instr.RefType)
 		if !ok {
-			diags.Addf("func[%d] instruction[%d]: unsupported ref.null type %d", funcIdx, instrIdx, instr.RefType)
+			diags.Addf("func[%d] instruction[%d]: unsupported ref.null type %s", funcIdx, instrIdx, instr.RefType)
 			refCode = refTypeFuncRefCode
 		}
 		out.WriteByte(refCode)
@@ -1086,13 +1089,13 @@ func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, d
 		writeU64LE(out, init.F64Const)
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
-		if init.RefInfo.UsesTypeIndex {
-			writeSLEB128(out, int64(init.RefInfo.TypeIndex))
+		if init.RefType.UsesTypeIndex() {
+			writeSLEB128(out, int64(init.RefType.HeapType.TypeIndex))
 			break
 		}
 		refCode, ok := refTypeCode(init.RefType)
 		if !ok {
-			diags.Addf("%s: unsupported ref.null type %d", where, init.RefType)
+			diags.Addf("%s: unsupported ref.null type %s", where, init.RefType)
 			refCode = refTypeFuncRefCode
 		}
 		out.WriteByte(refCode)
@@ -1116,12 +1119,10 @@ func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string
 		return
 	}
 	if instr.BlockHasResult {
-		b, ok := valueTypeCode(instr.BlockType)
-		if !ok {
-			diags.Addf("func[%d] instruction[%d]: unsupported %s result type %d", funcIdx, instrIdx, opname, instr.BlockType)
-			b = blockTypeEmptyCode
+		if !encodeValueType(out, instr.BlockType) {
+			diags.Addf("func[%d] instruction[%d]: unsupported %s result type %s", funcIdx, instrIdx, opname, instr.BlockType)
+			out.WriteByte(blockTypeEmptyCode)
 		}
-		out.WriteByte(b)
 		return
 	}
 	out.WriteByte(blockTypeEmptyCode)
@@ -1146,24 +1147,31 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 	}
 }
 
-func refTypeInfoAt(refs []wasmir.RefTypeInfo, i int) wasmir.RefTypeInfo {
-	if i >= 0 && i < len(refs) {
-		return refs[i]
-	}
-	return wasmir.RefTypeInfo{}
-}
-
-func encodeValueType(out *bytes.Buffer, vt wasmir.ValueType, refInfo wasmir.RefTypeInfo) bool {
-	if refInfo.UsesTypeIndex {
-		if vt != wasmir.ValueTypeFuncRef && vt != wasmir.ValueTypeExternRef {
+func encodeValueType(out *bytes.Buffer, vt wasmir.ValueType) bool {
+	if vt.IsRef() {
+		if vt.UsesTypeIndex() {
+			if vt.Nullable {
+				out.WriteByte(refNullPrefixCode)
+			} else {
+				out.WriteByte(refPrefixCode)
+			}
+			writeSLEB128(out, int64(vt.HeapType.TypeIndex))
+			return true
+		}
+		if vt.Nullable {
+			b, ok := refTypeCode(vt)
+			if !ok {
+				return false
+			}
+			out.WriteByte(b)
+			return true
+		}
+		out.WriteByte(refPrefixCode)
+		b, ok := refTypeCode(vt)
+		if !ok {
 			return false
 		}
-		if refInfo.Nullable {
-			out.WriteByte(refNullPrefixCode)
-		} else {
-			out.WriteByte(refPrefixCode)
-		}
-		writeSLEB128(out, int64(refInfo.TypeIndex))
+		out.WriteByte(b)
 		return true
 	}
 	b, ok := valueTypeCode(vt)
@@ -1191,9 +1199,9 @@ func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
 
 func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 	switch vt {
-	case wasmir.ValueTypeFuncRef:
+	case wasmir.ValueTypeFuncRef, wasmir.RefTypeFunc(false):
 		return refTypeFuncRefCode, true
-	case wasmir.ValueTypeExternRef:
+	case wasmir.ValueTypeExternRef, wasmir.RefTypeExtern(false):
 		return refTypeExternRefCode, true
 	default:
 		return 0, false

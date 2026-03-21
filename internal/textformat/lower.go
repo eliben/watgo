@@ -73,9 +73,6 @@ type functionLowerer struct {
 	// params holds lowered parameter value types in declaration order.
 	params []wasmir.ValueType
 
-	// paramRefs holds typed-reference metadata aligned with params.
-	paramRefs []wasmir.RefTypeInfo
-
 	// paramNames holds source parameter identifiers aligned 1:1 with params.
 	// Empty entries represent unnamed parameters.
 	paramNames []string
@@ -83,14 +80,8 @@ type functionLowerer struct {
 	// results holds lowered result value types in declaration order.
 	results []wasmir.ValueType
 
-	// resultRefs holds typed-reference metadata aligned with results.
-	resultRefs []wasmir.RefTypeInfo
-
 	// locals holds lowered local variable value types (excluding params).
 	locals []wasmir.ValueType
-
-	// localRefs holds typed-reference metadata aligned with locals.
-	localRefs []wasmir.RefTypeInfo
 
 	// localNames holds source local identifiers aligned 1:1 with locals.
 	// Empty entries represent unnamed locals.
@@ -205,8 +196,8 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 				tableIndex = idx
 			}
 			if ed.RefTy != nil && l.tableNonNullable[tableIndex] {
-				_, elemRefInfo, ok := lowerRefTypeInfo(ed.RefTy)
-				if ok && elemRefInfo.Nullable {
+				elemRefType, ok := lowerRefTypeInfo(ed.RefTy, l.typesByName)
+				if ok && elemRefType.Nullable {
 					l.diags.Addf("elem[%d]: type mismatch", i)
 					continue
 				}
@@ -223,7 +214,7 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 		if len(ed.Exprs) > 0 {
 			hasSegRefType := false
 			if ed.RefTy != nil {
-				refTy, ok := lowerValueType(ed.RefTy)
+				refTy, ok := lowerValueType(ed.RefTy, l.typesByName)
 				if !ok {
 					l.diags.Addf("elem[%d]: unsupported reference type %q", i, ed.RefTy)
 					continue
@@ -241,7 +232,7 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 					seg.RefType = ce.Type
 					hasSegRefType = true
 				}
-				if ce.Type != seg.RefType {
+				if !matchesExpectedValueType(ce.Type, seg.RefType) {
 					l.diags.Addf("elem[%d] expr[%d]: type mismatch", i, j)
 					continue
 				}
@@ -264,10 +255,10 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 
 func (l *moduleLowerer) inferElemPayloadRefType(ed *ElemDecl) (wasmir.ValueType, bool) {
 	if ed == nil {
-		return 0, false
+		return wasmir.ValueType{}, false
 	}
 	if ed.RefTy != nil {
-		return lowerValueType(ed.RefTy)
+		return lowerValueType(ed.RefTy, l.typesByName)
 	}
 	if len(ed.FuncRefs) > 0 {
 		return wasmir.ValueTypeFuncRef, true
@@ -275,11 +266,11 @@ func (l *moduleLowerer) inferElemPayloadRefType(ed *ElemDecl) (wasmir.ValueType,
 	if len(ed.Exprs) > 0 {
 		ci, ok := l.lowerConstInstr(ed.Exprs[0])
 		if !ok {
-			return 0, false
+			return wasmir.ValueType{}, false
 		}
 		return ci.Type, true
 	}
-	return 0, false
+	return wasmir.ValueType{}, false
 }
 
 // collectTypeDecls lowers module-level type declarations and records named
@@ -290,15 +281,13 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 			l.diags.Addf("type[%d]: nil type declaration", i)
 			continue
 		}
-		params, paramRefs := l.lowerTypeParams(td.TyUse.Params, i)
-		results, resultRefs := l.lowerTypeResults(td.TyUse.Results, i)
+		params := l.lowerTypeParams(td.TyUse.Params, i)
+		results := l.lowerTypeResults(td.TyUse.Results, i)
 		typeIdx := uint32(len(l.out.Types))
 		l.out.Types = append(l.out.Types, wasmir.FuncType{
-			Name:       td.Id,
-			Params:     params,
-			ParamRefs:  paramRefs,
-			Results:    results,
-			ResultRefs: resultRefs,
+			Name:    td.Id,
+			Params:  params,
+			Results: results,
 		})
 		if td.Id == "" {
 			continue
@@ -318,12 +307,12 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			l.diags.Addf("table[%d]: nil table declaration", i)
 			continue
 		}
-		refType, refInfo, ok := lowerRefTypeInfo(td.RefTy)
+		refType, ok := lowerRefTypeInfo(td.RefTy, l.typesByName)
 		if !ok {
 			l.diags.Addf("table[%d]: unsupported reference type %q", i, td.RefTy)
 			continue
 		}
-		nullable := refInfo.Nullable
+		nullable := refType.Nullable
 
 		min := td.Min
 		if len(td.ElemRefs) > 0 && min < uint32(len(td.ElemRefs)) {
@@ -402,7 +391,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 					l.diags.Addf("table[%d] elem expr[%d]: unsupported constant expression", i, j)
 					continue
 				}
-				if ci.Type != refType {
+				if !matchesExpectedValueType(ci.Type, refType) {
 					l.diags.Addf("table[%d] elem expr[%d]: type mismatch", i, j)
 					continue
 				}
@@ -417,7 +406,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: unsupported initializer", i)
 				continue
 			}
-			if ci.Type != refType {
+			if !matchesExpectedValueType(ci.Type, refType) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
@@ -425,15 +414,8 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
-			seg := wasmir.ElementSegment{
-				TableIndex: tableIdx,
-				OffsetI32:  0,
-				RefType:    refType,
-			}
-			for j := uint32(0); j < min; j++ {
-				seg.Exprs = append(seg.Exprs, ci.Instr)
-			}
-			l.out.Elements = append(l.out.Elements, seg)
+			l.out.Tables[tableIdx].HasInit = true
+			l.out.Tables[tableIdx].Init = ci.Instr
 		} else if !nullable {
 			l.diags.Addf("table[%d]: type mismatch", i)
 		}
@@ -551,7 +533,7 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 			l.diags.Addf("global[%d]: nil global declaration", i)
 			continue
 		}
-		vt, ok := lowerValueType(gd.Ty)
+		vt, ok := lowerValueType(gd.Ty, l.typesByName)
 		if !ok {
 			l.diags.Addf("global[%d]: unsupported value type %q", i, gd.Ty)
 			continue
@@ -579,7 +561,7 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 				l.diags.Addf("global[%d]: unsupported initializer", i)
 				continue
 			}
-			if ci.Type != vt {
+			if !matchesExpectedValueType(ci.Type, vt) {
 				l.diags.Addf("global[%d]: initializer type mismatch", i)
 				continue
 			}
@@ -733,22 +715,18 @@ func (l *moduleLowerer) collectFunctionNames(astm *Module) {
 //
 // If an identical signature already exists in l.out.Types, its existing index is
 // returned. Otherwise a new type is appended and its new index is returned.
-func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, paramRefs []wasmir.RefTypeInfo, results []wasmir.ValueType, resultRefs []wasmir.RefTypeInfo, name string) uint32 {
+func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasmir.ValueType, name string) uint32 {
 	for i, ft := range l.out.Types {
 		if equalValueTypeSlices(ft.Params, params) &&
-			equalRefTypeInfoSlices(ft.ParamRefs, paramRefs) &&
-			equalValueTypeSlices(ft.Results, results) &&
-			equalRefTypeInfoSlices(ft.ResultRefs, resultRefs) {
+			equalValueTypeSlices(ft.Results, results) {
 			return uint32(i)
 		}
 	}
 	typeIdx := uint32(len(l.out.Types))
 	l.out.Types = append(l.out.Types, wasmir.FuncType{
-		Name:       name,
-		Params:     params,
-		ParamRefs:  append([]wasmir.RefTypeInfo(nil), paramRefs...),
-		Results:    results,
-		ResultRefs: append([]wasmir.RefTypeInfo(nil), resultRefs...),
+		Name:    name,
+		Params:  params,
+		Results: results,
 	})
 	return typeIdx
 }
@@ -810,7 +788,6 @@ func (fl *functionLowerer) lower() {
 		ParamNames: fl.paramNames,
 		LocalNames: fl.localNames,
 		Locals:     fl.locals,
-		LocalRefs:  fl.localRefs,
 		Body:       fl.body,
 		SourceLoc:  fl.fn.loc.String(),
 	})
@@ -837,22 +814,20 @@ func (fl *functionLowerer) lowerTypeUse() uint32 {
 	fl.lowerResults(fl.fn.TyUse.Results)
 
 	if fl.fn.TyUse.Id == "" {
-		return fl.mod.internFuncType(fl.params, fl.paramRefs, fl.results, fl.resultRefs, "")
+		return fl.mod.internFuncType(fl.params, fl.results, "")
 	}
 
 	refIdx, refType, ok := fl.resolveTypeRef(fl.fn.TyUse.Id)
 	if !ok {
 		fl.diagf(fl.fn.loc.String(), "unknown type use %q", fl.fn.TyUse.Id)
-		return fl.mod.internFuncType(fl.params, fl.paramRefs, fl.results, fl.resultRefs, "")
+		return fl.mod.internFuncType(fl.params, fl.results, "")
 	}
 
 	// If no inline param/result declarations exist, inherit signature directly
 	// from the referenced type for validation and local-index accounting.
 	if len(fl.params) == 0 && len(fl.results) == 0 {
 		fl.params = append(fl.params, refType.Params...)
-		fl.paramRefs = append(fl.paramRefs, refType.ParamRefs...)
 		fl.results = append(fl.results, refType.Results...)
-		fl.resultRefs = append(fl.resultRefs, refType.ResultRefs...)
 		fl.paramNames = make([]string, len(refType.Params))
 		fl.nextLocalIndex = uint32(len(refType.Params))
 		return refIdx
@@ -874,18 +849,12 @@ func (fl *functionLowerer) lowerParams(params []*ParamDecl) {
 			fl.diagf("", "nil param declaration")
 			continue
 		}
-		vt, refInfo, ok := lowerValueTypeInfo(pd.Ty)
+		vt, ok := lowerValueType(pd.Ty, fl.mod.typesByName)
 		if !ok {
 			fl.diagf(pd.loc.String(), "unsupported param type %q", pd.Ty)
 			continue
 		}
-		if !fl.resolveRefTypeInfo(pd.Ty, &refInfo) {
-			fl.diagf(pd.loc.String(), "unsupported param type %q", pd.Ty)
-			continue
-		}
-
 		fl.params = append(fl.params, vt)
-		fl.paramRefs = append(fl.paramRefs, refInfo)
 		fl.paramNames = append(fl.paramNames, pd.Id)
 		if pd.Id != "" {
 			if _, exists := fl.localsByName[pd.Id]; exists {
@@ -905,17 +874,12 @@ func (fl *functionLowerer) lowerResults(results []*ResultDecl) {
 			fl.diagf("", "nil result declaration")
 			continue
 		}
-		vt, refInfo, ok := lowerValueTypeInfo(rd.Ty)
+		vt, ok := lowerValueType(rd.Ty, fl.mod.typesByName)
 		if !ok {
 			fl.diagf(rd.loc.String(), "unsupported result type %q", rd.Ty)
 			continue
 		}
-		if !fl.resolveRefTypeInfo(rd.Ty, &refInfo) {
-			fl.diagf(rd.loc.String(), "unsupported result type %q", rd.Ty)
-			continue
-		}
 		fl.results = append(fl.results, vt)
-		fl.resultRefs = append(fl.resultRefs, refInfo)
 	}
 }
 
@@ -926,22 +890,16 @@ func (fl *functionLowerer) lowerLocals() {
 			fl.diagf("", "nil local declaration")
 			continue
 		}
-		if _, refInfo, ok := lowerRefTypeInfo(ld.Ty); ok && !refInfo.Nullable {
+		if vt, ok := lowerRefTypeInfo(ld.Ty, fl.mod.typesByName); ok && vt.IsRef() && !vt.Nullable {
 			fl.diagf(ld.loc.String(), "uninitialized local")
 			continue
 		}
-		vt, refInfo, ok := lowerValueTypeInfo(ld.Ty)
+		vt, ok := lowerValueType(ld.Ty, fl.mod.typesByName)
 		if !ok {
 			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)
 			continue
 		}
-		if !fl.resolveRefTypeInfo(ld.Ty, &refInfo) {
-			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)
-			continue
-		}
-
 		fl.locals = append(fl.locals, vt)
-		fl.localRefs = append(fl.localRefs, refInfo)
 		fl.localNames = append(fl.localNames, ld.Id)
 		if ld.Id != "" {
 			if _, exists := fl.localsByName[ld.Id]; exists {
@@ -1305,7 +1263,7 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		// Multi-value signatures (or any explicit params) require a type-index
 		// blocktype per the binary format. We append a synthetic function type
 		// to Module.Types and reference it from the instruction.
-		typeIdx := fl.mod.internFuncType(finalParams, nil, finalResults, nil, "")
+		typeIdx := fl.mod.internFuncType(finalParams, finalResults, "")
 		fl.emitInstr(wasmir.Instruction{
 			Kind:               kind,
 			BlockTypeUsesIndex: true,
@@ -1695,7 +1653,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			if elemID, ok := elemOp.(*IdOperand); ok {
 				if elemTy, found := fl.mod.elemRefTypeByName[elemID.Value]; found {
 					tableTy := fl.mod.out.Tables[tableIndex].RefType
-					if elemTy != tableTy {
+					if !matchesExpectedValueType(elemTy, tableTy) {
 						fl.diagf(instrLoc, "type mismatch")
 						return
 					}
@@ -1896,19 +1854,28 @@ func decodeTableGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operan
 
 // decodeRefNullOperands decodes operands into ins.RefType for ref.null.
 func decodeRefNullOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
-	refType, ok := lowerRefHeapTypeOperand(operands[0])
-	if !ok {
-		return false
-	}
-	ins.RefType = refType
-	if idOp, ok := operands[0].(*IdOperand); ok {
-		typeIndex, _, found := fl.resolveTypeRef(idOp.Value)
+	switch op := operands[0].(type) {
+	case *KeywordOperand:
+		switch op.Value {
+		case "func":
+			ins.RefType = wasmir.RefTypeFunc(true)
+			return true
+		case "extern":
+			ins.RefType = wasmir.RefTypeExtern(true)
+			return true
+		default:
+			return false
+		}
+	case *IdOperand:
+		typeIndex, _, found := fl.resolveTypeRef(op.Value)
 		if !found {
 			return false
 		}
-		ins.RefInfo = wasmir.RefTypeInfo{Nullable: true, UsesTypeIndex: true, TypeIndex: typeIndex}
+		ins.RefType = wasmir.RefTypeIndexed(typeIndex, true)
+		return true
+	default:
+		return false
 	}
-	return true
 }
 
 // decodeRefFuncOperands decodes operands into ins.FuncIndex for ref.func.
@@ -2193,8 +2160,24 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			Type:  wasmir.ValueTypeF64,
 		}, true
 	case "ref.null":
-		vt, ok := lowerRefHeapTypeOperand(op)
-		if !ok {
+		var vt wasmir.ValueType
+		switch o := op.(type) {
+		case *KeywordOperand:
+			switch o.Value {
+			case "func":
+				vt = wasmir.RefTypeFunc(true)
+			case "extern":
+				vt = wasmir.RefTypeExtern(true)
+			default:
+				return nil, false
+			}
+		case *IdOperand:
+			typeIdx, ok := l.typesByName[o.Value]
+			if !ok {
+				return nil, false
+			}
+			vt = wasmir.RefTypeIndexed(typeIdx, true)
+		default:
 			return nil, false
 		}
 		return &loweredConstInstr{
@@ -2208,7 +2191,7 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 		}
 		return &loweredConstInstr{
 			Instr: wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx},
-			Type:  wasmir.ValueTypeFuncRef,
+			Type:  wasmir.RefTypeFunc(false),
 		}, true
 	case "global.get":
 		globalIdx, ok := lowerGlobalIndexOperand(op, l.globalsByName)
@@ -2289,13 +2272,20 @@ func lowerTableIndexOperand(op Operand, tablesByName map[string]uint32) (uint32,
 func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 	switch o := op.(type) {
 	case *KeywordOperand:
-		vt, _, ok := lowerRefHeapTypeName(o.Value)
-		return vt, ok
+		switch o.Value {
+		case "func":
+			return wasmir.RefTypeFunc(true), true
+		case "extern":
+			return wasmir.RefTypeExtern(true), true
+		default:
+			return wasmir.ValueType{}, false
+		}
 	case *IdOperand:
-		// Typed function references are lowered to funcref in this subset.
-		return wasmir.ValueTypeFuncRef, true
+		// Concrete type indices are resolved at higher-level call sites that have
+		// access to module type definitions.
+		return wasmir.ValueType{}, false
 	default:
-		return 0, false
+		return wasmir.ValueType{}, false
 	}
 }
 
@@ -2341,14 +2331,45 @@ func equalValueTypeSlices(a, b []wasmir.ValueType) bool {
 	return true
 }
 
-func equalRefTypeInfoSlices(a, b []wasmir.RefTypeInfo) bool {
-	if len(a) != len(b) {
+// matchesExpectedValueType reports whether a produced value of type got can be
+// used where a declaration expects want.
+//
+// This is intentionally weaker than strict equality for references:
+// - a concrete typed funcref `(ref $t)` is accepted where plain `funcref` or
+//   `(ref func)` is expected
+// - nullability must still respect the destination, so nullable refs do not
+//   match non-nullable expectations
+func matchesExpectedValueType(got, want wasmir.ValueType) bool {
+	if got == want {
+		return true
+	}
+	if !got.IsRef() || !want.IsRef() {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	if want.UsesTypeIndex() {
+		if got.UsesTypeIndex() {
+			if got.HeapType.TypeIndex != want.HeapType.TypeIndex {
+				return false
+			}
+		} else if got.HeapType.Kind != wasmir.HeapKindFunc {
 			return false
 		}
+	} else {
+		switch want.HeapType.Kind {
+		case wasmir.HeapKindFunc:
+			if got.HeapType.Kind != wasmir.HeapKindFunc && got.HeapType.Kind != wasmir.HeapKindTypeIndex {
+				return false
+			}
+		case wasmir.HeapKindExtern:
+			if got.HeapType.Kind != wasmir.HeapKindExtern {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if got.Nullable && !want.Nullable {
+		return false
 	}
 	return true
 }
@@ -2377,9 +2398,9 @@ func (fl *functionLowerer) lowerLabelOperand(op Operand) (uint32, bool) {
 func lowerBlockResultTypeOperand(op Operand) (wasmir.ValueType, bool) {
 	kw, ok := op.(*KeywordOperand)
 	if !ok {
-		return 0, false
+		return wasmir.ValueType{}, false
 	}
-	return lowerValueType(&BasicType{Name: kw.Value})
+	return lowerValueType(&BasicType{Name: kw.Value}, nil)
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
@@ -2451,82 +2472,74 @@ func hexNibble(b byte) byte {
 
 // lowerValueType lowers ty from textformat type syntax into semantic wasmir
 // type representation.
-// It returns the lowered type and true on success, or 0/false if ty is
+// It returns the lowered type and true on success, or zero/false if ty is
 // unsupported.
-func lowerValueType(ty Type) (wasmir.ValueType, bool) {
-	vt, _, ok := lowerValueTypeInfo(ty)
-	return vt, ok
-}
-
-func lowerValueTypeInfo(ty Type) (wasmir.ValueType, wasmir.RefTypeInfo, bool) {
+func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, bool) {
 	switch t := ty.(type) {
 	case *BasicType:
 		switch t.Name {
 		case "i32":
-			return wasmir.ValueTypeI32, wasmir.RefTypeInfo{}, true
+			return wasmir.ValueTypeI32, true
 		case "i64":
-			return wasmir.ValueTypeI64, wasmir.RefTypeInfo{}, true
+			return wasmir.ValueTypeI64, true
 		case "f32":
-			return wasmir.ValueTypeF32, wasmir.RefTypeInfo{}, true
+			return wasmir.ValueTypeF32, true
 		case "f64":
-			return wasmir.ValueTypeF64, wasmir.RefTypeInfo{}, true
+			return wasmir.ValueTypeF64, true
 		case "funcref":
-			return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{Nullable: true}, true
+			return wasmir.ValueTypeFuncRef, true
 		case "externref":
-			return wasmir.ValueTypeExternRef, wasmir.RefTypeInfo{Nullable: true}, true
+			return wasmir.ValueTypeExternRef, true
 		default:
-			return 0, wasmir.RefTypeInfo{}, false
+			return wasmir.ValueType{}, false
 		}
 	case *RefType:
-		vt, refInfo, ok := lowerRefTypeInfo(t)
-		return vt, refInfo, ok
+		return lowerRefTypeInfo(t, typesByName)
 	default:
-		return 0, wasmir.RefTypeInfo{}, false
+		return wasmir.ValueType{}, false
 	}
 }
 
 // lowerRefTypeInfo lowers ty as a reference type declaration.
 // ty may be a BasicType ("funcref"/"externref") or a RefType
 // ("(ref ...)" / "(ref null ...)").
-// It returns (valueType, nullable, ok), where nullable reflects source
-// nullability and ok reports whether ty is supported.
-func lowerRefTypeInfo(ty Type) (wasmir.ValueType, wasmir.RefTypeInfo, bool) {
+// It returns the lowered type and true on success.
+func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType, bool) {
 	switch t := ty.(type) {
 	case *BasicType:
 		switch t.Name {
 		case "funcref":
-			return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{Nullable: true}, true
+			return wasmir.ValueTypeFuncRef, true
 		case "externref":
-			return wasmir.ValueTypeExternRef, wasmir.RefTypeInfo{Nullable: true}, true
+			return wasmir.ValueTypeExternRef, true
 		default:
-			return 0, wasmir.RefTypeInfo{}, false
+			return wasmir.ValueType{}, false
 		}
 	case *RefType:
-		vt, refInfo, ok := lowerRefHeapTypeName(t.HeapType)
-		if !ok {
-			return 0, wasmir.RefTypeInfo{}, false
-		}
-		refInfo.Nullable = t.Nullable
-		return vt, refInfo, true
+		return lowerRefHeapTypeName(t.HeapType, t.Nullable, typesByName)
 	default:
-		return 0, wasmir.RefTypeInfo{}, false
+		return wasmir.ValueType{}, false
 	}
 }
 
 // lowerRefHeapTypeName lowers a text heaptype name (for example "func",
 // "extern", or a type identifier like "$t") into a semantic reference type.
-// It returns the lowered type and true on success, or 0/false on failure.
-func lowerRefHeapTypeName(name string) (wasmir.ValueType, wasmir.RefTypeInfo, bool) {
+// It returns the lowered type and true on success.
+func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uint32) (wasmir.ValueType, bool) {
 	switch name {
 	case "func":
-		return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{}, true
+		return wasmir.RefTypeFunc(nullable), true
 	case "extern":
-		return wasmir.ValueTypeExternRef, wasmir.RefTypeInfo{}, true
+		return wasmir.RefTypeExtern(nullable), true
 	default:
 		if strings.HasPrefix(name, "$") {
-			return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{UsesTypeIndex: true}, true
+			typeIndex, ok := typesByName[name]
+			if !ok {
+				return wasmir.ValueType{}, false
+			}
+			return wasmir.RefTypeIndexed(typeIndex, nullable), true
 		}
-		return 0, wasmir.RefTypeInfo{}, false
+		return wasmir.ValueType{}, false
 	}
 }
 
@@ -2536,67 +2549,38 @@ func lowerRefHeapTypeName(name string) (wasmir.ValueType, wasmir.RefTypeInfo, bo
 // typeIdx is used only for diagnostic context ("type[typeIdx] ...").
 // diags accumulates per-parameter lowering errors.
 // It returns the successfully lowered parameter types in declaration order.
-func (l *moduleLowerer) lowerTypeParams(params []*ParamDecl, typeIdx int) ([]wasmir.ValueType, []wasmir.RefTypeInfo) {
+func (l *moduleLowerer) lowerTypeParams(params []*ParamDecl, typeIdx int) []wasmir.ValueType {
 	out := make([]wasmir.ValueType, 0, len(params))
-	refs := make([]wasmir.RefTypeInfo, 0, len(params))
 	for i, pd := range params {
 		if pd == nil {
 			l.diags.Addf("type[%d] param[%d]: nil param declaration", typeIdx, i)
 			continue
 		}
-		vt, refInfo, ok := lowerValueTypeInfo(pd.Ty)
+		vt, ok := lowerValueType(pd.Ty, l.typesByName)
 		if !ok {
 			l.diags.Addf("type[%d] param[%d]: unsupported param type %q", typeIdx, i, pd.Ty)
 			continue
 		}
-		if !l.resolveRefTypeInfo(pd.Ty, &refInfo) {
-			l.diags.Addf("type[%d] param[%d]: unsupported param type %q", typeIdx, i, pd.Ty)
-			continue
-		}
 		out = append(out, vt)
-		refs = append(refs, refInfo)
 	}
-	return out, refs
+	return out
 }
 
-func (l *moduleLowerer) lowerTypeResults(results []*ResultDecl, typeIdx int) ([]wasmir.ValueType, []wasmir.RefTypeInfo) {
+func (l *moduleLowerer) lowerTypeResults(results []*ResultDecl, typeIdx int) []wasmir.ValueType {
 	out := make([]wasmir.ValueType, 0, len(results))
-	refs := make([]wasmir.RefTypeInfo, 0, len(results))
 	for i, rd := range results {
 		if rd == nil {
 			l.diags.Addf("type[%d] result[%d]: nil result declaration", typeIdx, i)
 			continue
 		}
-		vt, refInfo, ok := lowerValueTypeInfo(rd.Ty)
+		vt, ok := lowerValueType(rd.Ty, l.typesByName)
 		if !ok {
 			l.diags.Addf("type[%d] result[%d]: unsupported result type %q", typeIdx, i, rd.Ty)
 			continue
 		}
-		if !l.resolveRefTypeInfo(rd.Ty, &refInfo) {
-			l.diags.Addf("type[%d] result[%d]: unsupported result type %q", typeIdx, i, rd.Ty)
-			continue
-		}
 		out = append(out, vt)
-		refs = append(refs, refInfo)
 	}
-	return out, refs
-}
-
-func (l *moduleLowerer) resolveRefTypeInfo(ty Type, refInfo *wasmir.RefTypeInfo) bool {
-	rt, ok := ty.(*RefType)
-	if !ok || !refInfo.UsesTypeIndex {
-		return true
-	}
-	idx, ok := l.typesByName[rt.HeapType]
-	if !ok {
-		return false
-	}
-	refInfo.TypeIndex = idx
-	return true
-}
-
-func (fl *functionLowerer) resolveRefTypeInfo(ty Type, refInfo *wasmir.RefTypeInfo) bool {
-	return fl.mod.resolveRefTypeInfo(ty, refInfo)
+	return out
 }
 
 // addLowerDiag appends one lowering diagnostic prefixed with function context
