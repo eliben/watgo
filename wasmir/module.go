@@ -21,12 +21,14 @@ const (
 	InstrLocalTee
 	InstrCall
 	InstrCallIndirect
+	InstrCallRef
 	InstrBlock
 	InstrLoop
 	InstrIf
 	InstrElse
 	InstrBr
 	InstrBrIf
+	InstrBrOnNull
 	InstrBrTable
 	InstrNop
 	InstrUnreachable
@@ -218,12 +220,37 @@ type Module struct {
 
 // FuncType is a WebAssembly function signature.
 type FuncType struct {
-	// Params is the ordered parameter type list.
+	// Name is the optional source-level type identifier (for example "$t").
+	Name string
 
+	// Params is the ordered parameter type list.
 	Params []ValueType
+
+	// ParamRefs carries reference-type metadata aligned with Params.
+	// Zero-value entries mean the corresponding parameter is not a typed ref.
+	ParamRefs []RefTypeInfo
+
 	// Results is the ordered result type list.
 	// For MVP this is typically length 0 or 1, but multi-value is representable.
 	Results []ValueType
+
+	// ResultRefs carries reference-type metadata aligned with Results.
+	// Zero-value entries mean the corresponding result is not a typed ref.
+	ResultRefs []RefTypeInfo
+}
+
+// RefTypeInfo carries extra information for reference-typed values when the
+// generic ValueType enum is not expressive enough.
+type RefTypeInfo struct {
+	// Nullable reports whether this reference type admits null values.
+	Nullable bool
+
+	// UsesTypeIndex reports that the heap type is a concrete type index rather
+	// than an abstract heap type like "func" or "extern".
+	UsesTypeIndex bool
+
+	// TypeIndex is the concrete heap type index when UsesTypeIndex is true.
+	TypeIndex uint32
 }
 
 // Function is a function definition with locals and body instructions.
@@ -245,6 +272,10 @@ type Function struct {
 
 	// Locals is the ordered list of non-parameter local variable types.
 	Locals []ValueType
+
+	// LocalRefs carries reference-type metadata aligned with Locals.
+	// Zero-value entries mean the corresponding local is not a typed ref.
+	LocalRefs []RefTypeInfo
 
 	// Body is the function instruction stream.
 	// Encoders/validators expect it to end with InstrEnd.
@@ -376,6 +407,9 @@ type Global struct {
 
 // ElementSegment is one active table element segment.
 type ElementSegment struct {
+	// Mode classifies the segment as active, passive, or declarative.
+	Mode ElemSegmentMode
+
 	// TableIndex is the target table index.
 	TableIndex uint32
 
@@ -393,6 +427,15 @@ type ElementSegment struct {
 	RefType ValueType
 }
 
+// ElemSegmentMode classifies an element segment by initialization mode.
+type ElemSegmentMode uint8
+
+const (
+	ElemSegmentModeActive ElemSegmentMode = iota
+	ElemSegmentModePassive
+	ElemSegmentModeDeclarative
+)
+
 // Instruction is one semantic instruction.
 //
 // Kind selects which operand/immediate fields are meaningful. Fields not used
@@ -409,6 +452,10 @@ type Instruction struct {
 
 	// RefType is the reference value type immediate used by InstrRefNull.
 	RefType ValueType
+
+	// RefInfo carries extra metadata for reference-typed immediates such as
+	// ref.null, when present.
+	RefInfo RefTypeInfo
 
 	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
 	CallTypeIndex uint32

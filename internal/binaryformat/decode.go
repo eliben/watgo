@@ -227,9 +227,9 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 			break
 		}
 
-		params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", i), diags)
-		results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", i), diags)
-		out = append(out, wasmir.FuncType{Params: params, Results: results})
+		params, paramRefs := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", i), diags)
+		results, resultRefs := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", i), diags)
+		out = append(out, wasmir.FuncType{Params: params, ParamRefs: paramRefs, Results: results, ResultRefs: resultRefs})
 	}
 	return out
 }
@@ -473,8 +473,24 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			}
 			funcIndices := decodeElemFuncIndices(r, i, diags)
 			out = append(out, wasmir.ElementSegment{
+				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  0,
 				OffsetI32:   offsetInstr.I32Const,
+				FuncIndices: funcIndices,
+			})
+		case elemSegmentFlagPassiveFuncIndices:
+			elemKind, err := readByte(r)
+			if err != nil {
+				diags.Addf("element[%d]: missing elemkind: %v", i, err)
+				break
+			}
+			if elemKind != elemKindFuncRef {
+				diags.Addf("element[%d]: unsupported elemkind 0x%x", i, elemKind)
+				break
+			}
+			funcIndices := decodeElemFuncIndices(r, i, diags)
+			out = append(out, wasmir.ElementSegment{
+				Mode:        wasmir.ElemSegmentModePassive,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagActiveExplicitTableFuncIndices:
@@ -503,8 +519,24 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			}
 			funcIndices := decodeElemFuncIndices(r, i, diags)
 			out = append(out, wasmir.ElementSegment{
+				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  tableIndex,
 				OffsetI32:   offsetInstr.I32Const,
+				FuncIndices: funcIndices,
+			})
+		case elemSegmentFlagDeclarativeFuncIndices:
+			elemKind, err := readByte(r)
+			if err != nil {
+				diags.Addf("element[%d]: missing elemkind: %v", i, err)
+				break
+			}
+			if elemKind != elemKindFuncRef {
+				diags.Addf("element[%d]: unsupported elemkind 0x%x", i, elemKind)
+				break
+			}
+			funcIndices := decodeElemFuncIndices(r, i, diags)
+			out = append(out, wasmir.ElementSegment{
+				Mode:        wasmir.ElemSegmentModeDeclarative,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagActiveExplicitTableExprs:
@@ -547,10 +579,45 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				exprs = append(exprs, expr)
 			}
 			out = append(out, wasmir.ElementSegment{
+				Mode:       wasmir.ElemSegmentModeActive,
 				TableIndex: tableIndex,
 				OffsetI32:  offsetInstr.I32Const,
 				Exprs:      exprs,
 				RefType:    refType,
+			})
+		case elemSegmentFlagPassiveExprs, elemSegmentFlagDeclarativeExprs:
+			refTypeByte, err := readByte(r)
+			if err != nil {
+				diags.Addf("element[%d]: missing ref type: %v", i, err)
+				break
+			}
+			refType, ok := decodeRefType(refTypeByte)
+			if !ok {
+				diags.Addf("element[%d]: unsupported ref type 0x%x", i, refTypeByte)
+				break
+			}
+			exprCount, err := readU32(r)
+			if err != nil {
+				diags.Addf("element[%d]: invalid expr vector length: %v", i, err)
+				break
+			}
+			exprs := make([]wasmir.Instruction, 0, exprCount)
+			for j := uint32(0); j < exprCount; j++ {
+				expr, err := decodeConstExpr(r)
+				if err != nil {
+					diags.Addf("element[%d] expr[%d]: invalid const expr: %v", i, j, err)
+					break
+				}
+				exprs = append(exprs, expr)
+			}
+			mode := wasmir.ElemSegmentModePassive
+			if flags == elemSegmentFlagDeclarativeExprs {
+				mode = wasmir.ElemSegmentModeDeclarative
+			}
+			out = append(out, wasmir.ElementSegment{
+				Mode:    mode,
+				Exprs:   exprs,
+				RefType: refType,
 			})
 		default:
 			diags.Addf("element[%d]: unsupported flags 0x%x", i, flags)
@@ -818,6 +885,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrIf, BranchDepth: depthImm})
+		case opBrOnNullCode:
+			depthImm, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: br_on_null missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrOnNull, BranchDepth: depthImm})
 		case opBrTableCode:
 			n, err := readU32(r)
 			if err != nil {
@@ -973,6 +1047,16 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				Kind:          wasmir.InstrCallIndirect,
 				CallTypeIndex: typeIndex,
 				TableIndex:    tableIndex,
+			})
+		case opCallRefCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: call_ref missing/invalid type immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{
+				Kind:          wasmir.InstrCallRef,
+				CallTypeIndex: typeIndex,
 			})
 		case opI32LoadCode:
 			ins, err := decodeMemInstr(r, wasmir.InstrI32Load)
@@ -1344,17 +1428,12 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		case opF64ReinterpretI64Code:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ReinterpretI64})
 		case opRefNullCode:
-			refTypeCode, err := readByte(r)
+			refType, refInfo, err := decodeRefNullImmediate(r)
 			if err != nil {
 				diags.Addf("code[%d]: ref.null missing/invalid type immediate: %v", funcIdx, err)
 				return out
 			}
-			refType, ok := decodeRefType(refTypeCode)
-			if !ok {
-				diags.Addf("code[%d]: ref.null unsupported type immediate 0x%x", funcIdx, refTypeCode)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType})
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType, RefInfo: refInfo})
 		case opRefIsNullCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefIsNull})
 		case opRefFuncCode:
@@ -1453,15 +1532,11 @@ func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
 		}
 		ins = wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: v}
 	case opRefNullCode:
-		refTypeCode, err := readByte(r)
+		refType, refInfo, err := decodeRefNullImmediate(r)
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
-		refType, ok := decodeRefType(refTypeCode)
-		if !ok {
-			return wasmir.Instruction{}, fmt.Errorf("unsupported ref.null type 0x%x", refTypeCode)
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType}
+		ins = wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType, RefInfo: refInfo}
 	case opRefFuncCode:
 		funcIndex, err := readU32(r)
 		if err != nil {
@@ -1487,28 +1562,54 @@ func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
 	return ins, nil
 }
 
-func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) []wasmir.ValueType {
+func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) ([]wasmir.ValueType, []wasmir.RefTypeInfo) {
 	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("%s: invalid vector length: %v", where, err)
-		return nil
+		return nil, nil
 	}
 
 	out := make([]wasmir.ValueType, 0, n)
+	refs := make([]wasmir.RefTypeInfo, 0, n)
 	for i := uint32(0); i < n; i++ {
-		b, err := readByte(r)
+		vt, refInfo, err := decodeValueTypeFromReader(r)
 		if err != nil {
-			diags.Addf("%s[%d]: missing value type: %v", where, i, err)
-			break
-		}
-		vt, ok := decodeValueType(b)
-		if !ok {
-			diags.Addf("%s[%d]: unsupported value type 0x%x", where, i, b)
+			diags.Addf("%s[%d]: invalid value type: %v", where, i, err)
 			break
 		}
 		out = append(out, vt)
+		refs = append(refs, refInfo)
 	}
-	return out
+	return out, refs
+}
+
+func decodeValueTypeFromReader(r *bytes.Reader) (wasmir.ValueType, wasmir.RefTypeInfo, error) {
+	b, err := readByte(r)
+	if err != nil {
+		return 0, wasmir.RefTypeInfo{}, err
+	}
+	switch b {
+	case refNullPrefixCode, refPrefixCode:
+		typeIndex, err := readS33(r)
+		if err != nil {
+			return 0, wasmir.RefTypeInfo{}, err
+		}
+		return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{
+			Nullable:      b == refNullPrefixCode,
+			UsesTypeIndex: true,
+			TypeIndex:     uint32(typeIndex),
+		}, nil
+	default:
+		vt, ok := decodeValueType(b)
+		if !ok {
+			return 0, wasmir.RefTypeInfo{}, fmt.Errorf("unsupported value type 0x%x", b)
+		}
+		refInfo := wasmir.RefTypeInfo{}
+		if vt == wasmir.ValueTypeFuncRef || vt == wasmir.ValueTypeExternRef {
+			refInfo.Nullable = true
+		}
+		return vt, refInfo, nil
+	}
 }
 
 func decodeValueType(code byte) (wasmir.ValueType, bool) {
@@ -1554,6 +1655,34 @@ func decodeRefType(code byte) (wasmir.ValueType, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func decodeRefNullImmediate(r *bytes.Reader) (wasmir.ValueType, wasmir.RefTypeInfo, error) {
+	b, err := readByte(r)
+	if err != nil {
+		return 0, wasmir.RefTypeInfo{}, err
+	}
+	if refType, ok := decodeRefType(b); ok {
+		refInfo := wasmir.RefTypeInfo{Nullable: true}
+		if refType == wasmir.ValueTypeFuncRef || refType == wasmir.ValueTypeExternRef {
+			return refType, refInfo, nil
+		}
+	}
+	if err := r.UnreadByte(); err != nil {
+		return 0, wasmir.RefTypeInfo{}, err
+	}
+	typeIndex, err := readS33(r)
+	if err != nil {
+		return 0, wasmir.RefTypeInfo{}, err
+	}
+	if typeIndex < 0 {
+		return 0, wasmir.RefTypeInfo{}, fmt.Errorf("unsupported negative heap type %d", typeIndex)
+	}
+	return wasmir.ValueTypeFuncRef, wasmir.RefTypeInfo{
+		Nullable:      true,
+		UsesTypeIndex: true,
+		TypeIndex:     uint32(typeIndex),
+	}, nil
 }
 
 // atEOF reports whether r has no unread bytes left.
@@ -1618,6 +1747,18 @@ func readS32(r *bytes.Reader) (int32, error) {
 		return 0, fmt.Errorf("overflows a 32-bit integer")
 	}
 	return int32(v), nil
+}
+
+// readS33 reads a signed 33-bit LEB128 value from r.
+func readS33(r *bytes.Reader) (int64, error) {
+	v, err := readS64(r)
+	if err != nil {
+		return 0, err
+	}
+	if v < -(1<<32) || v > (1<<32)-1 {
+		return 0, fmt.Errorf("overflows a 33-bit integer")
+	}
+	return v, nil
 }
 
 // readS64 reads a signed 64-bit LEB128 value from r.

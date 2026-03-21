@@ -71,13 +71,16 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, elem := range m.Elements {
-		if int(elem.TableIndex) >= len(m.Tables) {
-			diags.Addf("element[%d] has invalid table index %d", i, elem.TableIndex)
-			continue
-		}
-		tableTy := m.Tables[elem.TableIndex].RefType
-		if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
-			diags.Addf("element[%d]: type mismatch", i)
+		tableTy := ValueTypeFuncRef
+		if elem.Mode == ElemSegmentModeActive {
+			if int(elem.TableIndex) >= len(m.Tables) {
+				diags.Addf("element[%d] has invalid table index %d", i, elem.TableIndex)
+				continue
+			}
+			tableTy = m.Tables[elem.TableIndex].RefType
+			if len(elem.FuncIndices) > 0 && tableTy != ValueTypeFuncRef {
+				diags.Addf("element[%d]: type mismatch", i)
+			}
 		}
 		for j, funcIdx := range elem.FuncIndices {
 			if funcIdx >= totalFuncCount {
@@ -617,6 +620,35 @@ instrLoop:
 			}
 			stack = stack[:base]
 			stack = append(stack, calleeType.Results...)
+		case InstrCallRef:
+			if int(ins.CallTypeIndex) >= len(m.Types) {
+				diags.Addf("%s: call_ref type index %d out of range", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			calleeType := m.Types[ins.CallTypeIndex]
+			need := len(calleeType.Params) + 1
+			if len(stack) < need {
+				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeFuncRef {
+				diags.Addf("%s: call_ref expects funcref operand", insCtx)
+				continue
+			}
+			base := len(stack) - 1 - len(calleeType.Params)
+			ok := true
+			for j, pt := range calleeType.Params {
+				if stack[base+j] != pt {
+					diags.Addf("%s: call_ref expects operand %d to be %s", insCtx, j, valueTypeName(pt))
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			stack = stack[:base]
+			stack = append(stack, calleeType.Results...)
 
 		case InstrI32Const:
 			stack = append(stack, ValueTypeI32)
@@ -867,6 +899,50 @@ instrLoop:
 			}
 			stack = stack[:len(stack)-1]
 			_, _ = validateBranchTarget(insCtx, ins.BranchDepth, "br_if")
+		case InstrBrOnNull:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_on_null needs 1 reference operand", insCtx)
+				continue
+			}
+			refTy := stack[len(stack)-1]
+			if refTy != ValueTypeFuncRef && refTy != ValueTypeExternRef {
+				diags.Addf("%s: br_on_null expects reference operand", insCtx)
+				continue
+			}
+			if int(ins.BranchDepth) >= len(controlStack) {
+				diags.Addf("%s: br_on_null depth %d out of range", insCtx, ins.BranchDepth)
+				continue
+			}
+			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
+			targetTypes := branchTargetTypes(target)
+			if len(stack) < len(targetTypes)+1 {
+				diags.Addf("%s: br_on_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			base := len(stack) - 1 - len(targetTypes)
+			currentEntry := 0
+			if len(controlStack) > 0 {
+				currentEntry = controlStack[len(controlStack)-1].entryHeight
+			}
+			if base < currentEntry {
+				diags.Addf("%s: br_on_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			matches := true
+			for i, tt := range targetTypes {
+				if stack[base+i] != tt {
+					diags.Addf("%s: br_on_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, valueTypeName(stack[base+i]), valueTypeName(tt))
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			// Pop the nullable reference operand and push the non-null fallthrough
+			// value. In this subset both collapse to the same reference value type.
+			stack = stack[:len(stack)-1]
+			stack = append(stack, refTy)
 		case InstrBrTable:
 			if len(stack) < 1 {
 				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
@@ -1392,6 +1468,8 @@ func instrName(kind InstrKind) string {
 		return "call"
 	case InstrCallIndirect:
 		return "call_indirect"
+	case InstrCallRef:
+		return "call_ref"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:
@@ -1404,6 +1482,8 @@ func instrName(kind InstrKind) string {
 		return "br"
 	case InstrBrIf:
 		return "br_if"
+	case InstrBrOnNull:
+		return "br_on_null"
 	case InstrBrTable:
 		return "br_table"
 	case InstrUnreachable:

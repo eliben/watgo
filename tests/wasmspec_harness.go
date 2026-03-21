@@ -1793,14 +1793,17 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 	}
 
 	var err error
+	var wasmBytes []byte
 	if isModuleBinaryExpr(cmd.moduleExpr) {
-		var wasmBytes []byte
 		wasmBytes, err = parseBinaryModuleBytes(cmd.moduleExpr)
 		if err == nil {
 			err = r.node.validate(wasmBytes)
 		}
 	} else {
-		_, err = r.compileModuleExpr(cmd.moduleExpr)
+		wasmBytes, err = r.compileModuleExpr(cmd.moduleExpr)
+		if err == nil && moduleNeedsEngineValidation(cmd.moduleExpr) {
+			err = r.node.validate(wasmBytes)
+		}
 	}
 	if err == nil {
 		res.status = false
@@ -1813,6 +1816,68 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 		return
 	}
 	res.status = true
+}
+
+func moduleNeedsEngineValidation(moduleExpr *textformat.SExpr) bool {
+	if moduleExpr == nil {
+		return false
+	}
+	return sexprContainsKeyword(moduleExpr, "br_on_null") ||
+		sexprContainsKeyword(moduleExpr, "call_ref") ||
+		sexprContainsTypedRefSyntax(moduleExpr)
+}
+
+func sexprContainsKeyword(sx *textformat.SExpr, want string) bool {
+	if sx == nil {
+		return false
+	}
+	if kind, value, ok := sx.Token(); ok {
+		return kind == "KEYWORD" && value == want
+	}
+	for _, child := range sx.Children() {
+		if sexprContainsKeyword(child, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func sexprContainsTypedRefSyntax(sx *textformat.SExpr) bool {
+	if sx == nil || !sx.IsList() {
+		return false
+	}
+	children := sx.Children()
+	if len(children) > 0 {
+		if head, ok := headKeyword(sx); ok {
+			switch head {
+			case "ref":
+				if len(children) == 3 {
+					if kind, value, ok := children[1].Token(); ok && kind == "KEYWORD" && value == "null" {
+						if kind, _, ok := children[2].Token(); ok && kind == "ID" {
+							return true
+						}
+					}
+				}
+				if len(children) == 2 {
+					if kind, _, ok := children[1].Token(); ok && kind == "ID" {
+						return true
+					}
+				}
+			case "ref.null":
+				if len(children) == 2 {
+					if kind, _, ok := children[1].Token(); ok && kind == "ID" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	for _, child := range children {
+		if sexprContainsTypedRefSyntax(child) {
+			return true
+		}
+	}
+	return false
 }
 
 // runAssertMalformed handles "(assert_malformed (module quote ...) \"...\")".

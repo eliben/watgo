@@ -49,6 +49,8 @@ const (
 
 	refTypeFuncRefCode   byte = 0x70
 	refTypeExternRefCode byte = 0x6f
+	refNullPrefixCode    byte = 0x63
+	refPrefixCode        byte = 0x64
 
 	// Opcodes for the currently supported instruction subset.
 	opBlockCode             byte = 0x02
@@ -77,6 +79,7 @@ const (
 	opTableSetCode          byte = 0x26
 	opCallCode              byte = 0x10
 	opCallIndirectCode      byte = 0x11
+	opCallRefCode           byte = 0x14
 	opI32LoadCode           byte = 0x28
 	opI64LoadCode           byte = 0x29
 	opF32LoadCode           byte = 0x2a
@@ -196,6 +199,7 @@ const (
 	opRefNullCode           byte = 0xd0
 	opRefIsNullCode         byte = 0xd1
 	opRefFuncCode           byte = 0xd2
+	opBrOnNullCode          byte = 0xd5
 	opPrefixFCCode          byte = 0xfc
 	opF64ReinterpretI64Code byte = 0xbf
 	opI32Extend8SCode       byte = 0xc0
@@ -227,9 +231,17 @@ const (
 	// elemSegmentFlagActiveExplicitTableFuncIndices encodes an active element
 	// segment with an explicit table index and function indices.
 	elemSegmentFlagActiveExplicitTableFuncIndices byte = 0x02
+	// elemSegmentFlagPassiveFuncIndices encodes a passive function-index segment.
+	elemSegmentFlagPassiveFuncIndices byte = 0x01
+	// elemSegmentFlagDeclarativeFuncIndices encodes a declarative function-index segment.
+	elemSegmentFlagDeclarativeFuncIndices byte = 0x03
 	// elemSegmentFlagActiveExplicitTableExprs encodes an active element segment
 	// with an explicit table index and reference-typed const expressions.
 	elemSegmentFlagActiveExplicitTableExprs byte = 0x06
+	// elemSegmentFlagPassiveExprs encodes a passive ref-expression segment.
+	elemSegmentFlagPassiveExprs byte = 0x05
+	// elemSegmentFlagDeclarativeExprs encodes a declarative ref-expression segment.
+	elemSegmentFlagDeclarativeExprs byte = 0x07
 
 	// elemKindFuncRef marks legacy function-index element payloads as funcref.
 	elemKindFuncRef byte = 0x00
@@ -331,22 +343,18 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 
 		writeULEB128(&payload, uint32(len(ft.Params)))
 		for j, p := range ft.Params {
-			b, ok := valueTypeCode(p)
-			if !ok {
+			if !encodeValueType(&payload, p, refTypeInfoAt(ft.ParamRefs, j)) {
 				diags.Addf("type[%d] param[%d]: unsupported value type %d", i, j, p)
-				b = 0
+				payload.WriteByte(0)
 			}
-			payload.WriteByte(b)
 		}
 
 		writeULEB128(&payload, uint32(len(ft.Results)))
 		for j, r := range ft.Results {
-			b, ok := valueTypeCode(r)
-			if !ok {
+			if !encodeValueType(&payload, r, refTypeInfoAt(ft.ResultRefs, j)) {
 				diags.Addf("type[%d] result[%d]: unsupported value type %d", i, j, r)
-				b = 0
+				payload.WriteByte(0)
 			}
-			payload.WriteByte(b)
 		}
 	}
 
@@ -513,12 +521,18 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 	writeULEB128(&payload, uint32(len(elements)))
 	for i, elem := range elements {
 		if len(elem.Exprs) > 0 {
-			// Active segment with explicit table index and ref-typed expr payload.
-			payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
-			writeULEB128(&payload, elem.TableIndex)
-			payload.WriteByte(opI32ConstCode)
-			writeSLEB128(&payload, int64(elem.OffsetI32))
-			payload.WriteByte(opEndCode)
+			switch elem.Mode {
+			case wasmir.ElemSegmentModePassive:
+				payload.WriteByte(elemSegmentFlagPassiveExprs)
+			case wasmir.ElemSegmentModeDeclarative:
+				payload.WriteByte(elemSegmentFlagDeclarativeExprs)
+			default:
+				payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
+				writeULEB128(&payload, elem.TableIndex)
+				payload.WriteByte(opI32ConstCode)
+				writeSLEB128(&payload, int64(elem.OffsetI32))
+				payload.WriteByte(opEndCode)
+			}
 
 			refCode, ok := refTypeCode(elem.RefType)
 			if !ok {
@@ -534,13 +548,20 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 			continue
 		}
 
-		// Active segment with explicit table index and function-index payload.
-		payload.WriteByte(elemSegmentFlagActiveExplicitTableFuncIndices)
-		writeULEB128(&payload, elem.TableIndex)
-		payload.WriteByte(opI32ConstCode)
-		writeSLEB128(&payload, int64(elem.OffsetI32))
-		payload.WriteByte(opEndCode)
-		// Legacy element kind tag for funcref function-index payloads.
+		switch elem.Mode {
+		case wasmir.ElemSegmentModePassive:
+			payload.WriteByte(elemSegmentFlagPassiveFuncIndices)
+		case wasmir.ElemSegmentModeDeclarative:
+			payload.WriteByte(elemSegmentFlagDeclarativeFuncIndices)
+		default:
+			// Active segment with explicit table index and function-index payload.
+			payload.WriteByte(elemSegmentFlagActiveExplicitTableFuncIndices)
+			writeULEB128(&payload, elem.TableIndex)
+			payload.WriteByte(opI32ConstCode)
+			writeSLEB128(&payload, int64(elem.OffsetI32))
+			payload.WriteByte(opEndCode)
+		}
+		// Legacy element kind tag for function-index payloads.
 		payload.WriteByte(elemKindFuncRef)
 		writeULEB128(&payload, uint32(len(elem.FuncIndices)))
 		for _, idx := range elem.FuncIndices {
@@ -624,12 +645,10 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 		writeULEB128(&body, uint32(len(fn.Locals)))
 		for j, localTy := range fn.Locals {
 			writeULEB128(&body, 1)
-			b, ok := valueTypeCode(localTy)
-			if !ok {
+			if !encodeValueType(&body, localTy, refTypeInfoAt(fn.LocalRefs, j)) {
 				diags.Addf("func[%d] local[%d]: unsupported value type %d", i, j, localTy)
-				b = 0
+				body.WriteByte(0)
 			}
-			body.WriteByte(b)
 		}
 
 		for j, instr := range fn.Body {
@@ -664,6 +683,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.BranchDepth)
 	case wasmir.InstrBrIf:
 		out.WriteByte(opBrIfCode)
+		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrBrOnNull:
+		out.WriteByte(opBrOnNullCode)
 		writeULEB128(out, instr.BranchDepth)
 	case wasmir.InstrBrTable:
 		out.WriteByte(opBrTableCode)
@@ -728,6 +750,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opCallIndirectCode)
 		writeULEB128(out, instr.CallTypeIndex)
 		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrCallRef:
+		out.WriteByte(opCallRefCode)
+		writeULEB128(out, instr.CallTypeIndex)
 	case wasmir.InstrI32Load:
 		out.WriteByte(opI32LoadCode)
 		writeULEB128(out, instr.MemoryAlign)
@@ -1022,6 +1047,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
+		if instr.RefInfo.UsesTypeIndex {
+			writeSLEB128(out, int64(instr.RefInfo.TypeIndex))
+			break
+		}
 		refCode, ok := refTypeCode(instr.RefType)
 		if !ok {
 			diags.Addf("func[%d] instruction[%d]: unsupported ref.null type %d", funcIdx, instrIdx, instr.RefType)
@@ -1057,6 +1086,10 @@ func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, d
 		writeU64LE(out, init.F64Const)
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
+		if init.RefInfo.UsesTypeIndex {
+			writeSLEB128(out, int64(init.RefInfo.TypeIndex))
+			break
+		}
 		refCode, ok := refTypeCode(init.RefType)
 		if !ok {
 			diags.Addf("%s: unsupported ref.null type %d", where, init.RefType)
@@ -1111,6 +1144,34 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func refTypeInfoAt(refs []wasmir.RefTypeInfo, i int) wasmir.RefTypeInfo {
+	if i >= 0 && i < len(refs) {
+		return refs[i]
+	}
+	return wasmir.RefTypeInfo{}
+}
+
+func encodeValueType(out *bytes.Buffer, vt wasmir.ValueType, refInfo wasmir.RefTypeInfo) bool {
+	if refInfo.UsesTypeIndex {
+		if vt != wasmir.ValueTypeFuncRef && vt != wasmir.ValueTypeExternRef {
+			return false
+		}
+		if refInfo.Nullable {
+			out.WriteByte(refNullPrefixCode)
+		} else {
+			out.WriteByte(refPrefixCode)
+		}
+		writeSLEB128(out, int64(refInfo.TypeIndex))
+		return true
+	}
+	b, ok := valueTypeCode(vt)
+	if !ok {
+		return false
+	}
+	out.WriteByte(b)
+	return true
 }
 
 func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
