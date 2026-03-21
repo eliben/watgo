@@ -1073,23 +1073,26 @@ type scriptRunner struct {
 	// available so plain "(register \"x\")" can alias the current module.
 	currentName        string
 	currentRuntimeName string
-	bootstrapErr       error
 }
 
 // newScriptRunner creates a runner with a fresh Node.js runtime bound to ctx.
-func newScriptRunner(ctx context.Context) *scriptRunner {
+func newScriptRunner(ctx context.Context) (*scriptRunner, error) {
 	r := &scriptRunner{
 		ctx:         ctx,
 		moduleWasm:  map[string][]byte{},
 		moduleMeta:  map[string]*moduleMetadata{},
 		moduleAlias: map[string]string{},
 	}
-	r.node, r.bootstrapErr = newNodeRuntime(ctx)
-	if r.bootstrapErr != nil {
-		return r
+	var err error
+	r.node, err = newNodeRuntime(ctx)
+	if err != nil {
+		return nil, err
 	}
-	r.bootstrapErr = r.instantiateSpectest()
-	return r
+	if err := r.instantiateSpectest(); err != nil {
+		_ = r.close()
+		return nil, err
+	}
+	return r, nil
 }
 
 // close releases the Node.js runtime. It returns a runner close error, if one occurs.
@@ -1104,18 +1107,6 @@ func (r *scriptRunner) close() error {
 // commands is the parsed script command list; opts controls assertion behavior.
 func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandResult {
 	results := make([]commandResult, 0, len(commands))
-	if r.bootstrapErr != nil {
-		for i, cmd := range commands {
-			results = append(results, commandResult{
-				index:  i,
-				kind:   cmd.kind,
-				loc:    cmd.loc,
-				status: false,
-				detail: fmt.Sprintf("runner bootstrap failed: %v", r.bootstrapErr),
-			})
-		}
-		return results
-	}
 	for i, cmd := range commands {
 		res := commandResult{
 			index: i,

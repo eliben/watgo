@@ -57,15 +57,15 @@ func runWasmSpecScriptFile(t *testing.T, scriptPath string) {
 		t.Fatalf("parseScript for %q failed: %v", scriptPath, err)
 	}
 
-	runner := newScriptRunner(context.Background())
+	runner, err := newScriptRunner(context.Background())
+	if err != nil {
+		t.Fatalf("spec runner bootstrap failed: %v", err)
+	}
 	defer func() {
 		if closeErr := runner.close(); closeErr != nil {
 			t.Fatalf("spec runner close failed: %v", closeErr)
 		}
 	}()
-	if runner.bootstrapErr != nil {
-		t.Fatalf("spec runner bootstrap failed: %v", runner.bootstrapErr)
-	}
 
 	results := runner.run(commands, runOptions{strictErrorText: false})
 	if got, want := len(results), len(commands); got != want {
