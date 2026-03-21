@@ -1004,13 +1004,6 @@ func (nr *nodeRuntime) instantiate(moduleName string, wasmBytes []byte) error {
 	}, nil)
 }
 
-func (nr *nodeRuntime) instantiateEphemeral(wasmBytes []byte) error {
-	return nr.request(map[string]any{
-		"op":         "instantiate_ephemeral",
-		"wasmBase64": base64.StdEncoding.EncodeToString(wasmBytes),
-	}, nil)
-}
-
 func (nr *nodeRuntime) validate(wasmBytes []byte) error {
 	return nr.request(map[string]any{
 		"op":         "validate",
@@ -1649,7 +1642,7 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 			res.detail = fmt.Sprintf("expected trap, got compile error: %v", compErr)
 			return
 		}
-		err = r.node.instantiateEphemeral(wasmBytes)
+		err = r.node.instantiate("", wasmBytes)
 		if err == nil {
 			wouldTrap, trapMsg, checkErr := detectElemInitTrap(wasmBytes)
 			if checkErr == nil && wouldTrap {
@@ -1712,7 +1705,7 @@ func (r *scriptRunner) runAssertUnlinkable(res *commandResult, cmd scriptCommand
 		return
 	}
 
-	err = r.node.instantiateEphemeral(wasmBytes)
+	err = r.node.instantiate("", wasmBytes)
 	if err == nil {
 		res.status = false
 		res.detail = "expected unlinkable module error, got success"

@@ -16,12 +16,10 @@
 // Supported ops:
 // - instantiate:
 //     { op: "instantiate", moduleName, wasmBase64 }
-//   Compiles and instantiates a module, registering it under moduleName so
-//   later requests can invoke exports or use it for imports.
-// - instantiate_ephemeral:
-//     { op: "instantiate_ephemeral", wasmBase64 }
-//   Compiles and instantiates a module without storing it. This is used for
-//   assertions that only care whether instantiation succeeds or traps.
+//   Compiles and instantiates a module. When moduleName is non-empty, the
+//   instance is registered under that name so later requests can invoke
+//   exports or use it for imports. When moduleName is empty, the instance is
+//   ephemeral and is not retained after instantiation returns.
 // - validate:
 //     { op: "validate", wasmBase64 }
 //   Compiles a module without instantiating it.
@@ -196,13 +194,14 @@ function getModuleRecord(moduleName) {
   return record;
 }
 
-// instantiate compiles and instantiates one wasm module. When ephemeral is
-// false, the resulting instance is stored under moduleName for later use.
-function instantiate(moduleName, wasmBase64, ephemeral) {
+// instantiate compiles and instantiates one wasm module. A non-empty
+// moduleName keeps the instance available for later requests; an empty name
+// makes this a one-shot instantiation used only for its success/failure.
+function instantiate(moduleName, wasmBase64) {
   const bytes = decodeBytes(wasmBase64);
   const module = new WebAssembly.Module(bytes);
   const instance = new WebAssembly.Instance(module, buildImports());
-  if (!ephemeral) {
+  if (moduleName) {
     modules.set(moduleName, { module, instance });
   }
 }
@@ -212,10 +211,7 @@ function instantiate(moduleName, wasmBase64, ephemeral) {
 function handleMessage(msg) {
   switch (msg.op) {
     case 'instantiate':
-      instantiate(msg.moduleName, msg.wasmBase64, false);
-      return { ok: true };
-    case 'instantiate_ephemeral':
-      instantiate('', msg.wasmBase64, true);
+      instantiate(msg.moduleName || '', msg.wasmBase64);
       return { ok: true };
     case 'validate': {
       const bytes = decodeBytes(msg.wasmBase64);
