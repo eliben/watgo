@@ -1083,6 +1083,58 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 1)
 			appendStackValue(refinedNonNullValue(refVal))
+		case InstrBrOnNonNull:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_on_non_null needs 1 reference operand", insCtx)
+				continue
+			}
+			refVal := stackValue(len(stack) - 1)
+			if !isRefValueType(refVal.Type) {
+				diags.Addf("%s: br_on_non_null expects reference operand", insCtx)
+				continue
+			}
+			if int(ins.BranchDepth) >= len(controlStack) {
+				diags.Addf("%s: br_on_non_null depth %d out of range", insCtx, ins.BranchDepth)
+				continue
+			}
+			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
+			targetValues := branchTargetTypes(target)
+			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+				diags.Addf("%s: br_on_non_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			base := len(stack) - len(targetValues)
+			currentEntry := 0
+			if len(controlStack) > 0 {
+				currentEntry = controlStack[len(controlStack)-1].entryHeight
+			}
+			if base < currentEntry {
+				diags.Addf("%s: br_on_non_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			matches := true
+			for i := 0; i < len(targetValues)-1; i++ {
+				got := stackValue(base + i)
+				want := targetValues[i]
+				if !matchesExpectedValue(got, want) {
+					diags.Addf("%s: br_on_non_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, validatedValueName(got), validatedValueName(want))
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			wantRef := targetValues[len(targetValues)-1]
+			gotRef := refinedNonNullValue(refVal)
+			if !matchesExpectedValue(gotRef, wantRef) {
+				diags.Addf("%s: br_on_non_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, len(targetValues)-1, validatedValueName(gotRef), validatedValueName(wantRef))
+				continue
+			}
+			for i := 0; i < len(targetValues)-1; i++ {
+				setStackValue(base+i, targetValues[i])
+			}
+			truncateStack(len(stack) - 1)
 		case InstrBrTable:
 			if len(stack) < 1 {
 				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
@@ -1412,6 +1464,17 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrRefAsNonNull:
+			if len(stack) < 1 {
+				diags.Addf("%s: ref.as_non_null needs 1 operand", insCtx)
+				continue
+			}
+			top := stackValue(len(stack) - 1)
+			if !isRefValueType(top.Type) {
+				diags.Addf("%s: ref.as_non_null expects reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, refinedNonNullValue(top))
 
 		case InstrEnd:
 			if len(controlStack) > 0 {
@@ -1643,6 +1706,8 @@ func instrName(kind InstrKind) string {
 		return "br_if"
 	case InstrBrOnNull:
 		return "br_on_null"
+	case InstrBrOnNonNull:
+		return "br_on_non_null"
 	case InstrBrTable:
 		return "br_table"
 	case InstrUnreachable:
@@ -1921,6 +1986,8 @@ func instrName(kind InstrKind) string {
 		return "ref.null"
 	case InstrRefIsNull:
 		return "ref.is_null"
+	case InstrRefAsNonNull:
+		return "ref.as_non_null"
 	case InstrRefFunc:
 		return "ref.func"
 	case InstrEnd:

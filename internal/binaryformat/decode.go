@@ -898,6 +898,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrOnNull, BranchDepth: depthImm})
+		case opBrOnNonNullCode:
+			depthImm, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: br_on_non_null missing/invalid immediate: %v", funcIdx, err)
+				return out
+			}
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrOnNonNull, BranchDepth: depthImm})
 		case opBrTableCode:
 			n, err := readU32(r)
 			if err != nil {
@@ -1442,6 +1449,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType})
 		case opRefIsNullCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefIsNull})
+		case opRefAsNonNullCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefAsNonNull})
 		case opRefFuncCode:
 			funcIndex, err := readU32(r)
 			if err != nil {

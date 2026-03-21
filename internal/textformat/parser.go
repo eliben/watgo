@@ -1073,7 +1073,7 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 
 		name := elem.tok.value
 		switch name {
-		case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
+		case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
 			if cursor+1 >= len(sx.list) {
 				p.emitError(elem.loc, "%s expects one operand", name)
 				cursor++
@@ -1199,7 +1199,7 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 // instructions that have one immediate operand.
 func isValidPlainOperand(name string, op Operand) bool {
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "global.get", "global.set", "ref.func":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func":
 		switch op.(type) {
 		case *IdOperand, *IntOperand:
 			return true

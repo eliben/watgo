@@ -129,6 +129,7 @@ const (
 	InstrBr
 	InstrBrIf
 	InstrBrOnNull
+	InstrBrOnNonNull
 	InstrBrTable
 	InstrNop
 	InstrUnreachable
@@ -172,6 +173,7 @@ const (
 	InstrMemoryGrow
 	InstrRefNull
 	InstrRefIsNull
+	InstrRefAsNonNull
 	InstrRefFunc
 	InstrI32Add
 	InstrI32Sub

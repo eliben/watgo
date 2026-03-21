@@ -199,7 +199,9 @@ const (
 	opRefNullCode           byte = 0xd0
 	opRefIsNullCode         byte = 0xd1
 	opRefFuncCode           byte = 0xd2
+	opRefAsNonNullCode      byte = 0xd4
 	opBrOnNullCode          byte = 0xd5
+	opBrOnNonNullCode       byte = 0xd6
 	opPrefixFCCode          byte = 0xfc
 	opF64ReinterpretI64Code byte = 0xbf
 	opI32Extend8SCode       byte = 0xc0
@@ -690,6 +692,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBrOnNull:
 		out.WriteByte(opBrOnNullCode)
 		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrBrOnNonNull:
+		out.WriteByte(opBrOnNonNullCode)
+		writeULEB128(out, instr.BranchDepth)
 	case wasmir.InstrBrTable:
 		out.WriteByte(opBrTableCode)
 		writeULEB128(out, uint32(len(instr.BranchTable)))
@@ -1062,6 +1067,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(refCode)
 	case wasmir.InstrRefIsNull:
 		out.WriteByte(opRefIsNullCode)
+	case wasmir.InstrRefAsNonNull:
+		out.WriteByte(opRefAsNonNullCode)
 	case wasmir.InstrRefFunc:
 		out.WriteByte(opRefFuncCode)
 		writeULEB128(out, instr.FuncIndex)

@@ -1030,7 +1030,7 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 
 // lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
 func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
-	var resultOp Operand
+	var resultType *wasmir.ValueType
 	var thenClause *FoldedInstr
 	var elseClause *FoldedInstr
 
@@ -1048,15 +1048,20 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 
 		switch nested.Name {
 		case "result":
-			if len(nested.Args) != 1 || nested.Args[0].Operand == nil || nested.Args[0].Instr != nil {
+			if len(nested.Args) != 1 {
 				fl.diagf(nested.Loc(), "invalid if result clause")
 				continue
 			}
-			if resultOp != nil {
+			if resultType != nil {
 				fl.diagf(nested.Loc(), "duplicate if result clause")
 				continue
 			}
-			resultOp = nested.Args[0].Operand
+			vt, ok := lowerFoldedBlockTypeArg(nested.Args[0], fl.mod.typesByName)
+			if !ok {
+				fl.diagf(nested.Loc(), "invalid if result clause")
+				continue
+			}
+			resultType = &vt
 		case "then":
 			if thenClause != nil {
 				fl.diagf(nested.Loc(), "duplicate then clause")
@@ -1080,11 +1085,12 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 		return
 	}
 
-	var ifOps []Operand
-	if resultOp != nil {
-		ifOps = append(ifOps, resultOp)
+	ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: fi.loc.String()}
+	if resultType != nil {
+		ins.BlockHasResult = true
+		ins.BlockType = *resultType
 	}
-	fl.lowerPlainInstr(&PlainInstr{Name: "if", Operands: ifOps, loc: fi.loc})
+	fl.emitInstr(ins)
 	fl.pushLabel("")
 	fl.lowerFoldedClauseInstrs(thenClause)
 	if elseClause != nil {
@@ -1178,13 +1184,9 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 				continue
 			}
 			for _, resultArg := range nested.Args {
-				if resultArg.Operand == nil || resultArg.Instr != nil {
-					fl.diagf(nested.Loc(), "invalid %s result clause", fi.Name)
-					continue
-				}
-				vt, ok := lowerBlockResultTypeOperand(resultArg.Operand)
+				vt, ok := lowerFoldedBlockTypeArg(resultArg, fl.mod.typesByName)
 				if !ok {
-					fl.diagf(resultArg.Operand.Loc(), "unsupported %s result type", fi.Name)
+					fl.diagf(nested.Loc(), "invalid %s result clause", fi.Name)
 					continue
 				}
 				resultTypes = append(resultTypes, vt)
@@ -1201,17 +1203,13 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 			// become part of the blocktype signature when we select a
 			// type-index blocktype.
 			for _, paramArg := range nested.Args {
-				if paramArg.Operand == nil || paramArg.Instr != nil {
-					fl.diagf(nested.Loc(), "invalid %s param clause", fi.Name)
-					continue
-				}
 				if _, isID := paramArg.Operand.(*IdOperand); isID {
 					fl.diagf(paramArg.Operand.Loc(), "named %s params are not supported", fi.Name)
 					continue
 				}
-				vt, ok := lowerBlockResultTypeOperand(paramArg.Operand)
+				vt, ok := lowerFoldedBlockTypeArg(paramArg, fl.mod.typesByName)
 				if !ok {
-					fl.diagf(paramArg.Operand.Loc(), "unsupported %s param type", fi.Name)
+					fl.diagf(nested.Loc(), "invalid %s param clause", fi.Name)
 					continue
 				}
 				paramTypes = append(paramTypes, vt)
@@ -1468,6 +1466,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"br":                  {kind: wasmir.InstrBr, operandCount: 1, decode: decodeBrOperands},
 	"br_if":               {kind: wasmir.InstrBrIf, operandCount: 1, decode: decodeBrOperands},
 	"br_on_null":          {kind: wasmir.InstrBrOnNull, operandCount: 1, decode: decodeBrOperands},
+	"br_on_non_null":      {kind: wasmir.InstrBrOnNonNull, operandCount: 1, decode: decodeBrOperands},
 	"global.get":          {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
 	"global.set":          {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
 	"memory.size":         {kind: wasmir.InstrMemorySize, operandCount: 0},
@@ -1483,6 +1482,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"f64.const":           {kind: wasmir.InstrF64Const, operandCount: 1, decode: decodeF64ConstOperands},
 	"ref.null":            {kind: wasmir.InstrRefNull, operandCount: 1, decode: decodeRefNullOperands},
 	"ref.is_null":         {kind: wasmir.InstrRefIsNull, operandCount: 0},
+	"ref.as_non_null":     {kind: wasmir.InstrRefAsNonNull, operandCount: 0},
 	"ref.func":            {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
 }
 
@@ -2401,6 +2401,61 @@ func lowerBlockResultTypeOperand(op Operand) (wasmir.ValueType, bool) {
 		return wasmir.ValueType{}, false
 	}
 	return lowerValueType(&BasicType{Name: kw.Value}, nil)
+}
+
+// lowerFoldedBlockTypeArg lowers one folded block/if signature argument.
+// It accepts either a plain keyword type like `i32` in `(result i32)` or a
+// folded ref type like `(ref $t)` / `(ref null $t)` in
+// `(result (ref $t))` and `(param (ref null $t))`.
+func lowerFoldedBlockTypeArg(arg FoldedArg, typesByName map[string]uint32) (wasmir.ValueType, bool) {
+	if arg.Operand != nil {
+		switch op := arg.Operand.(type) {
+		case *KeywordOperand:
+			return lowerValueType(&BasicType{Name: op.Value}, typesByName)
+		default:
+			return wasmir.ValueType{}, false
+		}
+	}
+	refInstr, ok := arg.Instr.(*FoldedInstr)
+	if !ok || refInstr.Name != "ref" {
+		return wasmir.ValueType{}, false
+	}
+	return lowerFoldedRefTypeInstr(refInstr, typesByName)
+}
+
+// lowerFoldedRefTypeInstr lowers a folded ref type expression used inside
+// block/if param and result clauses, for example `(ref func)`,
+// `(ref $t)`, and `(ref null $t)`.
+func lowerFoldedRefTypeInstr(fi *FoldedInstr, typesByName map[string]uint32) (wasmir.ValueType, bool) {
+	if fi == nil || fi.Name != "ref" {
+		return wasmir.ValueType{}, false
+	}
+	if len(fi.Args) == 1 && fi.Args[0].Instr == nil && fi.Args[0].Operand != nil {
+		switch op := fi.Args[0].Operand.(type) {
+		case *KeywordOperand:
+			return lowerValueType(&RefType{Nullable: false, HeapType: op.Value}, typesByName)
+		case *IdOperand:
+			return lowerValueType(&RefType{Nullable: false, HeapType: op.Value}, typesByName)
+		default:
+			return wasmir.ValueType{}, false
+		}
+	}
+	if len(fi.Args) == 2 && fi.Args[0].Instr == nil && fi.Args[0].Operand != nil &&
+		fi.Args[1].Instr == nil && fi.Args[1].Operand != nil {
+		nullOp, ok := fi.Args[0].Operand.(*KeywordOperand)
+		if !ok || nullOp.Value != "null" {
+			return wasmir.ValueType{}, false
+		}
+		switch op := fi.Args[1].Operand.(type) {
+		case *KeywordOperand:
+			return lowerValueType(&RefType{Nullable: true, HeapType: op.Value}, typesByName)
+		case *IdOperand:
+			return lowerValueType(&RefType{Nullable: true, HeapType: op.Value}, typesByName)
+		default:
+			return wasmir.ValueType{}, false
+		}
+	}
+	return wasmir.ValueType{}, false
 }
 
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
