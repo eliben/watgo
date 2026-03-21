@@ -37,8 +37,19 @@
 // - Integer and float values are passed as decimal strings containing their raw
 //   WebAssembly bit patterns.
 // - "funcref" and "externref" may use { null: true } for null references.
-// - Non-null externrefs are tracked through a stable in-process identity map so
-//   the Go harness can round-trip them through later calls.
+// - Non-null externrefs are tracked through a stable in-process identity map.
+//   The Go harness does not send a real JS object over JSON; instead it sends a
+//   decimal-string identity token in the "bits" field. This runner uses that
+//   token as a key in externRefs and materializes a unique JS object for it:
+//     { __watgoExternRef: "<token>" }
+//   If the same token is seen again later in the same Node process, the exact
+//   same JS object instance is reused. That preserves JS/WebAssembly reference
+//   identity for externref values across invocations within one .wast file.
+//   When an exported externref global or function result comes back from
+//   WebAssembly, encodeValue expects it to be one of these watgo-managed
+//   objects; it then emits the original identity token back to Go in "bits".
+//   This scheme is process-local and intentionally only guarantees stable
+//   identity within a single runner lifetime.
 
 const readline = require('node:readline');
 
@@ -207,7 +218,8 @@ function instantiate(moduleName, wasmBase64) {
 }
 
 // handleMessage executes a single JSON request and returns the JSON response
-// body that should be written to stdout.
+// body that should be written to stdout. When 'exit' is true in the response,
+// the caller should cleanly shut down after writing the response.
 function handleMessage(msg) {
   switch (msg.op) {
     case 'instantiate':
@@ -250,7 +262,7 @@ const rl = readline.createInterface({
 });
 
 // Process each request line synchronously, emit a single response line, and
-// exit cleanly when the caller sends the "close" operation.
+// handle shutdown when requested.
 rl.on('line', (line) => {
   if (!line.trim()) {
     return;
