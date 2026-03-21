@@ -2017,19 +2017,16 @@ func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, e
 }
 
 func valueTypeString(vt wasmir.ValueType) (string, error) {
-	if vt == wasmir.ValueTypeI32 {
+	switch vt.Kind {
+	case wasmir.ValueKindI32:
 		return "i32", nil
-	}
-	if vt == wasmir.ValueTypeI64 {
+	case wasmir.ValueKindI64:
 		return "i64", nil
-	}
-	if vt == wasmir.ValueTypeF32 {
+	case wasmir.ValueKindF32:
 		return "f32", nil
-	}
-	if vt == wasmir.ValueTypeF64 {
+	case wasmir.ValueKindF64:
 		return "f64", nil
-	}
-	if vt.IsRef() {
+	case wasmir.ValueKindRef:
 		switch vt.HeapType.Kind {
 		case wasmir.HeapKindFunc, wasmir.HeapKindTypeIndex:
 			return "funcref", nil

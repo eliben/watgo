@@ -25,27 +25,28 @@ func sameValidatedValue(got, want validatedValue) bool {
 }
 
 func matchesExpectedValue(got, want validatedValue) bool {
-	if got.Type != want.Type {
-		if !got.Type.IsRef() || !want.Type.IsRef() {
+	if got.Type == want.Type {
+		return true
+	}
+	if !got.Type.IsRef() || !want.Type.IsRef() {
+		return false
+	}
+	if want.Type.UsesTypeIndex() {
+		if !got.Type.UsesTypeIndex() || got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
 			return false
 		}
-		if want.Type.UsesTypeIndex() {
-			if !got.Type.UsesTypeIndex() || got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
+	} else {
+		switch want.Type.HeapType.Kind {
+		case HeapKindFunc:
+			if got.Type.HeapType.Kind != HeapKindFunc && got.Type.HeapType.Kind != HeapKindTypeIndex {
 				return false
 			}
-		} else {
-			switch want.Type.HeapType.Kind {
-			case HeapKindFunc:
-				if got.Type.HeapType.Kind != HeapKindFunc && got.Type.HeapType.Kind != HeapKindTypeIndex {
-					return false
-				}
-			case HeapKindExtern:
-				if got.Type.HeapType.Kind != HeapKindExtern {
-					return false
-				}
-			default:
+		case HeapKindExtern:
+			if got.Type.HeapType.Kind != HeapKindExtern {
 				return false
 			}
+		default:
+			return false
 		}
 	}
 	if got.Type.IsRef() && got.Type.Nullable && !want.Type.Nullable {
