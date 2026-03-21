@@ -312,6 +312,9 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		if len(td.ElemRefs) > 0 && min < uint32(len(td.ElemRefs)) {
 			min = uint32(len(td.ElemRefs))
 		}
+		if len(td.ElemExprs) > 0 && min < uint32(len(td.ElemExprs)) {
+			min = uint32(len(td.ElemExprs))
+		}
 		if td.HasMax && td.Max < min {
 			l.diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
 			continue

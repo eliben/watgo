@@ -1,10 +1,17 @@
 package tests
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -13,8 +20,7 @@ import (
 	"github.com/eliben/watgo/internal/binaryformat"
 	"github.com/eliben/watgo/internal/numlit"
 	"github.com/eliben/watgo/internal/textformat"
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
+	"github.com/eliben/watgo/wasmir"
 )
 
 // commandKind identifies one supported script command.
@@ -886,20 +892,179 @@ type runOptions struct {
 	strictErrorText bool
 }
 
-// scriptRunner executes parsed script commands against a wazero runtime.
+const currentModuleRuntimeName = "__watgo_current__"
+
+type moduleMetadata struct {
+	funcExports   map[string]wasmir.FuncType
+	globalExports map[string]wasmir.ValueType
+}
+
+type nodeValue struct {
+	Type string `json:"type"`
+	Bits string `json:"bits,omitempty"`
+	Null bool   `json:"null,omitempty"`
+}
+
+type nodeResponse struct {
+	OK      bool        `json:"ok"`
+	Error   string      `json:"error,omitempty"`
+	Results []nodeValue `json:"results,omitempty"`
+	Result  *nodeValue  `json:"result,omitempty"`
+}
+
+type nodeRuntime struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	enc    *json.Encoder
+	dec    *json.Decoder
+	stderr bytes.Buffer
+}
+
+func newNodeRuntime(ctx context.Context) (*nodeRuntime, error) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		return nil, fmt.Errorf("node executable not found; install node or set WATGO_INTEGRATION=0 to skip integration tests: %w", err)
+	}
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return nil, fmt.Errorf("failed to locate wasmspec harness source file")
+	}
+	scriptPath := filepath.Join(filepath.Dir(thisFile), "node_wasm_runner.js")
+
+	cmd := exec.CommandContext(ctx, nodePath, scriptPath)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("node stdin pipe failed: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("node stdout pipe failed: %w", err)
+	}
+
+	nr := &nodeRuntime{
+		cmd:   cmd,
+		stdin: stdin,
+		enc:   json.NewEncoder(stdin),
+		dec:   json.NewDecoder(bufio.NewReader(stdout)),
+	}
+	cmd.Stderr = &nr.stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("node runner start failed: %w", err)
+	}
+	return nr, nil
+}
+
+func (nr *nodeRuntime) close() error {
+	if nr == nil {
+		return nil
+	}
+	_ = nr.request(map[string]any{"op": "close"}, nil)
+	_ = nr.stdin.Close()
+	if err := nr.cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := strings.TrimSpace(nr.stderr.String())
+			if stderr != "" {
+				return fmt.Errorf("node runner exited with %v: %s", exitErr, stderr)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (nr *nodeRuntime) request(req map[string]any, out *nodeResponse) error {
+	if err := nr.enc.Encode(req); err != nil {
+		return fmt.Errorf("node request encode failed: %w", err)
+	}
+	var resp nodeResponse
+	if err := nr.dec.Decode(&resp); err != nil {
+		stderr := strings.TrimSpace(nr.stderr.String())
+		if stderr != "" {
+			return fmt.Errorf("node response decode failed: %w (stderr: %s)", err, stderr)
+		}
+		return fmt.Errorf("node response decode failed: %w", err)
+	}
+	if !resp.OK {
+		if resp.Error == "" {
+			resp.Error = "unknown node runner error"
+		}
+		return fmt.Errorf("%s", resp.Error)
+	}
+	if out != nil {
+		*out = resp
+	}
+	return nil
+}
+
+func (nr *nodeRuntime) instantiate(moduleName string, wasmBytes []byte) error {
+	return nr.request(map[string]any{
+		"op":         "instantiate",
+		"moduleName": moduleName,
+		"wasmBase64": base64.StdEncoding.EncodeToString(wasmBytes),
+	}, nil)
+}
+
+func (nr *nodeRuntime) instantiateEphemeral(wasmBytes []byte) error {
+	return nr.request(map[string]any{
+		"op":         "instantiate_ephemeral",
+		"wasmBase64": base64.StdEncoding.EncodeToString(wasmBytes),
+	}, nil)
+}
+
+func (nr *nodeRuntime) validate(wasmBytes []byte) error {
+	return nr.request(map[string]any{
+		"op":         "validate",
+		"wasmBase64": base64.StdEncoding.EncodeToString(wasmBytes),
+	}, nil)
+}
+
+func (nr *nodeRuntime) invoke(moduleName, funcName string, args []nodeValue, resultTypes []string) ([]nodeValue, error) {
+	var resp nodeResponse
+	err := nr.request(map[string]any{
+		"op":          "invoke",
+		"moduleName":  moduleName,
+		"funcName":    funcName,
+		"args":        args,
+		"resultTypes": resultTypes,
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Results, nil
+}
+
+func (nr *nodeRuntime) get(moduleName, globalName, valueType string) (nodeValue, error) {
+	var resp nodeResponse
+	err := nr.request(map[string]any{
+		"op":         "get",
+		"moduleName": moduleName,
+		"globalName": globalName,
+		"valueType":  valueType,
+	}, &resp)
+	if err != nil {
+		return nodeValue{}, err
+	}
+	if resp.Result == nil {
+		return nodeValue{}, fmt.Errorf("node runner returned no global value")
+	}
+	return *resp.Result, nil
+}
+
+// scriptRunner executes parsed script commands against a Node.js WebAssembly runtime.
 //
 // Execution follows spec script sequencing: commands are processed in order,
 // and actions/assertions operate on the current module instance.
 type scriptRunner struct {
 	ctx         context.Context
-	runtime     wazero.Runtime
-	current     api.Module
+	node        *nodeRuntime
 	currentWasm []byte
+	currentMeta *moduleMetadata
 
 	// moduleWasm stores compiled wasm bytes for named script modules.
 	// It allows "(register ... $id)" to re-instantiate a named module under a
 	// runtime import name.
 	moduleWasm map[string][]byte
+	moduleMeta map[string]*moduleMetadata
 
 	// moduleAlias maps script module identifiers (for example "$M") to the
 	// runtime module name to use for imports/invocations after register aliasing.
@@ -913,29 +1078,33 @@ type scriptRunner struct {
 
 	// currentName tracks the script identifier/runtime name of current when
 	// available so plain "(register \"x\")" can alias the current module.
-	currentName  string
-	bootstrapErr error
+	currentName        string
+	currentRuntimeName string
+	bootstrapErr       error
 }
 
-// newScriptRunner creates a runner with a fresh wazero runtime bound to ctx.
+// newScriptRunner creates a runner with a fresh Node.js runtime bound to ctx.
 func newScriptRunner(ctx context.Context) *scriptRunner {
 	r := &scriptRunner{
 		ctx:         ctx,
-		runtime:     wazero.NewRuntime(ctx),
 		moduleWasm:  map[string][]byte{},
+		moduleMeta:  map[string]*moduleMetadata{},
 		moduleAlias: map[string]string{},
+	}
+	r.node, r.bootstrapErr = newNodeRuntime(ctx)
+	if r.bootstrapErr != nil {
+		return r
 	}
 	r.bootstrapErr = r.instantiateSpectest()
 	return r
 }
 
-// close releases the current module (if any) and closes the wazero runtime.
-// It returns a runtime close error, if one occurs.
+// close releases the Node.js runtime. It returns a runner close error, if one occurs.
 func (r *scriptRunner) close() error {
-	if r.current != nil {
-		_ = r.current.Close(r.ctx)
+	if r.node == nil {
+		return nil
 	}
-	return r.runtime.Close(r.ctx)
+	return r.node.close()
 }
 
 // run executes commands in script order and returns one result per command.
@@ -997,17 +1166,22 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 		res.detail = fmt.Sprintf("module compile failed: %v", err)
 		return
 	}
-	mod, err := r.instantiateWasm(cmd.moduleName, wasmBytes)
+	meta, metaErr := decodeModuleMetadata(wasmBytes)
+
+	runtimeName := runtimeModuleName(cmd.moduleName)
+	err = r.instantiateWasm(runtimeName, wasmBytes)
 	if err != nil {
 		if isInstantiationLimitError(err) || isEngineUnsupportedFeatureError(err) {
 			// Some spec modules are valid but exceed local engine limits (for
 			// example huge table/memory mins or currently unsupported binary
 			// features). Treat compile success as pass.
-			r.replaceCurrent(nil)
 			r.currentWasm = wasmBytes
+			r.currentMeta = meta
 			r.currentName = cmd.moduleName
+			r.currentRuntimeName = runtimeName
 			if cmd.moduleName != "" {
 				r.moduleWasm[cmd.moduleName] = wasmBytes
+				r.moduleMeta[cmd.moduleName] = meta
 				r.moduleAlias[cmd.moduleName] = cmd.moduleName
 			}
 			res.status = true
@@ -1017,12 +1191,19 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 		res.detail = fmt.Sprintf("module instantiate failed: %v", err)
 		return
 	}
-	r.replaceCurrent(mod)
 	r.currentWasm = wasmBytes
+	r.currentMeta = meta
 	r.currentName = cmd.moduleName
+	r.currentRuntimeName = runtimeName
 	if cmd.moduleName != "" {
 		r.moduleWasm[cmd.moduleName] = wasmBytes
 		r.moduleAlias[cmd.moduleName] = cmd.moduleName
+		if meta != nil {
+			r.moduleMeta[cmd.moduleName] = meta
+		}
+	}
+	if metaErr != nil && cmd.moduleName == "" {
+		r.currentMeta = nil
 	}
 	res.status = true
 }
@@ -1038,6 +1219,7 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 		return
 	}
 	wasmBytes := r.currentWasm
+	meta := r.currentMeta
 	sourceName := cmd.registerFrom
 	if sourceName == "" {
 		sourceName = r.currentName
@@ -1050,37 +1232,31 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 			return
 		}
 		wasmBytes = stored
+		meta = r.moduleMeta[cmd.registerFrom]
 	}
 	if len(wasmBytes) == 0 {
 		res.status = false
 		res.detail = "register requires a previously compiled module"
 		return
 	}
-	if existing := r.runtime.Module(cmd.registerName); existing != nil {
-		if err := existing.Close(r.ctx); err != nil {
-			res.status = false
-			res.detail = fmt.Sprintf("close existing registered module %q failed: %v", cmd.registerName, err)
-			return
-		}
-	}
-	mod, err := r.instantiateWasm(cmd.registerName, wasmBytes)
-	if err != nil {
+	if err := r.instantiateWasm(cmd.registerName, wasmBytes); err != nil {
 		res.status = false
 		res.detail = fmt.Sprintf("register instantiate failed: %v", err)
 		return
 	}
 	r.moduleWasm[cmd.registerName] = wasmBytes
+	if meta != nil {
+		r.moduleMeta[cmd.registerName] = meta
+	}
 	r.moduleAlias[cmd.registerName] = cmd.registerName
 	if sourceName != "" {
 		r.moduleAlias[sourceName] = cmd.registerName
 	}
 	if sourceName != "" && r.currentName == sourceName {
-		r.replaceCurrent(mod)
 		r.currentWasm = wasmBytes
+		r.currentMeta = meta
 		r.currentName = cmd.registerName
-	} else {
-		// Registered modules are kept alive for imports.
-		_ = mod
+		r.currentRuntimeName = cmd.registerName
 	}
 	res.status = true
 }
@@ -1473,11 +1649,7 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 			res.detail = fmt.Sprintf("expected trap, got compile error: %v", compErr)
 			return
 		}
-		var mod api.Module
-		mod, err = r.instantiateWasm("", wasmBytes)
-		if err == nil && mod != nil {
-			_ = mod.Close(r.ctx)
-		}
+		err = r.node.instantiateEphemeral(wasmBytes)
 		if err == nil {
 			wouldTrap, trapMsg, checkErr := detectElemInitTrap(wasmBytes)
 			if checkErr == nil && wouldTrap {
@@ -1540,11 +1712,8 @@ func (r *scriptRunner) runAssertUnlinkable(res *commandResult, cmd scriptCommand
 		return
 	}
 
-	mod, err := r.instantiateWasm("", wasmBytes)
+	err = r.node.instantiateEphemeral(wasmBytes)
 	if err == nil {
-		if mod != nil {
-			_ = mod.Close(r.ctx)
-		}
 		res.status = false
 		res.detail = "expected unlinkable module error, got success"
 		return
@@ -1582,17 +1751,31 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "call stack exhausted" {
 		return strings.Contains(gotLower, "stack overflow") ||
 			strings.Contains(gotLower, "stack exhausted") ||
-			strings.Contains(gotLower, "stack limit")
+			strings.Contains(gotLower, "stack limit") ||
+			strings.Contains(gotLower, "maximum call stack size exceeded")
 	}
 	if wantLower == "out of bounds table access" {
 		return strings.Contains(gotLower, "invalid table access") ||
-			strings.Contains(gotLower, "unreachable")
+			strings.Contains(gotLower, "unreachable") ||
+			strings.Contains(gotLower, "table index is out of bounds")
 	}
 	if wantLower == "undefined element" {
-		return strings.Contains(gotLower, "invalid table access")
+		return strings.Contains(gotLower, "invalid table access") ||
+			strings.Contains(gotLower, "table index is out of bounds")
 	}
 	if wantLower == "uninitialized element" {
-		return strings.Contains(gotLower, "invalid table access")
+		return strings.Contains(gotLower, "invalid table access") ||
+			strings.Contains(gotLower, "null function or function signature mismatch")
+	}
+	if wantLower == "integer divide by zero" {
+		return strings.Contains(gotLower, "divide by zero") ||
+			strings.Contains(gotLower, "remainder by zero")
+	}
+	if wantLower == "integer overflow" {
+		return strings.Contains(gotLower, "divide result unrepresentable")
+	}
+	if wantLower == "out of bounds memory access" {
+		return strings.Contains(gotLower, "memory access out of bounds")
 	}
 	return false
 }
@@ -1602,7 +1785,9 @@ func isInstantiationLimitError(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "must be at most")
+	return strings.Contains(msg, "must be at most") ||
+		strings.Contains(msg, "larger than implementation limit") ||
+		strings.Contains(msg, "implementation limit")
 }
 
 func isEngineUnsupportedFeatureError(err error) bool {
@@ -1628,11 +1813,7 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 		var wasmBytes []byte
 		wasmBytes, err = parseBinaryModuleBytes(cmd.moduleExpr)
 		if err == nil {
-			var compiled wazero.CompiledModule
-			compiled, err = r.runtime.CompileModule(r.ctx, wasmBytes)
-			if err == nil && compiled != nil {
-				_ = compiled.Close(r.ctx)
-			}
+			err = r.node.validate(wasmBytes)
 		}
 	} else {
 		_, err = r.compileModuleExpr(cmd.moduleExpr)
@@ -1670,61 +1851,49 @@ func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand,
 // invoke calls an exported function on the current module or a named module.
 // action supplies the target export and arguments; when action.moduleName is
 // set we first resolve script-id aliases through moduleAlias.
-// It returns raw wasm values as uint64, matching wazero's call API.
+// It returns raw wasm values as uint64.
 func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil invoke action")
 	}
-	target := r.current
-	if action.moduleName != "" {
-		moduleName := action.moduleName
-		if aliased, ok := r.moduleAlias[moduleName]; ok {
-			moduleName = aliased
-		}
-		target = r.runtime.Module(moduleName)
-		if target == nil {
+	runtimeName, meta, err := r.lookupTargetModule(action.moduleName)
+	if err != nil {
+		if action.moduleName != "" {
 			return nil, fmt.Errorf("named module %q not found for invoke %q", action.moduleName, action.funcName)
 		}
-	}
-	if target == nil {
 		return nil, fmt.Errorf("no current module for invoke %q", action.funcName)
 	}
-
-	fn := target.ExportedFunction(action.funcName)
-	if fn == nil {
+	sig, ok := meta.funcExports[action.funcName]
+	if !ok {
 		return nil, fmt.Errorf("exported function %q not found", action.funcName)
 	}
-
-	args := make([]uint64, len(action.args))
+	if len(sig.Params) != len(action.args) {
+		return nil, fmt.Errorf("invoke arg arity mismatch for %q: got %d want %d", action.funcName, len(action.args), len(sig.Params))
+	}
+	args := make([]nodeValue, len(action.args))
 	for i, arg := range action.args {
-		switch arg.kind {
-		case valueI32Const:
-			args[i] = uint64(uint32(arg.bits))
-		case valueI64Const:
-			args[i] = arg.bits
-		case valueF32Const:
-			args[i] = uint64(uint32(arg.bits))
-		case valueF64Const:
-			args[i] = arg.bits
-		case valueF32NaNCanonical, valueF32NaNArithmetic:
-			// assert_return NaN markers are meaningful for expected values. When they
-			// appear as invoke args, pass a deterministic quiet NaN value.
-			args[i] = uint64(0x7fc00000)
-		case valueF64NaNCanonical, valueF64NaNArithmetic:
-			// Same rule as f32: canonical quiet NaN for deterministic invocation args.
-			args[i] = 0x7ff8000000000000
-		case valueRefNull:
-			args[i] = 0
-		case valueRefExtern:
-			args[i] = arg.bits
-		default:
-			return nil, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
+		args[i], err = encodeScriptArg(arg, sig.Params[i])
+		if err != nil {
+			return nil, fmt.Errorf("invoke arg[%d]: %w", i, err)
 		}
 	}
-
-	results, err := fn.Call(r.ctx, args...)
+	resultTypes := make([]string, len(sig.Results))
+	for i, vt := range sig.Results {
+		resultTypes[i], err = valueTypeString(vt)
+		if err != nil {
+			return nil, fmt.Errorf("result type[%d]: %w", i, err)
+		}
+	}
+	encodedResults, err := r.node.invoke(runtimeName, action.funcName, args, resultTypes)
 	if err != nil {
 		return nil, err
+	}
+	results := make([]uint64, len(encodedResults))
+	for i, value := range encodedResults {
+		results[i], err = decodeNodeValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("result[%d]: %w", i, err)
+		}
 	}
 	return results, nil
 }
@@ -1736,26 +1905,160 @@ func (r *scriptRunner) get(action *getAction) ([]uint64, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil get action")
 	}
-	target := r.current
-	if action.moduleName != "" {
-		moduleName := action.moduleName
-		if aliased, ok := r.moduleAlias[moduleName]; ok {
-			moduleName = aliased
-		}
-		target = r.runtime.Module(moduleName)
-		if target == nil {
+	runtimeName, meta, err := r.lookupTargetModule(action.moduleName)
+	if err != nil {
+		if action.moduleName != "" {
 			return nil, fmt.Errorf("named module %q not found for get %q", action.moduleName, action.globalName)
 		}
-	}
-	if target == nil {
 		return nil, fmt.Errorf("no current module for get %q", action.globalName)
 	}
-
-	g := target.ExportedGlobal(action.globalName)
-	if g == nil {
+	globalType, ok := meta.globalExports[action.globalName]
+	if !ok {
 		return nil, fmt.Errorf("exported global %q not found", action.globalName)
 	}
-	return []uint64{g.Get()}, nil
+	valueType, err := valueTypeString(globalType)
+	if err != nil {
+		return nil, err
+	}
+	encodedValue, err := r.node.get(runtimeName, action.globalName, valueType)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := decodeNodeValue(encodedValue)
+	if err != nil {
+		return nil, err
+	}
+	return []uint64{raw}, nil
+}
+
+func (r *scriptRunner) lookupTargetModule(scriptModuleName string) (string, *moduleMetadata, error) {
+	if scriptModuleName == "" {
+		if len(r.currentWasm) == 0 || r.currentMeta == nil || r.currentRuntimeName == "" {
+			return "", nil, fmt.Errorf("no current module")
+		}
+		return r.currentRuntimeName, r.currentMeta, nil
+	}
+	runtimeName := scriptModuleName
+	if aliased, ok := r.moduleAlias[scriptModuleName]; ok {
+		runtimeName = aliased
+	}
+	meta, ok := r.moduleMeta[runtimeName]
+	if !ok || meta == nil {
+		return "", nil, fmt.Errorf("module metadata for %q not found", runtimeName)
+	}
+	return runtimeName, meta, nil
+}
+
+func decodeModuleMetadata(wasmBytes []byte) (*moduleMetadata, error) {
+	m, err := binaryformat.DecodeModule(wasmBytes)
+	if err != nil {
+		return nil, err
+	}
+	meta := &moduleMetadata{
+		funcExports:   map[string]wasmir.FuncType{},
+		globalExports: map[string]wasmir.ValueType{},
+	}
+	for _, exp := range m.Exports {
+		switch exp.Kind {
+		case wasmir.ExternalKindFunction:
+			sig, err := functionTypeForIndex(m, exp.Index)
+			if err != nil {
+				return nil, fmt.Errorf("function export %q: %w", exp.Name, err)
+			}
+			meta.funcExports[exp.Name] = sig
+		case wasmir.ExternalKindGlobal:
+			if int(exp.Index) >= len(m.Globals) {
+				return nil, fmt.Errorf("global export %q index %d out of range", exp.Name, exp.Index)
+			}
+			meta.globalExports[exp.Name] = m.Globals[exp.Index].Type
+		}
+	}
+	return meta, nil
+}
+
+func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.FuncType, error) {
+	importedFuncCount := uint32(0)
+	for _, imp := range m.Imports {
+		if imp.Kind != wasmir.ExternalKindFunction {
+			continue
+		}
+		if importedFuncCount == funcIndex {
+			if int(imp.TypeIdx) >= len(m.Types) {
+				return wasmir.FuncType{}, fmt.Errorf("import function type index %d out of range", imp.TypeIdx)
+			}
+			return m.Types[imp.TypeIdx], nil
+		}
+		importedFuncCount++
+	}
+	localIndex := funcIndex - importedFuncCount
+	if funcIndex < importedFuncCount || int(localIndex) >= len(m.Funcs) {
+		return wasmir.FuncType{}, fmt.Errorf("function index %d out of range", funcIndex)
+	}
+	typeIdx := m.Funcs[localIndex].TypeIdx
+	if int(typeIdx) >= len(m.Types) {
+		return wasmir.FuncType{}, fmt.Errorf("function type index %d out of range", typeIdx)
+	}
+	return m.Types[typeIdx], nil
+}
+
+func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, error) {
+	valueType, err := valueTypeString(targetType)
+	if err != nil {
+		return nodeValue{}, err
+	}
+	switch arg.kind {
+	case valueI32Const:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(uint64(uint32(arg.bits)), 10)}, nil
+	case valueI64Const:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(arg.bits, 10)}, nil
+	case valueF32Const:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(uint64(uint32(arg.bits)), 10)}, nil
+	case valueF64Const:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(arg.bits, 10)}, nil
+	case valueF32NaNCanonical, valueF32NaNArithmetic:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(uint64(0x7fc00000), 10)}, nil
+	case valueF64NaNCanonical, valueF64NaNArithmetic:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(0x7ff8000000000000, 10)}, nil
+	case valueRefNull:
+		return nodeValue{Type: valueType, Null: true}, nil
+	case valueRefExtern:
+		return nodeValue{Type: valueType, Bits: strconv.FormatUint(arg.bits, 10)}, nil
+	default:
+		return nodeValue{}, fmt.Errorf("unsupported invoke arg kind %q", arg.kind)
+	}
+}
+
+func valueTypeString(vt wasmir.ValueType) (string, error) {
+	switch vt {
+	case wasmir.ValueTypeI32:
+		return "i32", nil
+	case wasmir.ValueTypeI64:
+		return "i64", nil
+	case wasmir.ValueTypeF32:
+		return "f32", nil
+	case wasmir.ValueTypeF64:
+		return "f64", nil
+	case wasmir.ValueTypeFuncRef:
+		return "funcref", nil
+	case wasmir.ValueTypeExternRef:
+		return "externref", nil
+	default:
+		return "", fmt.Errorf("unsupported value type %d", vt)
+	}
+}
+
+func decodeNodeValue(v nodeValue) (uint64, error) {
+	if v.Null {
+		return 0, nil
+	}
+	if v.Bits == "" {
+		return 0, fmt.Errorf("missing value bits for type %q", v.Type)
+	}
+	bits, err := strconv.ParseUint(v.Bits, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+	}
+	return bits, nil
 }
 
 // isCanonicalNaN32 reports whether bits encode canonical f32 NaN:
@@ -1835,28 +2138,9 @@ func (r *scriptRunner) compileModuleExpr(moduleExpr *textformat.SExpr) ([]byte, 
 	return r.compileWAT(src)
 }
 
-// instantiateWasm compiles and instantiates an existing wasm binary.
-// If moduleName is non-empty, the instance is registered under that name.
-func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) (api.Module, error) {
-	if moduleName != "" {
-		if existing := r.runtime.Module(moduleName); existing != nil {
-			if err := existing.Close(r.ctx); err != nil {
-				return nil, err
-			}
-		}
-	}
-	compiled, err := r.runtime.CompileModule(r.ctx, wasmBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	config := wazero.NewModuleConfig().WithName(moduleName)
-	mod, err := r.runtime.InstantiateModule(r.ctx, compiled, config)
-	if err != nil {
-		_ = compiled.Close(r.ctx)
-		return nil, err
-	}
-	return mod, nil
+// instantiateWasm instantiates an existing wasm binary in the Node runner.
+func (r *scriptRunner) instantiateWasm(moduleName string, wasmBytes []byte) error {
+	return r.node.instantiate(moduleName, wasmBytes)
 }
 
 // instantiateSpectest pre-instantiates the minimal imports used by spec scripts.
@@ -1880,8 +2164,16 @@ func (r *scriptRunner) instantiateSpectest() error {
 	if err != nil {
 		return err
 	}
-	_, err = r.instantiateWasm("spectest", wasmBytes)
-	return err
+	meta, err := decodeModuleMetadata(wasmBytes)
+	if err != nil {
+		return err
+	}
+	if err := r.instantiateWasm("spectest", wasmBytes); err != nil {
+		return err
+	}
+	r.moduleWasm["spectest"] = wasmBytes
+	r.moduleMeta["spectest"] = meta
+	return nil
 }
 
 // roundTripFixedPoint verifies a decode/encode fixed point on a wasm module
@@ -1934,9 +2226,9 @@ func detectElemInitTrap(wasm []byte) (bool, string, error) {
 	return false, "", nil
 }
 
-// replaceCurrent updates the current module pointer.
-// We intentionally do not auto-close the previous current module because
-// registered/named modules may still be needed for later imports or invokes.
-func (r *scriptRunner) replaceCurrent(mod api.Module) {
-	r.current = mod
+func runtimeModuleName(moduleName string) string {
+	if moduleName == "" {
+		return currentModuleRuntimeName
+	}
+	return moduleName
 }
