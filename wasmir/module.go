@@ -249,6 +249,8 @@ const (
 	InstrF32Div
 	InstrF32Sqrt
 	InstrF32Neg
+	InstrF32Eq
+	InstrF32Lt
 	InstrF32Gt
 	InstrF32Ne
 	InstrF32Min

@@ -1472,6 +1472,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"f32.div":             {kind: wasmir.InstrF32Div, operandCount: 0},
 	"f32.sqrt":            {kind: wasmir.InstrF32Sqrt, operandCount: 0},
 	"f32.neg":             {kind: wasmir.InstrF32Neg, operandCount: 0},
+	"f32.eq":              {kind: wasmir.InstrF32Eq, operandCount: 0},
+	"f32.lt":              {kind: wasmir.InstrF32Lt, operandCount: 0},
 	"f32.min":             {kind: wasmir.InstrF32Min, operandCount: 0},
 	"f32.max":             {kind: wasmir.InstrF32Max, operandCount: 0},
 	"f32.ne":              {kind: wasmir.InstrF32Ne, operandCount: 0},

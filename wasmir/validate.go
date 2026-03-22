@@ -1378,7 +1378,7 @@ instrLoop:
 				continue
 			}
 			// Unary f32 operators preserve top-of-stack type.
-		case InstrF32Gt, InstrF32Ne:
+		case InstrF32Eq, InstrF32Lt, InstrF32Gt, InstrF32Ne:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -1933,6 +1933,10 @@ func instrName(kind InstrKind) string {
 		return "f32.sqrt"
 	case InstrF32Neg:
 		return "f32.neg"
+	case InstrF32Eq:
+		return "f32.eq"
+	case InstrF32Lt:
+		return "f32.lt"
 	case InstrF32Gt:
 		return "f32.gt"
 	case InstrF32Ne:
