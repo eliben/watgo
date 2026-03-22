@@ -1,3 +1,3 @@
-* Add another test suite -- for wasm-wat-samples.
+* wasm-wat-samples tests: keep copying over and updating support
 * Will need a way of keeping tests up-to-date 
 

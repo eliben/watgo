@@ -390,6 +390,61 @@ func TestParseModule_FoldedIf(t *testing.T) {
 	}
 }
 
+func TestParseModule_FoldedStructuredBodyAllowsPlainInstructions(t *testing.T) {
+	wat := `(module
+  (func
+    (loop $count (block $done
+      (i32.eqz (i32.const 0))
+      br_if $done
+      br $count))
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if len(f.Instrs) != 1 {
+		t.Fatalf("got %d instructions, want 1 folded loop", len(f.Instrs))
+	}
+
+	loop := mustFoldedInstr(t, f.Instrs[0])
+	if loop.Name != "loop" {
+		t.Fatalf("root name=%q, want loop", loop.Name)
+	}
+	if len(loop.Args) != 2 {
+		t.Fatalf("loop args=%d, want 2 (label, body block)", len(loop.Args))
+	}
+	if _, ok := loop.Args[0].Operand.(*IdOperand); !ok {
+		t.Fatalf("loop arg[0]=%T, want label operand", loop.Args[0].Operand)
+	}
+
+	block := mustFoldedInstr(t, loop.Args[1].Instr)
+	if block.Name != "block" {
+		t.Fatalf("body name=%q, want block", block.Name)
+	}
+	if len(block.Args) != 4 {
+		t.Fatalf("block args=%d, want 4 (label, folded cond, br_if, br)", len(block.Args))
+	}
+	if _, ok := block.Args[0].Operand.(*IdOperand); !ok {
+		t.Fatalf("block arg[0]=%T, want label operand", block.Args[0].Operand)
+	}
+	cond := mustFoldedInstr(t, block.Args[1].Instr)
+	if cond.Name != "i32.eqz" {
+		t.Fatalf("cond name=%q, want i32.eqz", cond.Name)
+	}
+	brIf := mustPlainInstr(t, block.Args[2].Instr)
+	if brIf.Name != "br_if" {
+		t.Fatalf("arg[2] name=%q, want br_if", brIf.Name)
+	}
+	br := mustPlainInstr(t, block.Args[3].Instr)
+	if br.Name != "br" {
+		t.Fatalf("arg[3] name=%q, want br", br.Name)
+	}
+}
+
 func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
 	wat := `(module
   (func

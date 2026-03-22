@@ -1058,71 +1058,69 @@ func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
 	var out []Instruction
 
 	for cursor := idx; cursor < len(sx.list); {
-		elem := sx.list[cursor]
-		if elem.IsList() {
-			fi := p.parseFoldedInstr(elem)
-			if fi != nil {
-				out = append(out, fi)
-			}
-			cursor++
-			continue
+		instr, next := p.parseInstructionElems(sx.list, cursor)
+		if instr != nil {
+			out = append(out, instr)
 		}
-		if !elem.IsTokenKind(KEYWORD) {
-			p.emitError(elem.loc, "expected instruction keyword, found %s", elem.tok.name)
-			cursor++
-			continue
-		}
-
-		name := elem.tok.value
-		switch name {
-		case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
-			if cursor+1 >= len(sx.list) {
-				p.emitError(elem.loc, "%s expects one operand", name)
-				cursor++
-				continue
-			}
-			operandSx := sx.list[cursor+1]
-			operand := p.parseOperand(operandSx)
-			if operand == nil {
-				p.emitError(operandSx.loc, "invalid operand for %s", name)
-				cursor += 2
-				continue
-			}
-
-			if !isValidPlainOperand(name, operand) {
-				p.emitError(operandSx.loc, "invalid operand for %s", name)
-				cursor += 2
-				continue
-			}
-
-			out = append(out, &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc})
-			cursor += 2
-		case "table.get", "table.set", "table.grow", "table.size":
-			// Table ops accept an optional immediate table index; when omitted,
-			// table index 0 is implied.
-			operands := []Operand{}
-			if cursor+1 < len(sx.list) {
-				next := sx.list[cursor+1]
-				op := p.parseOperand(next)
-				switch op.(type) {
-				case *IdOperand, *IntOperand:
-					operands = append(operands, op)
-					cursor += 2
-					out = append(out, &PlainInstr{Name: name, Operands: operands, loc: elem.loc})
-					continue
-				}
-			}
-			out = append(out, &PlainInstr{Name: name, loc: elem.loc})
-			cursor++
-		default:
-			// For this initial subset, parse all other instructions as plain
-			// zero-operand instructions.
-			out = append(out, &PlainInstr{Name: name, loc: elem.loc})
-			cursor++
-		}
+		cursor = next
 	}
 
 	return out
+}
+
+// parseInstructionElems parses one instruction starting at elems[cursor].
+//
+// It returns the parsed instruction plus the index of the next unread element.
+// The element slice is expected to contain either:
+//   - a folded instruction list, or
+//   - a plain instruction keyword followed by any immediate operands.
+func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction, int) {
+	elem := elems[cursor]
+	if elem.IsList() {
+		return p.parseFoldedInstr(elem), cursor + 1
+	}
+	if !elem.IsTokenKind(KEYWORD) {
+		p.emitError(elem.loc, "expected instruction keyword, found %s", elem.tok.name)
+		return nil, cursor + 1
+	}
+
+	name := elem.tok.value
+	switch name {
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
+		if cursor+1 >= len(elems) {
+			p.emitError(elem.loc, "%s expects one operand", name)
+			return nil, cursor + 1
+		}
+		operandSx := elems[cursor+1]
+		operand := p.parseOperand(operandSx)
+		if operand == nil {
+			p.emitError(operandSx.loc, "invalid operand for %s", name)
+			return nil, cursor + 2
+		}
+		if !isValidPlainOperand(name, operand) {
+			p.emitError(operandSx.loc, "invalid operand for %s", name)
+			return nil, cursor + 2
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "table.get", "table.set", "table.grow", "table.size":
+		// Table ops accept an optional immediate table index; when omitted,
+		// table index 0 is implied.
+		operands := []Operand{}
+		if cursor+1 < len(elems) {
+			next := elems[cursor+1]
+			op := p.parseOperand(next)
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				operands = append(operands, op)
+				return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, cursor + 2
+			}
+		}
+		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+	default:
+		// For this initial subset, parse all other instructions as plain
+		// zero-operand instructions.
+		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+	}
 }
 
 // parseFoldedInstr parses one folded instruction expression and preserves it
@@ -1149,6 +1147,9 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	}
 
 	name := head.tok.value
+	if name == "block" || name == "loop" || name == "then" || name == "else" {
+		return p.parseFoldedStructuredInstr(sx, name)
+	}
 	var args []FoldedArg
 
 	for i := 1; i < len(sx.list); i++ {
@@ -1172,6 +1173,54 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	}
 
 	return &FoldedInstr{Name: name, Args: args, loc: head.loc}
+}
+
+// parseFoldedStructuredInstr parses a folded structured instruction or clause
+// that may contain a mixture of nested folded forms and flat instruction
+// tokens in its body.
+//
+// Examples:
+//
+//	(loop $l (block $done
+//	  (i32.eqz (local.get 0))
+//	  br_if $done
+//	  br $l))
+//
+//	(then
+//	  local.get 0
+//	  drop)
+func (p *Parser) parseFoldedStructuredInstr(sx *SExpr, name string) Instruction {
+	args := make([]FoldedArg, 0, len(sx.list)-1)
+	cursor := 1
+	if (name == "block" || name == "loop") &&
+		cursor < len(sx.list) &&
+		sx.list[cursor].IsTokenKind(ID) {
+		op := p.parseOperand(sx.list[cursor])
+		args = append(args, FoldedArg{Operand: op})
+		cursor++
+	}
+
+	for cursor < len(sx.list) {
+		elem := sx.list[cursor]
+		if elem.IsList() {
+			child := p.parseFoldedInstr(elem)
+			if child == nil {
+				p.emitError(elem.loc, "invalid nested instruction for %s", name)
+			} else {
+				args = append(args, FoldedArg{Instr: child})
+			}
+			cursor++
+			continue
+		}
+
+		instr, next := p.parseInstructionElems(sx.list, cursor)
+		if instr != nil {
+			args = append(args, FoldedArg{Instr: instr})
+		}
+		cursor = next
+	}
+
+	return &FoldedInstr{Name: name, Args: args, loc: sx.list[0].loc}
 }
 
 // parseOperand parses a token node as an instruction operand.
