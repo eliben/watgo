@@ -1066,12 +1066,24 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 
 // lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
 func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
-	var resultType *wasmir.ValueType
+	var labelName string
+	var paramTypes []wasmir.ValueType
+	var resultTypes []wasmir.ValueType
+	var typeRef string
 	var thenClause *FoldedInstr
 	var elseClause *FoldedInstr
+	seenSignatureEnd := false
 
-	for _, arg := range fi.Args {
+	for i, arg := range fi.Args {
 		if arg.Operand != nil {
+			// Folded `if` may start with a label identifier:
+			//   (if $done (local.get 0) (then ...))
+			if i == 0 {
+				if id, ok := arg.Operand.(*IdOperand); ok {
+					labelName = id.Value
+					continue
+				}
+			}
 			fl.diagf(arg.Operand.Loc(), "if expects nested expressions/clauses")
 			continue
 		}
@@ -1083,22 +1095,63 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 		}
 
 		switch nested.Name {
-		case "result":
-			if len(nested.Args) != 1 {
-				fl.diagf(nested.Loc(), "invalid if result clause")
+		case "type":
+			// Type uses belong to the signature prefix, before the condition
+			// and branch bodies:
+			//   (if (type $sig) (i32.const 1) (then ...))
+			if seenSignatureEnd || len(paramTypes) > 0 || len(resultTypes) > 0 || typeRef != "" {
+				fl.diagf(nested.Loc(), "unexpected token in if signature")
 				continue
 			}
-			if resultType != nil {
-				fl.diagf(nested.Loc(), "duplicate if result clause")
-				continue
-			}
-			vt, ok := lowerFoldedBlockTypeArg(nested.Args[0], fl.mod.typesByName)
+			ref, ok := parseFoldedTypeClauseRef(nested)
 			if !ok {
+				fl.diagf(nested.Loc(), "invalid if type clause")
+				continue
+			}
+			typeRef = ref
+		case "param":
+			// Parameterized `if` forms forward stack operands into both branches:
+			//   (if (param i32 i32) (result i32) (local.get 0)
+			//     (then (i32.add))
+			//     (else (i32.sub)))
+			if seenSignatureEnd || len(resultTypes) > 0 {
+				fl.diagf(nested.Loc(), "unexpected token in if signature")
+				continue
+			}
+			for _, paramArg := range nested.Args {
+				if _, isID := paramArg.Operand.(*IdOperand); isID {
+					fl.diagf(paramArg.Operand.Loc(), "named if params are not supported")
+					continue
+				}
+				vt, ok := lowerFoldedBlockTypeArg(paramArg, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid if param clause")
+					continue
+				}
+				paramTypes = append(paramTypes, vt)
+			}
+		case "result":
+			// Folded `if` allows single- and multi-value result clauses:
+			//   (if (result i32) ...)
+			//   (if (result i32 i64 i32) ...)
+			if seenSignatureEnd {
+				fl.diagf(nested.Loc(), "unexpected token in if body")
+				continue
+			}
+			if len(nested.Args) == 0 {
 				fl.diagf(nested.Loc(), "invalid if result clause")
 				continue
 			}
-			resultType = &vt
+			for _, resultArg := range nested.Args {
+				vt, ok := lowerFoldedBlockTypeArg(resultArg, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid if result clause")
+					continue
+				}
+				resultTypes = append(resultTypes, vt)
+			}
 		case "then":
+			seenSignatureEnd = true
 			if thenClause != nil {
 				fl.diagf(nested.Loc(), "duplicate then clause")
 				continue
@@ -1111,7 +1164,10 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 			}
 			elseClause = nested
 		default:
-			// Condition expressions.
+			// Any other nested instruction before `(then ...)` / `(else ...)`
+			// belongs to the condition expression sequence:
+			//   (if (result i32) (local.get 0) (then ...) (else ...))
+			seenSignatureEnd = true
 			fl.lowerInstruction(nested)
 		}
 	}
@@ -1121,13 +1177,54 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 		return
 	}
 
+	finalParams := paramTypes
+	finalResults := resultTypes
+	useTypeIndex := false
+	var typeIdx uint32
+
+	if typeRef != "" {
+		// With an explicit type use, either the type provides the full
+		// signature:
+		//   (if (type $sig) (i32.const 1) (then ...))
+		// or any inline `(param ...)` / `(result ...)` clauses must match it.
+		refIdx, refType, ok := fl.resolveTypeRef(typeRef)
+		if !ok {
+			fl.diagf(fi.Loc(), "unknown if type use %q", typeRef)
+		} else {
+			useTypeIndex = true
+			typeIdx = refIdx
+			if len(paramTypes) > 0 || len(resultTypes) > 0 {
+				if !equalValueTypeSlices(paramTypes, refType.Params) || !equalValueTypeSlices(resultTypes, refType.Results) {
+					fl.diagf(fi.Loc(), "inline function type mismatch in if")
+				}
+			} else {
+				finalParams = append([]wasmir.ValueType(nil), refType.Params...)
+				finalResults = append([]wasmir.ValueType(nil), refType.Results...)
+			}
+		}
+	}
+
 	ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: fi.loc.String()}
-	if resultType != nil {
+	switch {
+	case useTypeIndex:
+		// Explicit `(type ...)` lowers directly to an indexed blocktype.
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = typeIdx
+	case len(finalParams) > 0 || len(finalResults) > 1:
+		// Parameterized or multi-result `if` needs a synthetic function-type
+		// blocktype:
+		//   (if (param i32) (result i32) ...)
+		//   (if (result i32 i64) ...)
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = fl.mod.internFuncType(finalParams, finalResults, "")
+	case len(finalResults) == 1:
+		// A plain single-result `if` can use the compact valtype blocktype:
+		//   (if (result i32) ...)
 		ins.BlockHasResult = true
-		ins.BlockType = *resultType
+		ins.BlockType = finalResults[0]
 	}
 	fl.emitInstr(ins)
-	fl.pushLabel("")
+	fl.pushLabel(labelName)
 	fl.lowerFoldedClauseInstrs(thenClause)
 	if elseClause != nil {
 		fl.lowerPlainInstr(&PlainInstr{Name: "else", loc: elseClause.loc})

@@ -24,6 +24,18 @@ func sameValidatedValue(got, want validatedValue) bool {
 	return got.Type == want.Type
 }
 
+func equalValueTypeSlices(a, b []ValueType) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func matchesExpectedValue(got, want validatedValue) bool {
 	if got.Type == want.Type {
 		return true
@@ -1481,7 +1493,8 @@ instrLoop:
 					switch frame.kind {
 					case controlKindIf:
 						validateFrameResult(insCtx, frame, "if-branch")
-						if len(frame.resultTypes) > 0 && !frame.sawElse {
+						if len(frame.resultTypes) > 0 && !frame.sawElse &&
+							!equalValueTypeSlices(frame.paramTypes, frame.resultTypes) {
 							diags.Addf("%s: if with result requires else branch", insCtx)
 						}
 					case controlKindBlock:
