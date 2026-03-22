@@ -171,6 +171,7 @@ const (
 	InstrF64Store
 	InstrMemorySize
 	InstrMemoryGrow
+	InstrMemoryFill
 	InstrRefNull
 	InstrRefIsNull
 	InstrRefAsNonNull

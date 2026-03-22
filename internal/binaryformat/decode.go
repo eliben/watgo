@@ -1020,6 +1020,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			switch subop {
+			case subopMemoryFillCode:
+				memIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: memory.fill missing/invalid memory immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemoryFill, MemoryIndex: memIndex})
 			case subopTableGrowCode:
 				tableIndex, err := readU32(r)
 				if err != nil {

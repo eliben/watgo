@@ -213,8 +213,9 @@ const (
 	opI64Extend32SCode      byte = 0xc4
 
 	// FC-prefixed table instruction subopcodes.
-	subopTableGrowCode uint32 = 0x0f
-	subopTableSizeCode uint32 = 0x10
+	subopMemoryFillCode uint32 = 0x0b
+	subopTableGrowCode  uint32 = 0x0f
+	subopTableSizeCode  uint32 = 0x10
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -860,6 +861,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrMemoryGrow:
 		out.WriteByte(opMemoryGrowCode)
+		writeULEB128(out, instr.MemoryIndex)
+	case wasmir.InstrMemoryFill:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopMemoryFillCode)
 		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrI32Eq:
 		out.WriteByte(opI32EqCode)

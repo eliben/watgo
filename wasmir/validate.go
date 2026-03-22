@@ -1026,6 +1026,24 @@ instrLoop:
 				continue
 			}
 			// i32 pages operand replaced by i32 previous-size result.
+		case InstrMemoryFill:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: memory.fill requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.fill memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: memory.fill needs 3 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: memory.fill expects i32 destination, value, and length operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 3)
 		case InstrBr:
 			target, _, _, ok := validateBranchTarget(insCtx, ins.BranchDepth, "br")
 			if !ok {
@@ -1798,6 +1816,8 @@ func instrName(kind InstrKind) string {
 		return "memory.size"
 	case InstrMemoryGrow:
 		return "memory.grow"
+	case InstrMemoryFill:
+		return "memory.fill"
 	case InstrI32Eq:
 		return "i32.eq"
 	case InstrI32Ne:

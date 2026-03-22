@@ -1606,6 +1606,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"global.set":          {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
 	"memory.size":         {kind: wasmir.InstrMemorySize, operandCount: 0},
 	"memory.grow":         {kind: wasmir.InstrMemoryGrow, operandCount: 0},
+	"memory.fill":         {kind: wasmir.InstrMemoryFill, operandCount: 0},
 	"unreachable":         {kind: wasmir.InstrUnreachable, operandCount: 0},
 	"return":              {kind: wasmir.InstrReturn, operandCount: 0},
 	"i32.eq":              {kind: wasmir.InstrI32Eq, operandCount: 0},
