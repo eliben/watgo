@@ -2837,6 +2837,8 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 			return wasmir.RefTypeFunc(true), true
 		case "extern":
 			return wasmir.RefTypeExtern(true), true
+		case "any":
+			return wasmir.RefTypeAny(true), true
 		case "eq":
 			return wasmir.RefTypeEq(true), true
 		case "i31":
@@ -3151,6 +3153,8 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 			return wasmir.RefTypeFunc(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
+		case "anyref":
+			return wasmir.RefTypeAny(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}
@@ -3173,6 +3177,8 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 			return wasmir.RefTypeFunc(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
+		case "anyref":
+			return wasmir.RefTypeAny(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}
@@ -3192,6 +3198,8 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 		return wasmir.RefTypeFunc(nullable), true
 	case "extern":
 		return wasmir.RefTypeExtern(nullable), true
+	case "any":
+		return wasmir.RefTypeAny(nullable), true
 	case "eq":
 		return wasmir.RefTypeEq(nullable), true
 	case "i31":

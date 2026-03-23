@@ -42,6 +42,7 @@ const (
 	refTypeStructCode      byte = 0x6b
 	refTypeI31Code         byte = 0x6c
 	refTypeEqCode          byte = 0x6d
+	refTypeAnyCode         byte = 0x6e
 	valueTypeExternRefCode byte = 0x6f
 
 	exportKindFunctionCode byte = 0x00
@@ -1457,6 +1458,8 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return refTypeI31Code, true
 	case wasmir.HeapKindEq:
 		return refTypeEqCode, true
+	case wasmir.HeapKindAny:
+		return refTypeAnyCode, true
 	case wasmir.HeapKindFunc:
 		return refTypeFuncRefCode, true
 	case wasmir.HeapKindExtern:

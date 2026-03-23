@@ -47,6 +47,20 @@ func matchesExpectedValue(got, want validatedValue) bool {
 	if !got.Type.IsRef() || !want.Type.IsRef() {
 		return false
 	}
+	if got.Type.Nullable && !want.Type.Nullable {
+		return false
+	}
+	switch want.Type.HeapType.Kind {
+	case HeapKindAny:
+		switch got.Type.HeapType.Kind {
+		case HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
+			return true
+		case HeapKindTypeIndex:
+			return true
+		default:
+			return false
+		}
+	}
 	if want.Type.UsesTypeIndex() {
 		if !got.Type.UsesTypeIndex() || got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
 			return false
@@ -64,9 +78,6 @@ func matchesExpectedValue(got, want validatedValue) bool {
 		default:
 			return false
 		}
-	}
-	if got.Type.IsRef() && got.Type.Nullable && !want.Type.Nullable {
-		return false
 	}
 	return true
 }
