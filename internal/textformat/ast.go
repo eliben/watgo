@@ -150,10 +150,12 @@ type MemoryDecl struct {
 // DataDecl is one module-level data segment declaration "(data ...)".
 type DataDecl struct {
 	// MemoryRef is the optional memory reference from "(data (memory X) ...)".
-	// It is empty when omitted, which implies memory index 0.
+	// It is empty when omitted, which implies memory index 0 for active
+	// segments.
 	MemoryRef string
 
-	// Offset is the active data segment offset expression.
+	// Offset is the active data segment offset expression. It is nil for
+	// passive segments like `(data "abc")`.
 	Offset Instruction
 
 	// Strings contains raw STRING token payloads from source.

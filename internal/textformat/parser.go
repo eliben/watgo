@@ -631,12 +631,14 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 }
 
 // parseDataDecl parses one top-level "(data ...)" declaration.
-// It expects either "(data <offset-expr> <string>+)" or
-// "(data (memory <id-or-index>) <offset-expr> <string>+)".
+// It accepts both active and passive segment forms:
+//   - (data <offset-expr> <string>+)
+//   - (data (memory <id-or-index>) <offset-expr> <string>+)
+//   - (data <string>+)
 func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	dd := &DataDecl{loc: sx.loc}
 	if len(sx.list) < 2 {
-		p.emitError(sx.loc, "data declaration missing offset")
+		p.emitError(sx.loc, "data declaration missing payload")
 		return dd
 	}
 
@@ -656,7 +658,12 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	}
 
 	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "data declaration missing offset")
+		p.emitError(sx.loc, "data declaration missing payload")
+		return dd
+	}
+
+	if sx.list[cursor].IsTokenKind(STRING) {
+		dd.Strings = p.parseDataStringsFrom(sx, cursor)
 		return dd
 	}
 	if !sx.list[cursor].IsList() {
@@ -1111,7 +1118,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 	}
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "memory.init", "data.drop":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1
@@ -1320,7 +1327,7 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 // instructions that have one immediate operand.
 func isValidPlainOperand(name string, op Operand) bool {
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "memory.init", "data.drop":
 		switch op.(type) {
 		case *IdOperand, *IntOperand:
 			return true

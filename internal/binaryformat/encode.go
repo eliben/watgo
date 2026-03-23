@@ -17,16 +17,17 @@ const (
 	wasmVersion = "\x01\x00\x00\x00"
 
 	// Section IDs follow the core binary spec's section id table.
-	sectionTypeID     byte = 1
-	sectionImportID   byte = 2
-	sectionFunctionID byte = 3
-	sectionTableID    byte = 4
-	sectionMemoryID   byte = 5
-	sectionGlobalID   byte = 6
-	sectionExportID   byte = 7
-	sectionElementID  byte = 9
-	sectionCodeID     byte = 10
-	sectionDataID     byte = 11
+	sectionTypeID      byte = 1
+	sectionImportID    byte = 2
+	sectionFunctionID  byte = 3
+	sectionTableID     byte = 4
+	sectionMemoryID    byte = 5
+	sectionGlobalID    byte = 6
+	sectionExportID    byte = 7
+	sectionElementID   byte = 9
+	sectionCodeID      byte = 10
+	sectionDataID      byte = 11
+	sectionDataCountID byte = 12
 
 	// typeCodeFunc tags a function type entry in the type section.
 	typeCodeFunc byte = 0x60
@@ -216,6 +217,8 @@ const (
 	opI64Extend32SCode      byte = 0xc4
 
 	// FC-prefixed table instruction subopcodes.
+	subopMemoryInitCode uint32 = 0x08
+	subopDataDropCode   uint32 = 0x09
 	subopMemoryCopyCode uint32 = 0x0a
 	subopMemoryFillCode uint32 = 0x0b
 	subopTableGrowCode  uint32 = 0x0f
@@ -260,6 +263,14 @@ const (
 
 	// elemKindFuncRef marks legacy function-index element payloads as funcref.
 	elemKindFuncRef byte = 0x00
+
+	// dataSegmentFlagActiveMem0 encodes an active data segment for memory 0.
+	dataSegmentFlagActiveMem0 byte = 0x00
+	// dataSegmentFlagPassive encodes a passive data segment.
+	dataSegmentFlagPassive byte = 0x01
+	// dataSegmentFlagActiveExplicitMemory encodes an active data segment with
+	// an explicit memory index.
+	dataSegmentFlagActiveExplicitMemory byte = 0x02
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -316,6 +327,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	elementSection := encodeElementSection(m.Elements, &diags)
 	if len(elementSection) > 0 {
 		writeSection(&out, sectionElementID, elementSection)
+	}
+
+	dataCountSection := encodeDataCountSection(m)
+	if len(dataCountSection) > 0 {
+		writeSection(&out, sectionDataCountID, dataCountSection)
 	}
 
 	codeSection := encodeCodeSection(m.Funcs, &diags)
@@ -587,7 +603,7 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 	return payload.Bytes()
 }
 
-// encodeDataSection emits section 11 as active data segments for memory 0.
+// encodeDataSection emits section 11 as active or passive data segments.
 func encodeDataSection(data []wasmir.DataSegment, diags *diag.ErrorList) []byte {
 	if len(data) == 0 {
 		return nil
@@ -595,13 +611,22 @@ func encodeDataSection(data []wasmir.DataSegment, diags *diag.ErrorList) []byte 
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(len(data)))
 	for i, seg := range data {
-		if seg.MemoryIndex != 0 {
-			diags.Addf("data[%d]: only memory index 0 is supported", i)
-			payload.WriteByte(0x00)
-		} else {
-			payload.WriteByte(0x00)
+		switch seg.Mode {
+		case wasmir.DataSegmentModePassive:
+			payload.WriteByte(dataSegmentFlagPassive)
+		case wasmir.DataSegmentModeActive:
+			if seg.MemoryIndex == 0 {
+				payload.WriteByte(dataSegmentFlagActiveMem0)
+			} else {
+				payload.WriteByte(dataSegmentFlagActiveExplicitMemory)
+				writeULEB128(&payload, seg.MemoryIndex)
+			}
+			encodeDataOffsetExpr(&payload, i, seg, diags)
+		default:
+			diags.Addf("data[%d]: unsupported segment mode %d", i, seg.Mode)
+			payload.WriteByte(dataSegmentFlagActiveMem0)
+			encodeDataOffsetExpr(&payload, i, seg, diags)
 		}
-		encodeDataOffsetExpr(&payload, i, seg, diags)
 		writeULEB128(&payload, uint32(len(seg.Init)))
 		payload.Write(seg.Init)
 	}
@@ -674,6 +699,29 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 	}
 
 	return payload.Bytes()
+}
+
+// encodeDataCountSection emits section 12 when code references data segments
+// through bulk-memory instructions like memory.init or data.drop.
+func encodeDataCountSection(m *wasmir.Module) []byte {
+	if m == nil || !moduleUsesDataIndexInstructions(m) {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(m.Data)))
+	return payload.Bytes()
+}
+
+func moduleUsesDataIndexInstructions(m *wasmir.Module) bool {
+	for _, fn := range m.Funcs {
+		for _, instr := range fn.Body {
+			switch instr.Kind {
+			case wasmir.InstrMemoryInit, wasmir.InstrDataDrop:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // encodeMemArg writes a memory instruction immediate.
@@ -882,6 +930,15 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, subopMemoryCopyCode)
 		writeULEB128(out, instr.MemoryIndex)
 		writeULEB128(out, instr.SourceMemoryIndex)
+	case wasmir.InstrMemoryInit:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopMemoryInitCode)
+		writeULEB128(out, instr.DataIndex)
+		writeULEB128(out, instr.MemoryIndex)
+	case wasmir.InstrDataDrop:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopDataDropCode)
+		writeULEB128(out, instr.DataIndex)
 	case wasmir.InstrMemoryFill:
 		out.WriteByte(opPrefixFCCode)
 		writeULEB128(out, subopMemoryFillCode)

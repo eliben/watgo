@@ -224,6 +224,47 @@ func TestLowerModule_LowersCallByName(t *testing.T) {
 	}
 }
 
+func TestLowerModule_LowersPassiveDataAndMemoryInit(t *testing.T) {
+	wat := `(module
+  (memory i64 1)
+  (data "\aa\bb")
+  (func
+    (memory.init 0 (i64.const 7) (i32.const 1) (i32.const 2))
+    (data.drop 0))
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	if len(m.Data) != 1 {
+		t.Fatalf("got %d data segments, want 1", len(m.Data))
+	}
+	if m.Data[0].Mode != wasmir.DataSegmentModePassive {
+		t.Fatalf("data[0] mode=%v, want passive", m.Data[0].Mode)
+	}
+	if got, want := m.Data[0].Init, []byte{0xaa, 0xbb}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("data[0] init=%v, want %v", got, want)
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) != 6 {
+		t.Fatalf("got %d body instructions, want 6", len(body))
+	}
+	if body[3].Kind != wasmir.InstrMemoryInit || body[3].DataIndex != 0 {
+		t.Fatalf("body[3]=%#v, want memory.init 0", body[3])
+	}
+	if body[4].Kind != wasmir.InstrDataDrop || body[4].DataIndex != 0 {
+		t.Fatalf("body[4]=%#v, want data.drop 0", body[4])
+	}
+}
+
 func TestLowerModule_LowersFoldedIf(t *testing.T) {
 	wat := `(module
   (func (result i64)

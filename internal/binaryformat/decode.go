@@ -29,6 +29,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 
 	var funcTypeIdxs []uint32
 	var funcBodies []decodedFuncBody
+	expectedDataCount := -1
 
 	seenType := false
 	seenImport := false
@@ -158,6 +159,17 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			}
 			seenData = true
 			out.Data = decodeDataSection(sr, &diags)
+		case sectionDataCountID:
+			if expectedDataCount >= 0 {
+				diags.Addf("duplicate data count section")
+				break
+			}
+			count, err := readU32(sr)
+			if err != nil {
+				diags.Addf("data count section: invalid count: %v", err)
+				break
+			}
+			expectedDataCount = int(count)
 
 		default:
 			diags.Addf("unsupported section id %d", sectionID)
@@ -179,6 +191,10 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			Locals:  funcBodies[i].locals,
 			Body:    funcBodies[i].body,
 		})
+	}
+
+	if expectedDataCount >= 0 && expectedDataCount != len(out.Data) {
+		diags.Addf("data count mismatch: section says %d, data section has %d segments", expectedDataCount, len(out.Data))
 	}
 
 	if diags.HasAny() {
@@ -648,26 +664,44 @@ func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegm
 			diags.Addf("data[%d]: missing flags: %v", i, err)
 			break
 		}
-		if flags != 0x00 {
-			diags.Addf("data[%d]: unsupported flags 0x%x", i, flags)
-			break
-		}
-		offsetInstr, err := decodeConstExpr(r)
-		if err != nil {
-			diags.Addf("data[%d]: invalid offset expr: %v", i, err)
-			break
-		}
-		offsetType := wasmir.ValueType{}
-		offsetValue := int64(0)
-		switch offsetInstr.Kind {
-		case wasmir.InstrI32Const:
-			offsetType = wasmir.ValueTypeI32
-			offsetValue = int64(offsetInstr.I32Const)
-		case wasmir.InstrI64Const:
-			offsetType = wasmir.ValueTypeI64
-			offsetValue = offsetInstr.I64Const
+		seg := wasmir.DataSegment{}
+		segOK := true
+		switch flags {
+		case dataSegmentFlagPassive:
+			seg.Mode = wasmir.DataSegmentModePassive
+		case dataSegmentFlagActiveMem0, dataSegmentFlagActiveExplicitMemory:
+			seg.Mode = wasmir.DataSegmentModeActive
+			if flags == dataSegmentFlagActiveExplicitMemory {
+				memoryIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("data[%d]: invalid memory index: %v", i, err)
+					segOK = false
+					break
+				}
+				seg.MemoryIndex = memoryIndex
+			}
+			offsetInstr, err := decodeConstExpr(r)
+			if err != nil {
+				diags.Addf("data[%d]: invalid offset expr: %v", i, err)
+				segOK = false
+				break
+			}
+			switch offsetInstr.Kind {
+			case wasmir.InstrI32Const:
+				seg.OffsetType = wasmir.ValueTypeI32
+				seg.OffsetI64 = int64(offsetInstr.I32Const)
+			case wasmir.InstrI64Const:
+				seg.OffsetType = wasmir.ValueTypeI64
+				seg.OffsetI64 = offsetInstr.I64Const
+			default:
+				diags.Addf("data[%d]: offset expr must be i32.const or i64.const", i)
+				segOK = false
+			}
 		default:
-			diags.Addf("data[%d]: offset expr must be i32.const or i64.const", i)
+			diags.Addf("data[%d]: unsupported flags 0x%x", i, flags)
+			segOK = false
+		}
+		if !segOK {
 			break
 		}
 		size, err := readU32(r)
@@ -680,12 +714,8 @@ func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegm
 			diags.Addf("data[%d]: invalid payload bytes: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.DataSegment{
-			MemoryIndex: 0,
-			OffsetType:  offsetType,
-			OffsetI64:   offsetValue,
-			Init:        init,
-		})
+		seg.Init = init
+		out = append(out, seg)
 	}
 	return out
 }
@@ -1090,6 +1120,29 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			switch subop {
+			case subopMemoryInitCode:
+				dataIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: memory.init missing/invalid data immediate: %v", funcIdx, err)
+					return out
+				}
+				memIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: memory.init missing/invalid memory immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{
+					Kind:        wasmir.InstrMemoryInit,
+					DataIndex:   dataIndex,
+					MemoryIndex: memIndex,
+				})
+			case subopDataDropCode:
+				dataIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: data.drop missing/invalid data immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrDataDrop, DataIndex: dataIndex})
 			case subopMemoryCopyCode:
 				dstMemIndex, err := readU32(r)
 				if err != nil {

@@ -527,6 +527,7 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 				l.out.Memories[memIdx].Min = needPages
 			}
 			l.out.Data = append(l.out.Data, wasmir.DataSegment{
+				Mode:        wasmir.DataSegmentModeActive,
 				MemoryIndex: memIdx,
 				OffsetType:  addressType,
 				OffsetI64:   0,
@@ -536,8 +537,8 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 	}
 }
 
-// collectDataDecls lowers module-level data declarations into active memory
-// segments targeting memory index 0.
+// collectDataDecls lowers module-level data declarations into active or
+// passive memory segments.
 func (l *moduleLowerer) collectDataDecls(astm *Module) {
 	for i, dd := range astm.Data {
 		if dd == nil {
@@ -553,15 +554,6 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 			}
 			memoryIndex = idx
 		}
-		offsetType := wasmir.ValueTypeI32
-		if int(memoryIndex) < len(l.out.Memories) {
-			offsetType = normalizedMemoryAddressType(l.out.Memories[memoryIndex])
-		}
-		offset, ok := l.evalMemoryOffsetConst(dd.Offset, offsetType)
-		if !ok {
-			l.diags.Addf("data[%d]: offset must be %s.const", i, offsetType)
-			continue
-		}
 		var init []byte
 		for j, s := range dd.Strings {
 			b, err := decodeWATStringBytes(s)
@@ -571,12 +563,27 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 			}
 			init = append(init, b...)
 		}
-		l.out.Data = append(l.out.Data, wasmir.DataSegment{
-			MemoryIndex: memoryIndex,
-			OffsetType:  offsetType,
-			OffsetI64:   offset,
-			Init:        init,
-		})
+		seg := wasmir.DataSegment{Init: init}
+		if dd.Offset == nil {
+			seg.Mode = wasmir.DataSegmentModePassive
+			l.out.Data = append(l.out.Data, seg)
+			continue
+		}
+
+		offsetType := wasmir.ValueTypeI32
+		if int(memoryIndex) < len(l.out.Memories) {
+			offsetType = normalizedMemoryAddressType(l.out.Memories[memoryIndex])
+		}
+		offset, ok := l.evalMemoryOffsetConst(dd.Offset, offsetType)
+		if !ok {
+			l.diags.Addf("data[%d]: offset must be %s.const", i, offsetType)
+			continue
+		}
+		seg.Mode = wasmir.DataSegmentModeActive
+		seg.MemoryIndex = memoryIndex
+		seg.OffsetType = offsetType
+		seg.OffsetI64 = offset
+		l.out.Data = append(l.out.Data, seg)
 	}
 }
 
@@ -1638,6 +1645,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"ref.is_null":         {kind: wasmir.InstrRefIsNull, operandCount: 0},
 	"ref.as_non_null":     {kind: wasmir.InstrRefAsNonNull, operandCount: 0},
 	"ref.func":            {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
+	"memory.init":         {kind: wasmir.InstrMemoryInit, operandCount: 1, decode: decodeDataIndexOperands},
+	"data.drop":           {kind: wasmir.InstrDataDrop, operandCount: 1, decode: decodeDataIndexOperands},
 }
 
 // lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
@@ -2113,6 +2122,17 @@ func decodeRefFuncOperands(fl *functionLowerer, ins *wasmir.Instruction, operand
 		return false
 	}
 	ins.FuncIndex = funcIndex
+	return true
+}
+
+// decodeDataIndexOperands decodes operands into ins.DataIndex for memory.init
+// and data.drop.
+func decodeDataIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	dataIndex, ok := lowerDataIndexOperand(operands[0])
+	if !ok {
+		return false
+	}
+	ins.DataIndex = dataIndex
 	return true
 }
 
@@ -2613,6 +2633,15 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 	default:
 		return wasmir.ValueType{}, false
 	}
+}
+
+// lowerDataIndexOperand resolves op as a data segment index.
+func lowerDataIndexOperand(op Operand) (uint32, bool) {
+	intOp, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+	return parseU32Literal(intOp.Value)
 }
 
 func operandText(op Operand) string {

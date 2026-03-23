@@ -180,6 +180,9 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, data := range m.Data {
+		if data.Mode != DataSegmentModeActive {
+			continue
+		}
 		if int(data.MemoryIndex) >= len(m.Memories) {
 			diags.Addf("data[%d]: unknown memory", i)
 			continue
@@ -1146,8 +1149,33 @@ instrLoop:
 				diags.Addf("%s: memory.copy needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: memory.copy expects i32 destination, source, and length operands", insCtx)
+			dstAddrType := memoryAddressType(m, ins.MemoryIndex)
+			srcAddrType := memoryAddressType(m, ins.SourceMemoryIndex)
+			if stack[len(stack)-3] != dstAddrType || stack[len(stack)-2] != srcAddrType || stack[len(stack)-1] != dstAddrType {
+				diags.Addf("%s: memory.copy expects %s destination, %s source, and %s length operands", insCtx, dstAddrType, srcAddrType, dstAddrType)
+				continue
+			}
+			truncateStack(len(stack) - 3)
+		case InstrMemoryInit:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: memory.init requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.init memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			if int(ins.DataIndex) >= len(m.Data) {
+				diags.Addf("%s: memory.init data index %d out of range", insCtx, ins.DataIndex)
+				continue
+			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
+			if len(stack) < 3 {
+				diags.Addf("%s: memory.init needs 3 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-3] != addrType || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: memory.init expects %s destination, i32 source, and i32 length operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 3)
@@ -1170,6 +1198,11 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 3)
+		case InstrDataDrop:
+			if int(ins.DataIndex) >= len(m.Data) {
+				diags.Addf("%s: data.drop data index %d out of range", insCtx, ins.DataIndex)
+				continue
+			}
 		case InstrBr:
 			target, _, _, ok := validateBranchTarget(insCtx, ins.BranchDepth, "br")
 			if !ok {
@@ -1974,8 +2007,12 @@ func instrName(kind InstrKind) string {
 		return "memory.grow"
 	case InstrMemoryCopy:
 		return "memory.copy"
+	case InstrMemoryInit:
+		return "memory.init"
 	case InstrMemoryFill:
 		return "memory.fill"
+	case InstrDataDrop:
+		return "data.drop"
 	case InstrI32Eq:
 		return "i32.eq"
 	case InstrI32Ne:

@@ -251,6 +251,75 @@ func TestValidateModule_Memory64PageLimit(t *testing.T) {
 	}
 }
 
+func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{{}},
+		Memories: []Memory{
+			{AddressType: ValueTypeI64, Min: 1},
+		},
+		Data: []DataSegment{
+			{Mode: DataSegmentModePassive, Init: []byte{1, 2, 3}},
+		},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI64Const, I64Const: 7},
+				{Kind: InstrI32Const, I32Const: 1},
+				{Kind: InstrI32Const, I32Const: 2},
+				{Kind: InstrMemoryInit, DataIndex: 0},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	m.Funcs[0].Body[0] = Instruction{Kind: InstrI32Const, I32Const: 7}
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "memory.init expects i64 destination, i32 source, and i32 length operands") {
+		t.Fatalf("got errors %q, want memory.init operand type mismatch", errs.Error())
+	}
+}
+
+func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{{}},
+		Memories: []Memory{
+			{AddressType: ValueTypeI64, Min: 1},
+		},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI64Const, I64Const: 10},
+				{Kind: InstrI64Const, I64Const: 20},
+				{Kind: InstrI64Const, I64Const: 30},
+				{Kind: InstrMemoryCopy},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	m.Funcs[0].Body[2] = Instruction{Kind: InstrI32Const, I32Const: 30}
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "memory.copy expects i64 destination, i64 source, and i64 length operands") {
+		t.Fatalf("got errors %q, want memory.copy operand type mismatch", errs.Error())
+	}
+}
+
 func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
 	m := &Module{
 		Types: []FuncType{{Params: nil, Results: nil}},

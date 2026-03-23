@@ -172,7 +172,9 @@ const (
 	InstrMemorySize
 	InstrMemoryGrow
 	InstrMemoryCopy
+	InstrMemoryInit
 	InstrMemoryFill
+	InstrDataDrop
 	InstrRefNull
 	InstrRefIsNull
 	InstrRefAsNonNull
@@ -317,7 +319,7 @@ type Module struct {
 	// Globals is the global definition list in index order.
 	Globals []Global
 
-	// Data is the list of active data segments used to initialize memories.
+	// Data is the list of module data segments.
 	Data []DataSegment
 
 	// Exports is the list of exported definitions.
@@ -464,16 +466,28 @@ type Memory struct {
 	ImportName string
 }
 
-// DataSegment is one active linear-memory data segment.
+// DataSegmentMode classifies a data segment as active or passive.
+type DataSegmentMode uint8
+
+const (
+	DataSegmentModeActive DataSegmentMode = iota
+	DataSegmentModePassive
+)
+
+// DataSegment is one linear-memory data segment.
 type DataSegment struct {
-	// MemoryIndex is the target memory index.
+	// Mode classifies the segment as active or passive.
+	Mode DataSegmentMode
+
+	// MemoryIndex is the target memory index for active segments.
 	MemoryIndex uint32
 
 	// OffsetType is the const type used by the active segment offset expr.
 	OffsetType ValueType
 
 	// OffsetI64 is the integer value used by the active segment offset expr.
-	// For i32 offsets it is sign-extended from the original i32.const.
+	// For i32 offsets it is sign-extended from the original i32.const. It is
+	// ignored for passive segments.
 	OffsetI64 int64
 
 	// Init is the raw byte payload copied into memory at instantiation.
@@ -583,6 +597,10 @@ type Instruction struct {
 	// SourceMemoryIndex is the source memory index immediate used by
 	// memory.copy.
 	SourceMemoryIndex uint32
+
+	// DataIndex is the data segment index immediate used by memory.init and
+	// data.drop.
+	DataIndex uint32
 
 	// BlockType is the if block result type for InstrIf when BlockHasResult is
 	// true.
