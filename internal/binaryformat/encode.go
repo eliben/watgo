@@ -230,6 +230,10 @@ const (
 	limitsFlagMinOnly byte = 0x00
 	// limitsFlagMinMax encodes limits with both minimum and maximum bounds.
 	limitsFlagMinMax byte = 0x01
+	// limitsFlagMinOnly64 encodes a memory64 minimum without maximum.
+	limitsFlagMinOnly64 byte = 0x04
+	// limitsFlagMinMax64 encodes a memory64 min/max pair.
+	limitsFlagMinMax64 byte = 0x05
 	// tableFlagHasInit marks a table definition carrying an inline init expr.
 	tableFlagHasInit byte = 0x40
 
@@ -399,7 +403,7 @@ func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte 
 			writeLimits(&payload, imp.Table.Min, imp.Table.HasMax, imp.Table.Max)
 		case wasmir.ExternalKindMemory:
 			payload.WriteByte(importKindMemoryCode)
-			writeLimits(&payload, imp.Memory.Min, imp.Memory.HasMax, imp.Memory.Max)
+			writeMemoryLimits(&payload, imp.Memory)
 		case wasmir.ExternalKindGlobal:
 			payload.WriteByte(importKindGlobalCode)
 			if !encodeValueType(&payload, imp.GlobalType) {
@@ -487,7 +491,7 @@ func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
 		if mem.Imported {
 			continue
 		}
-		writeLimits(&payload, mem.Min, mem.HasMax, mem.Max)
+		writeMemoryLimits(&payload, mem)
 	}
 	return payload.Bytes()
 }
@@ -594,9 +598,7 @@ func encodeDataSection(data []wasmir.DataSegment, diags *diag.ErrorList) []byte 
 		} else {
 			payload.WriteByte(0x00)
 		}
-		payload.WriteByte(opI32ConstCode)
-		writeSLEB128(&payload, int64(seg.OffsetI32))
-		payload.WriteByte(opEndCode)
+		encodeDataOffsetExpr(&payload, i, seg, diags)
 		writeULEB128(&payload, uint32(len(seg.Init)))
 		payload.Write(seg.Init)
 	}
@@ -685,6 +687,22 @@ func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
 	writeULEB128(out, instr.MemoryAlign+(1<<6))
 	writeULEB128(out, instr.MemoryIndex)
 	writeULEB128(out, instr.MemoryOffset)
+}
+
+func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment, diags *diag.ErrorList) {
+	switch seg.OffsetType {
+	case wasmir.ValueTypeI32:
+		out.WriteByte(opI32ConstCode)
+		writeSLEB128(out, seg.OffsetI64)
+	case wasmir.ValueTypeI64:
+		out.WriteByte(opI64ConstCode)
+		writeSLEB128(out, seg.OffsetI64)
+	default:
+		diags.Addf("data[%d]: unsupported offset type %s", dataIdx, seg.OffsetType)
+		out.WriteByte(opI32ConstCode)
+		writeSLEB128(out, 0)
+	}
+	out.WriteByte(opEndCode)
 }
 
 // encodeInstr maps semantic instruction kinds to binary opcodes.
@@ -1247,10 +1265,39 @@ func writeLimits(out *bytes.Buffer, min uint32, hasMax bool, max uint32) {
 	writeULEB128(out, min)
 }
 
+func writeMemoryLimits(out *bytes.Buffer, mem wasmir.Memory) {
+	if mem.AddressType == wasmir.ValueTypeI64 {
+		if mem.HasMax {
+			out.WriteByte(limitsFlagMinMax64)
+			writeULEB64(out, mem.Min)
+			writeULEB64(out, mem.Max)
+			return
+		}
+		out.WriteByte(limitsFlagMinOnly64)
+		writeULEB64(out, mem.Min)
+		return
+	}
+	if mem.HasMax {
+		out.WriteByte(limitsFlagMinMax)
+		writeULEB64(out, mem.Min)
+		writeULEB64(out, mem.Max)
+		return
+	}
+	out.WriteByte(limitsFlagMinOnly)
+	writeULEB64(out, mem.Min)
+}
+
 // writeULEB128 writes v as an unsigned LEB128-encoded integer.
 func writeULEB128(out *bytes.Buffer, v uint32) {
 	var buf [binary.MaxVarintLen32]byte
 	n := binary.PutUvarint(buf[:], uint64(v))
+	out.Write(buf[:n])
+}
+
+// writeULEB64 writes v as an unsigned LEB128-encoded integer.
+func writeULEB64(out *bytes.Buffer, v uint64) {
+	var buf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(buf[:], v)
 	out.Write(buf[:n])
 }
 

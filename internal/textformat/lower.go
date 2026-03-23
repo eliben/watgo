@@ -466,7 +466,13 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 			continue
 		}
 
+		addressType, ok := lowerMemoryAddressType(md.AddressType)
+		if !ok {
+			l.diags.Addf("memory[%d]: unsupported memory address type %q", i, md.AddressType)
+			addressType = wasmir.ValueTypeI32
+		}
 		mem := wasmir.Memory{
+			AddressType:  addressType,
 			Min:          md.Min,
 			HasMax:       md.HasMax,
 			Max:          md.Max,
@@ -510,13 +516,14 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 				}
 				init = append(init, b...)
 			}
-			needPages := uint32((len(init) + wasmPageSizeBytes - 1) / wasmPageSizeBytes)
+			needPages := uint64((len(init) + wasmPageSizeBytes - 1) / wasmPageSizeBytes)
 			if mem.Min < needPages {
 				l.out.Memories[memIdx].Min = needPages
 			}
 			l.out.Data = append(l.out.Data, wasmir.DataSegment{
 				MemoryIndex: memIdx,
-				OffsetI32:   0,
+				OffsetType:  addressType,
+				OffsetI64:   0,
 				Init:        init,
 			})
 		}
@@ -540,9 +547,13 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 			}
 			memoryIndex = idx
 		}
-		offset, ok := l.evalI32ConstExpr(dd.Offset)
+		offsetType := wasmir.ValueTypeI32
+		if int(memoryIndex) < len(l.out.Memories) {
+			offsetType = normalizedMemoryAddressType(l.out.Memories[memoryIndex])
+		}
+		offset, ok := l.evalMemoryOffsetConst(dd.Offset, offsetType)
 		if !ok {
-			l.diags.Addf("data[%d]: offset must be i32.const", i)
+			l.diags.Addf("data[%d]: offset must be %s.const", i, offsetType)
 			continue
 		}
 		var init []byte
@@ -556,7 +567,8 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 		}
 		l.out.Data = append(l.out.Data, wasmir.DataSegment{
 			MemoryIndex: memoryIndex,
-			OffsetI32:   offset,
+			OffsetType:  offsetType,
+			OffsetI64:   offset,
 			Init:        init,
 		})
 	}
@@ -2268,6 +2280,90 @@ func (l *moduleLowerer) evalI32ConstExpr(init Instruction) (int32, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// evalI64ConstExpr evaluates a memory64 offset constant expression to i64.
+//
+// This exists because active data segments use a constant expression as their
+// memory offset, and under memory64 the target memory's address type may be
+// i64 rather than the MVP default i32. In other words, `(data (i64.const 32)
+// "...")` is valid when the target memory is declared with address type i64.
+//
+// Relevant spec sections:
+//   - Address types: https://webassembly.github.io/spec/core/text/types.html
+//   - Active data segment offsets: https://webassembly.github.io/spec/core/syntax/modules.html
+//
+// Supported forms mirror evalI32ConstExpr for the i64 arithmetic subset.
+func (l *moduleLowerer) evalI64ConstExpr(init Instruction) (int64, bool) {
+	switch in := init.(type) {
+	case *FoldedInstr:
+		switch in.Name {
+		case "i64.add", "i64.sub", "i64.mul":
+			if len(in.Args) != 2 || in.Args[0].Instr == nil || in.Args[1].Instr == nil ||
+				in.Args[0].Operand != nil || in.Args[1].Operand != nil {
+				return 0, false
+			}
+			left, ok := l.evalI64ConstExpr(in.Args[0].Instr)
+			if !ok {
+				return 0, false
+			}
+			right, ok := l.evalI64ConstExpr(in.Args[1].Instr)
+			if !ok {
+				return 0, false
+			}
+			switch in.Name {
+			case "i64.add":
+				return left + right, true
+			case "i64.sub":
+				return left - right, true
+			default:
+				return left * right, true
+			}
+		}
+	case *PlainInstr:
+		// handled below through lowerConstInstr.
+	}
+
+	ci, ok := l.lowerConstInstr(init)
+	if !ok {
+		return 0, false
+	}
+	switch ci.Instr.Kind {
+	case wasmir.InstrI64Const:
+		return ci.Instr.I64Const, true
+	default:
+		return 0, false
+	}
+}
+
+func (l *moduleLowerer) evalMemoryOffsetConst(init Instruction, addrType wasmir.ValueType) (int64, bool) {
+	switch addrType {
+	case wasmir.ValueTypeI32:
+		v, ok := l.evalI32ConstExpr(init)
+		return int64(v), ok
+	case wasmir.ValueTypeI64:
+		return l.evalI64ConstExpr(init)
+	default:
+		return 0, false
+	}
+}
+
+func lowerMemoryAddressType(name string) (wasmir.ValueType, bool) {
+	switch name {
+	case "", "i32":
+		return wasmir.ValueTypeI32, true
+	case "i64":
+		return wasmir.ValueTypeI64, true
+	default:
+		return wasmir.ValueType{}, false
+	}
+}
+
+func normalizedMemoryAddressType(mem wasmir.Memory) wasmir.ValueType {
+	if mem.AddressType == wasmir.ValueTypeI64 {
+		return wasmir.ValueTypeI64
+	}
+	return wasmir.ValueTypeI32
 }
 
 // evalImportedI32Global resolves a lowered i32 global.get for constant offsets.

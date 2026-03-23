@@ -270,3 +270,46 @@ func TestLowerModule_LowersFoldedIf(t *testing.T) {
 		t.Fatalf("body[7]=%#v, want end (func)", body[7])
 	}
 }
+
+func TestLowerModule_Memory64DataOffset(t *testing.T) {
+	wat := `(module
+  (memory (export "memory") i64 2 250000)
+  (data (i64.const 32) "abc")
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	if len(m.Memories) != 1 {
+		t.Fatalf("got %d memories, want 1", len(m.Memories))
+	}
+	if got := m.Memories[0].AddressType; got != wasmir.ValueTypeI64 {
+		t.Fatalf("memory address type=%v, want i64", got)
+	}
+	if got := m.Memories[0].Min; got != 2 {
+		t.Fatalf("memory min=%d, want 2", got)
+	}
+	if !m.Memories[0].HasMax || m.Memories[0].Max != 250000 {
+		t.Fatalf("memory max=(%t,%d), want (true,250000)", m.Memories[0].HasMax, m.Memories[0].Max)
+	}
+
+	if len(m.Data) != 1 {
+		t.Fatalf("got %d data segments, want 1", len(m.Data))
+	}
+	if got := m.Data[0].OffsetType; got != wasmir.ValueTypeI64 {
+		t.Fatalf("data offset type=%v, want i64", got)
+	}
+	if got := m.Data[0].OffsetI64; got != 32 {
+		t.Fatalf("data offset=%d, want 32", got)
+	}
+	if got := string(m.Data[0].Init); got != "abc" {
+		t.Fatalf("data init=%q, want %q", got, "abc")
+	}
+}

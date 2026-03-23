@@ -555,7 +555,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 //   - (memory (import "M" "m") 1 2)
 //   - (memory (data "abc" "..."))
 func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
-	md := &MemoryDecl{loc: sx.loc}
+	md := &MemoryDecl{loc: sx.loc, AddressType: "i32"}
 	cursor := 1
 	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		md.Id = sx.list[cursor].tok.value
@@ -585,12 +585,21 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 		return md
 	}
 
+	if sx.list[cursor].IsTokenKind(KEYWORD) && (sx.list[cursor].tok.value == "i32" || sx.list[cursor].tok.value == "i64") {
+		md.AddressType = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "memory declaration missing minimum size")
+		return md
+	}
+
 	minTok := sx.list[cursor]
 	if !minTok.IsTokenKind(INT) {
 		p.emitError(minTok.loc, "memory minimum must be INT")
 		return md
 	}
-	min, ok := parseU32Token(minTok.tok.value)
+	min, ok := parseU64Token(minTok.tok.value)
 	if !ok {
 		p.emitError(minTok.loc, "invalid memory minimum size")
 		return md
@@ -599,7 +608,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	cursor++
 
 	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(INT) {
-		max, ok := parseU32Token(sx.list[cursor].tok.value)
+		max, ok := parseU64Token(sx.list[cursor].tok.value)
 		if !ok {
 			p.emitError(sx.list[cursor].loc, "invalid memory maximum size")
 			return md
@@ -1311,4 +1320,15 @@ func parseU32Token(s string) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(n), true
+}
+
+// parseU64Token parses an INT token text into uint64, accepting '_' separators
+// and base prefixes supported by strconv.ParseUint.
+func parseU64Token(s string) (uint64, bool) {
+	clean := strings.ReplaceAll(s, "_", "")
+	n, err := strconv.ParseUint(clean, 0, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }

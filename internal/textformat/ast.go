@@ -124,14 +124,18 @@ type MemoryDecl struct {
 	// import field name.
 	ImportName string
 
+	// AddressType is the memory address type keyword, either "i32" or "i64".
+	// It defaults to "i32" when omitted in source.
+	AddressType string
+
 	// Min is the minimum memory size in pages.
-	Min uint32
+	Min uint64
 
 	// HasMax reports whether a maximum memory size was specified.
 	HasMax bool
 
 	// Max is the maximum memory size in pages when HasMax is true.
-	Max uint32
+	Max uint64
 
 	// InlineData contains raw string tokens from "(memory (data ...))" sugar.
 	InlineData []string

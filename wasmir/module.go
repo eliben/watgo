@@ -436,14 +436,17 @@ type Table struct {
 
 // Memory is one linear memory definition.
 type Memory struct {
+	// AddressType is the memory address type, either i32 or i64.
+	AddressType ValueType
+
 	// Min is the minimum memory size in 64KiB pages.
-	Min uint32
+	Min uint64
 
 	// HasMax reports whether Max is present.
 	HasMax bool
 
 	// Max is the maximum memory size in 64KiB pages when HasMax is true.
-	Max uint32
+	Max uint64
 
 	// Imported reports whether this memory is imported.
 	Imported bool
@@ -460,8 +463,12 @@ type DataSegment struct {
 	// MemoryIndex is the target memory index.
 	MemoryIndex uint32
 
-	// OffsetI32 is the i32.const offset used by the active segment.
-	OffsetI32 int32
+	// OffsetType is the const type used by the active segment offset expr.
+	OffsetType ValueType
+
+	// OffsetI64 is the integer value used by the active segment offset expr.
+	// For i32 offsets it is sign-extended from the original i32.const.
+	OffsetI64 int64
 
 	// Init is the raw byte payload copied into memory at instantiation.
 	Init []byte

@@ -290,13 +290,14 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				ImportName:   name,
 			}
 		case importKindMemoryCode:
-			min, hasMax, max, err := decodeLimits(r)
+			addrType, min, hasMax, max, err := decodeMemoryLimits(r)
 			if err != nil {
 				diags.Addf("import[%d]: invalid memory limits: %v", i, err)
 				break
 			}
 			imp.Kind = wasmir.ExternalKindMemory
 			imp.Memory = wasmir.Memory{
+				AddressType:  addrType,
 				Min:          min,
 				HasMax:       hasMax,
 				Max:          max,
@@ -417,12 +418,12 @@ func decodeMemorySection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Memory
 	}
 	out := make([]wasmir.Memory, 0, n)
 	for i := uint32(0); i < n; i++ {
-		min, hasMax, max, err := decodeLimits(r)
+		addrType, min, hasMax, max, err := decodeMemoryLimits(r)
 		if err != nil {
 			diags.Addf("memory[%d]: invalid limits: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.Memory{Min: min, HasMax: hasMax, Max: max})
+		out = append(out, wasmir.Memory{AddressType: addrType, Min: min, HasMax: hasMax, Max: max})
 	}
 	return out
 }
@@ -655,8 +656,17 @@ func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegm
 			diags.Addf("data[%d]: invalid offset expr: %v", i, err)
 			break
 		}
-		if offsetInstr.Kind != wasmir.InstrI32Const {
-			diags.Addf("data[%d]: offset expr must be i32.const", i)
+		offsetType := wasmir.ValueType{}
+		offsetValue := int64(0)
+		switch offsetInstr.Kind {
+		case wasmir.InstrI32Const:
+			offsetType = wasmir.ValueTypeI32
+			offsetValue = int64(offsetInstr.I32Const)
+		case wasmir.InstrI64Const:
+			offsetType = wasmir.ValueTypeI64
+			offsetValue = offsetInstr.I64Const
+		default:
+			diags.Addf("data[%d]: offset expr must be i32.const or i64.const", i)
 			break
 		}
 		size, err := readU32(r)
@@ -671,7 +681,8 @@ func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegm
 		}
 		out = append(out, wasmir.DataSegment{
 			MemoryIndex: 0,
-			OffsetI32:   offsetInstr.I32Const,
+			OffsetType:  offsetType,
+			OffsetI64:   offsetValue,
 			Init:        init,
 		})
 	}
@@ -723,6 +734,37 @@ func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction,
 		MemoryAlign:  align,
 		MemoryOffset: offset,
 	}, nil
+}
+
+func decodeMemoryLimits(r *bytes.Reader) (wasmir.ValueType, uint64, bool, uint64, error) {
+	flags, err := readByte(r)
+	if err != nil {
+		return wasmir.ValueType{}, 0, false, 0, err
+	}
+	switch flags {
+	case limitsFlagMinOnly:
+		min, err := readU64(r)
+		return wasmir.ValueTypeI32, min, false, 0, err
+	case limitsFlagMinMax:
+		min, err := readU64(r)
+		if err != nil {
+			return wasmir.ValueType{}, 0, false, 0, err
+		}
+		max, err := readU64(r)
+		return wasmir.ValueTypeI32, min, true, max, err
+	case limitsFlagMinOnly64:
+		min, err := readU64(r)
+		return wasmir.ValueTypeI64, min, false, 0, err
+	case limitsFlagMinMax64:
+		min, err := readU64(r)
+		if err != nil {
+			return wasmir.ValueType{}, 0, false, 0, err
+		}
+		max, err := readU64(r)
+		return wasmir.ValueTypeI64, min, true, max, err
+	default:
+		return wasmir.ValueType{}, 0, false, 0, fmt.Errorf("unsupported memory limits flags 0x%x", flags)
+	}
 }
 
 func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
@@ -1789,6 +1831,17 @@ func readU32(r *bytes.Reader) (uint32, error) {
 		return 0, fmt.Errorf("u32 overflow: %d", v)
 	}
 	return uint32(v), nil
+}
+
+func readU64(r *bytes.Reader) (uint64, error) {
+	v, err := binary.ReadUvarint(r)
+	if err != nil {
+		if err == io.EOF {
+			return 0, io.ErrUnexpectedEOF
+		}
+		return 0, err
+	}
+	return v, nil
 }
 
 // readS32 reads a signed 32-bit LEB128 value from r.

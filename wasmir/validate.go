@@ -6,7 +6,7 @@ import (
 	"github.com/eliben/watgo/diag"
 )
 
-const maxMemoryPages = 65536
+const maxMemoryPages32 = 65536
 
 type validatedValue struct {
 	Type ValueType
@@ -78,6 +78,15 @@ func refinedNonNullValue(v validatedValue) validatedValue {
 	return v
 }
 
+func memoryAddressType(m *Module, memoryIndex uint32) ValueType {
+	if m != nil && int(memoryIndex) < len(m.Memories) {
+		if m.Memories[memoryIndex].AddressType == ValueTypeI64 {
+			return ValueTypeI64
+		}
+	}
+	return ValueTypeI32
+}
+
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
@@ -134,11 +143,12 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, mem := range m.Memories {
-		if mem.Min > maxMemoryPages {
+		addrType := memoryAddressType(m, uint32(i))
+		if addrType == ValueTypeI32 && mem.Min > maxMemoryPages32 {
 			diags.Addf("memory[%d]: memory size", i)
 		}
 		if mem.HasMax {
-			if mem.Max > maxMemoryPages {
+			if addrType == ValueTypeI32 && mem.Max > maxMemoryPages32 {
 				diags.Addf("memory[%d]: memory size", i)
 			}
 			if mem.Min > mem.Max {
@@ -150,6 +160,10 @@ func ValidateModule(m *Module) error {
 	for i, data := range m.Data {
 		if int(data.MemoryIndex) >= len(m.Memories) {
 			diags.Addf("data[%d]: unknown memory", i)
+			continue
+		}
+		if data.OffsetType != memoryAddressType(m, data.MemoryIndex) {
+			diags.Addf("data[%d]: offset type mismatch", i)
 		}
 	}
 
@@ -836,12 +850,13 @@ instrLoop:
 				diags.Addf("%s: i32.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: i32.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: i32.load expects i32 address operand", insCtx)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: i32.load expects %s address operand", insCtx, addrType)
 				continue
 			}
 			// i32 address replaced by loaded i32 value.
@@ -854,12 +869,13 @@ instrLoop:
 				diags.Addf("%s: i64.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: i64.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: i64.load expects i32 address operand", insCtx)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: i64.load expects %s address operand", insCtx, addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
@@ -872,12 +888,13 @@ instrLoop:
 				diags.Addf("%s: f32.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: f32.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: f32.load expects i32 address operand", insCtx)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: f32.load expects %s address operand", insCtx, addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
@@ -890,12 +907,13 @@ instrLoop:
 				diags.Addf("%s: f64.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: f64.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: f64.load expects i32 address operand", insCtx)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: f64.load expects %s address operand", insCtx, addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF64))
@@ -908,12 +926,13 @@ instrLoop:
 				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: %s expects i32 address operand", insCtx, instrName(ins.Kind))
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
@@ -926,12 +945,13 @@ instrLoop:
 				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: %s expects i32 address operand", insCtx, instrName(ins.Kind))
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
@@ -944,12 +964,13 @@ instrLoop:
 				diags.Addf("%s: i32.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: i32.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: i32.store expects i32 value and i32 address operands", insCtx)
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: i32.store expects i32 value and %s address operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -962,12 +983,13 @@ instrLoop:
 				diags.Addf("%s: i64.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: i64.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: i64.store expects i64 value and i32 address operands", insCtx)
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: i64.store expects i64 value and %s address operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -980,12 +1002,13 @@ instrLoop:
 				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: %s expects i32 value and i32 address operands", insCtx, instrName(ins.Kind))
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: %s expects i32 value and %s address operands", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -998,12 +1021,13 @@ instrLoop:
 				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: %s expects i64 value and i32 address operands", insCtx, instrName(ins.Kind))
+			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: %s expects i64 value and %s address operands", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -1016,12 +1040,13 @@ instrLoop:
 				diags.Addf("%s: f32.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: f32.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: f32.store expects f32 value and i32 address operands", insCtx)
+			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: f32.store expects f32 value and %s address operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -1034,12 +1059,13 @@ instrLoop:
 				diags.Addf("%s: f64.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 2 {
 				diags.Addf("%s: f64.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: f64.store expects f64 value and i32 address operands", insCtx)
+			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: f64.store expects f64 value and %s address operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -1052,7 +1078,7 @@ instrLoop:
 				diags.Addf("%s: memory.size memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
-			appendStackType(ValueTypeI32)
+			appendStackType(memoryAddressType(m, ins.MemoryIndex))
 		case InstrMemoryGrow:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: memory.grow requires memory", insCtx)
@@ -1062,15 +1088,16 @@ instrLoop:
 				diags.Addf("%s: memory.grow memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
 				diags.Addf("%s: memory.grow needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: memory.grow expects i32 operand", insCtx)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: memory.grow expects %s operand", insCtx, addrType)
 				continue
 			}
-			// i32 pages operand replaced by i32 previous-size result.
+			setStackValue(len(stack)-1, validatedValueFromType(addrType))
 		case InstrMemoryCopy:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: memory.copy requires memory", insCtx)
@@ -1102,12 +1129,13 @@ instrLoop:
 				diags.Addf("%s: memory.fill memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 3 {
 				diags.Addf("%s: memory.fill needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: memory.fill expects i32 destination, value, and length operands", insCtx)
+			if stack[len(stack)-3] != addrType || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != addrType {
+				diags.Addf("%s: memory.fill expects %s destination, i32 value, and %s length operands", insCtx, addrType, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 3)
