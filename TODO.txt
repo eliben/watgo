@@ -1,3 +1,4 @@
 * wasm-wat-samples tests: keep copying over and updating support
+ - left: gc stuff, and simd stuff
 * Will need a way of keeping tests up-to-date 
 

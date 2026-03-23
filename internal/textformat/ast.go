@@ -261,10 +261,28 @@ type TypeDecl struct {
 	// Id is the optional type identifier (for example "$sig").
 	Id string
 
-	// TyUse carries the declared function signature for this type.
+	// TyUse carries the declared function signature for function types.
 	TyUse *TypeUse
 
+	// StructFields carries the declared fields for "(type ... (struct ...))".
+	StructFields []*FieldDecl
+
+	// ArrayField carries the declared element field for "(type ... (array ...))".
+	ArrayField *FieldDecl
+
 	// loc is the source location of the type declaration form head.
+	loc location
+}
+
+// FieldDecl is one GC struct/array field declaration.
+type FieldDecl struct {
+	// Ty is the stored field type.
+	Ty Type
+
+	// Mutable reports whether the field is declared as "(mut ...)".
+	Mutable bool
+
+	// loc is the source location of the enclosing field form or type token.
 	loc location
 }
 

@@ -150,6 +150,11 @@ const (
 	InstrElemDrop
 	InstrTableGrow
 	InstrTableSize
+	InstrStructNew
+	InstrStructGet
+	InstrArrayNewDefault
+	InstrArrayGet
+	InstrArraySet
 	InstrI32Load
 	InstrI32Store
 	InstrI64Load
@@ -338,12 +343,36 @@ type FuncType struct {
 	// Name is the optional source-level type identifier (for example "$t").
 	Name string
 
-	// Params is the ordered parameter type list.
+	// Kind classifies this type table entry.
+	Kind TypeDefKind
+
+	// Params is the ordered parameter type list for function types.
 	Params []ValueType
 
-	// Results is the ordered result type list.
+	// Results is the ordered result type list for function types.
 	// For MVP this is typically length 0 or 1, but multi-value is representable.
 	Results []ValueType
+
+	// Fields carries the struct fields for GC struct types.
+	Fields []FieldType
+
+	// ElemField carries the array element field for GC array types.
+	ElemField FieldType
+}
+
+// TypeDefKind classifies the kind of entry stored in Module.Types.
+type TypeDefKind uint8
+
+const (
+	TypeDefKindFunc TypeDefKind = iota
+	TypeDefKindStruct
+	TypeDefKindArray
+)
+
+// FieldType is one GC struct or array field type.
+type FieldType struct {
+	Type    ValueType
+	Mutable bool
 }
 
 // Function is a function definition with locals and body instructions.
@@ -577,6 +606,13 @@ type Instruction struct {
 
 	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
 	CallTypeIndex uint32
+
+	// TypeIndex is the referenced GC or function type index immediate used by
+	// aggregate instructions such as struct.new, struct.get, and array.get.
+	TypeIndex uint32
+
+	// FieldIndex is the field index immediate used by struct.get and struct.set.
+	FieldIndex uint32
 
 	// TableIndex is the table index immediate used by InstrCallIndirect.
 	TableIndex uint32

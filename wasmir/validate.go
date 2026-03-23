@@ -114,6 +114,25 @@ func elementRefType(m *Module, elemIndex uint32) (ValueType, bool) {
 	return ValueType{}, false
 }
 
+func typeDefAtIndex(m *Module, typeIndex uint32) (FuncType, bool) {
+	if m == nil || int(typeIndex) >= len(m.Types) {
+		return FuncType{}, false
+	}
+	return m.Types[typeIndex], true
+}
+
+func isDefaultableValueType(vt ValueType) bool {
+	if vt.IsRef() {
+		return vt.Nullable
+	}
+	switch vt.Kind {
+	case ValueKindI32, ValueKindI64, ValueKindF32, ValueKindF64:
+		return true
+	default:
+		return false
+	}
+}
+
 func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
@@ -146,6 +165,10 @@ func ValidateModule(m *Module) error {
 		fnCtx := functionContext(m, funcImportCount+uint32(i), funcImportCount)
 		if int(f.TypeIdx) >= len(m.Types) {
 			diags.Addf("%s has invalid type index %d", fnCtx, f.TypeIdx)
+			continue
+		}
+		if m.Types[f.TypeIdx].Kind != TypeDefKindFunc {
+			diags.Addf("%s has non-function type index %d", fnCtx, f.TypeIdx)
 			continue
 		}
 		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx)
@@ -920,6 +943,10 @@ instrLoop:
 				continue
 			}
 			calleeType := m.Types[ins.CallTypeIndex]
+			if calleeType.Kind != TypeDefKindFunc {
+				diags.Addf("%s: call_indirect type index %d is not a function type", insCtx, ins.CallTypeIndex)
+				continue
+			}
 			need := len(calleeType.Params) + 1 // +1 for table element index
 			if len(stack) < need {
 				diags.Addf("%s: call_indirect needs %d operands", insCtx, need)
@@ -951,6 +978,10 @@ instrLoop:
 				continue
 			}
 			calleeType := m.Types[ins.CallTypeIndex]
+			if calleeType.Kind != TypeDefKindFunc {
+				diags.Addf("%s: call_ref type index %d is not a function type", insCtx, ins.CallTypeIndex)
+				continue
+			}
 			need := len(calleeType.Params) + 1
 			if len(stack) < need {
 				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
@@ -976,6 +1007,136 @@ instrLoop:
 			}
 			truncateStack(base)
 			appendStackValues(valuesOf(calleeType.Results))
+		case InstrStructNew:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.new type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.new type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if len(stack) < len(td.Fields) {
+				diags.Addf("%s: struct.new needs %d operands", insCtx, len(td.Fields))
+				continue
+			}
+			base := len(stack) - len(td.Fields)
+			operandsOK := true
+			for j, field := range td.Fields {
+				want := validatedValueFromType(field.Type)
+				if !matchesExpectedValue(stackValue(base+j), want) {
+					diags.Addf("%s: struct.new field %d expects %s", insCtx, j, validatedValueName(want))
+					operandsOK = false
+					break
+				}
+			}
+			if !operandsOK {
+				continue
+			}
+			truncateStack(base)
+			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrStructGet:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.get type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.get type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if int(ins.FieldIndex) >= len(td.Fields) {
+				diags.Addf("%s: struct.get field index %d out of range", insCtx, ins.FieldIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: struct.get needs 1 operand", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValue(stackValue(len(stack)-1), wantRef) {
+				diags.Addf("%s: struct.get expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(td.Fields[ins.FieldIndex].Type))
+		case InstrArrayNewDefault:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.new_default type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.new_default type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if !isDefaultableValueType(td.ElemField.Type) {
+				diags.Addf("%s: array.new_default requires defaultable element type", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: array.new_default needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.new_default expects i32 length operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrArrayGet:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.get type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.get type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: array.get needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.get expects i32 index operand", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValue(stackValue(len(stack)-2), wantRef) {
+				diags.Addf("%s: array.get expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackValue(validatedValueFromType(td.ElemField.Type))
+		case InstrArraySet:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.set type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.set type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: array.set needs 3 operands", insCtx)
+				continue
+			}
+			wantValue := validatedValueFromType(td.ElemField.Type)
+			if !matchesExpectedValue(stackValue(len(stack)-1), wantValue) {
+				diags.Addf("%s: array.set expects value operand of type %s", insCtx, validatedValueName(wantValue))
+				continue
+			}
+			if stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: array.set expects i32 index operand", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValue(stackValue(len(stack)-3), wantRef) {
+				diags.Addf("%s: array.set expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			truncateStack(len(stack) - 3)
 
 		case InstrI32Const:
 			appendStackType(ValueTypeI32)
@@ -1928,6 +2089,9 @@ func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) 
 		if int(typeIdx) >= len(m.Types) {
 			return FuncType{}, nil, false
 		}
+		if m.Types[typeIdx].Kind != TypeDefKindFunc {
+			return FuncType{}, nil, false
+		}
 		return m.Types[typeIdx], nil, true
 	}
 	defIdx := funcIdx - importCount
@@ -1936,6 +2100,9 @@ func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) 
 	}
 	def := &m.Funcs[defIdx]
 	if int(def.TypeIdx) >= len(m.Types) {
+		return FuncType{}, nil, false
+	}
+	if m.Types[def.TypeIdx].Kind != TypeDefKindFunc {
 		return FuncType{}, nil, false
 	}
 	return m.Types[def.TypeIdx], def, true
@@ -1948,6 +2115,9 @@ func functionTypeIndexAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uin
 		if int(typeIdx) >= len(m.Types) {
 			return 0, false
 		}
+		if m.Types[typeIdx].Kind != TypeDefKindFunc {
+			return 0, false
+		}
 		return typeIdx, true
 	}
 	defIdx := funcIdx - importCount
@@ -1956,6 +2126,9 @@ func functionTypeIndexAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uin
 	}
 	typeIdx := m.Funcs[defIdx].TypeIdx
 	if int(typeIdx) >= len(m.Types) {
+		return 0, false
+	}
+	if m.Types[typeIdx].Kind != TypeDefKindFunc {
 		return 0, false
 	}
 	return typeIdx, true
@@ -2046,6 +2219,16 @@ func instrName(kind InstrKind) string {
 		return "call_indirect"
 	case InstrCallRef:
 		return "call_ref"
+	case InstrStructNew:
+		return "struct.new"
+	case InstrStructGet:
+		return "struct.get"
+	case InstrArrayNewDefault:
+		return "array.new_default"
+	case InstrArrayGet:
+		return "array.get"
+	case InstrArraySet:
+		return "array.set"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:

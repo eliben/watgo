@@ -437,6 +437,8 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 // Expected forms:
 //   - (type (func ...))
 //   - (type $name (func ...))
+//   - (type (struct (field ...)*))
+//   - (type (array <fieldtype>))
 //
 // It returns a TypeDecl even on malformed input so parsing can continue; errors
 // are reported through parser diagnostics.
@@ -448,11 +450,22 @@ func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 		cursor++
 	}
 	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "type declaration missing function signature")
+		p.emitError(sx.loc, "type declaration missing type body")
 		td.TyUse = &TypeUse{}
 		return td
 	}
-	td.TyUse = p.parseFuncTypeUse(sx.list[cursor])
+	body := sx.list[cursor]
+	switch body.HeadKeyword() {
+	case "func":
+		td.TyUse = p.parseFuncTypeUse(body)
+	case "struct":
+		td.StructFields = p.parseStructTypeFields(body)
+	case "array":
+		td.ArrayField = p.parseArrayTypeField(body)
+	default:
+		p.emitError(body.loc, "type declaration expects (func ...), (struct ...), or (array ...)")
+		td.TyUse = &TypeUse{}
+	}
 	return td
 }
 
@@ -926,6 +939,55 @@ func (p *Parser) parseType(sx *SExpr) Type {
 	return nil
 }
 
+func (p *Parser) parseStructTypeFields(sx *SExpr) []*FieldDecl {
+	fields := make([]*FieldDecl, 0, len(sx.list)-1)
+	for i := 1; i < len(sx.list); i++ {
+		field := p.parseFieldDecl(sx.list[i])
+		if field != nil {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func (p *Parser) parseArrayTypeField(sx *SExpr) *FieldDecl {
+	if len(sx.list) != 2 {
+		p.emitError(sx.loc, "array type expects exactly one field type")
+		return nil
+	}
+	return p.parseFieldType(sx.list[1])
+}
+
+func (p *Parser) parseFieldDecl(sx *SExpr) *FieldDecl {
+	if sx.HeadKeyword() != "field" {
+		p.emitError(sx.loc, "struct type expects (field ...)")
+		return nil
+	}
+	if len(sx.list) != 2 {
+		p.emitError(sx.loc, "field declaration expects exactly one field type")
+		return nil
+	}
+	return p.parseFieldType(sx.list[1])
+}
+
+func (p *Parser) parseFieldType(sx *SExpr) *FieldDecl {
+	if sx.HeadKeyword() == "mut" {
+		if len(sx.list) != 2 {
+			p.emitError(sx.loc, "invalid mutable field type")
+			return nil
+		}
+		return &FieldDecl{
+			Ty:      p.parseType(sx.list[1]),
+			Mutable: true,
+			loc:     sx.loc,
+		}
+	}
+	return &FieldDecl{
+		Ty:  p.parseType(sx),
+		loc: sx.loc,
+	}
+}
+
 // parseElemRefs parses an inline "(elem ...)" payload inside a table
 // declaration. It accepts function references by ID/INT and folded item
 // expressions.
@@ -1148,6 +1210,50 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			}
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+	case "struct.new", "array.new_default":
+		if cursor+1 >= len(elems) {
+			p.emitError(elem.loc, "%s expects one operand", name)
+			return nil, cursor + 1
+		}
+		operand := p.parseOperand(elems[cursor+1])
+		switch operand.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 2
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "struct.get":
+		if cursor+2 >= len(elems) {
+			p.emitError(elem.loc, "%s expects two operands", name)
+			return nil, cursor + 1
+		}
+		typeOp := p.parseOperand(elems[cursor+1])
+		fieldOp := p.parseOperand(elems[cursor+2])
+		switch typeOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		if _, ok := fieldOp.(*IntOperand); !ok {
+			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{typeOp, fieldOp}, loc: elem.loc}, cursor + 3
+	case "array.get", "array.set":
+		if cursor+1 >= len(elems) {
+			p.emitError(elem.loc, "%s expects one operand", name)
+			return nil, cursor + 1
+		}
+		operand := p.parseOperand(elems[cursor+1])
+		switch operand.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 2
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
 	default:
 		if instructionHasSyntaxClass(name, instrSyntaxMemory) {
 			operands := make([]Operand, 0, 3)

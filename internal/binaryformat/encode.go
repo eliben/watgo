@@ -29,8 +29,10 @@ const (
 	sectionDataID      byte = 11
 	sectionDataCountID byte = 12
 
-	// typeCodeFunc tags a function type entry in the type section.
-	typeCodeFunc byte = 0x60
+	// Type section entry forms.
+	typeCodeFunc   byte = 0x60
+	typeCodeArray  byte = 0x5e
+	typeCodeStruct byte = 0x5f
 
 	valueTypeI32Code       byte = 0x7f
 	valueTypeI64Code       byte = 0x7e
@@ -52,6 +54,8 @@ const (
 	refTypeExternRefCode byte = 0x6f
 	refNullPrefixCode    byte = 0x63
 	refPrefixCode        byte = 0x64
+	fieldImmutableCode   byte = 0x00
+	fieldMutableCode     byte = 0x01
 
 	// Opcodes for the currently supported instruction subset.
 	opBlockCode             byte = 0x02
@@ -205,6 +209,7 @@ const (
 	opRefAsNonNullCode      byte = 0xd4
 	opBrOnNullCode          byte = 0xd5
 	opBrOnNonNullCode       byte = 0xd6
+	opPrefixFBCode          byte = 0xfb
 	opPrefixFCCode          byte = 0xfc
 	opI32ReinterpretF32Code byte = 0xbc
 	opI64ReinterpretF64Code byte = 0xbd
@@ -227,6 +232,12 @@ const (
 	subopTableGrowCode  uint32 = 0x0f
 	subopTableSizeCode  uint32 = 0x10
 	subopTableFillCode  uint32 = 0x11
+
+	subopStructNewCode       uint32 = 0x00
+	subopStructGetCode       uint32 = 0x02
+	subopArrayNewDefaultCode uint32 = 0x07
+	subopArrayGetCode        uint32 = 0x0b
+	subopArraySetCode        uint32 = 0x0e
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -364,7 +375,6 @@ func writeSection(out *bytes.Buffer, id byte, payload []byte) {
 }
 
 // encodeTypeSection emits section 1.
-// In this slice we encode a vector of function types only.
 func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	if len(types) == 0 {
 		return nil
@@ -374,22 +384,55 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	writeULEB128(&payload, uint32(len(types)))
 
 	for i, ft := range types {
-		payload.WriteByte(typeCodeFunc)
+		switch ft.Kind {
+		case wasmir.TypeDefKindFunc:
+			payload.WriteByte(typeCodeFunc)
 
-		writeULEB128(&payload, uint32(len(ft.Params)))
-		for j, p := range ft.Params {
-			if !encodeValueType(&payload, p) {
-				diags.Addf("type[%d] param[%d]: unsupported value type %s", i, j, p)
+			writeULEB128(&payload, uint32(len(ft.Params)))
+			for j, p := range ft.Params {
+				if !encodeValueType(&payload, p) {
+					diags.Addf("type[%d] param[%d]: unsupported value type %s", i, j, p)
+					payload.WriteByte(0)
+				}
+			}
+
+			writeULEB128(&payload, uint32(len(ft.Results)))
+			for j, r := range ft.Results {
+				if !encodeValueType(&payload, r) {
+					diags.Addf("type[%d] result[%d]: unsupported value type %s", i, j, r)
+					payload.WriteByte(0)
+				}
+			}
+		case wasmir.TypeDefKindStruct:
+			payload.WriteByte(typeCodeStruct)
+			writeULEB128(&payload, uint32(len(ft.Fields)))
+			for j, field := range ft.Fields {
+				if !encodeValueType(&payload, field.Type) {
+					diags.Addf("type[%d] field[%d]: unsupported value type %s", i, j, field.Type)
+					payload.WriteByte(0)
+				}
+				if field.Mutable {
+					payload.WriteByte(fieldMutableCode)
+				} else {
+					payload.WriteByte(fieldImmutableCode)
+				}
+			}
+		case wasmir.TypeDefKindArray:
+			payload.WriteByte(typeCodeArray)
+			if !encodeValueType(&payload, ft.ElemField.Type) {
+				diags.Addf("type[%d] element: unsupported value type %s", i, ft.ElemField.Type)
 				payload.WriteByte(0)
 			}
-		}
-
-		writeULEB128(&payload, uint32(len(ft.Results)))
-		for j, r := range ft.Results {
-			if !encodeValueType(&payload, r) {
-				diags.Addf("type[%d] result[%d]: unsupported value type %s", i, j, r)
-				payload.WriteByte(0)
+			if ft.ElemField.Mutable {
+				payload.WriteByte(fieldMutableCode)
+			} else {
+				payload.WriteByte(fieldImmutableCode)
 			}
+		default:
+			diags.Addf("type[%d]: unsupported type kind %d", i, ft.Kind)
+			payload.WriteByte(typeCodeFunc)
+			writeULEB128(&payload, 0)
+			writeULEB128(&payload, 0)
 		}
 	}
 
@@ -882,6 +925,27 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrCallRef:
 		out.WriteByte(opCallRefCode)
 		writeULEB128(out, instr.CallTypeIndex)
+	case wasmir.InstrStructNew:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructNewCode)
+		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrStructGet:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructGetCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.FieldIndex)
+	case wasmir.InstrArrayNewDefault:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewDefaultCode)
+		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayGet:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayGetCode)
+		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArraySet:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArraySetCode)
+		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrI32Load:
 		out.WriteByte(opI32LoadCode)
 		encodeMemArg(out, instr)

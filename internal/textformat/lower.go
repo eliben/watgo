@@ -317,18 +317,35 @@ func usesExprElementSegment(refType wasmir.ValueType) bool {
 // type indices for later function type-use resolution.
 func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 	for i, td := range astm.Types {
-		if td == nil || td.TyUse == nil {
+		if td == nil {
 			l.diags.Addf("type[%d]: nil type declaration", i)
 			continue
 		}
-		params := l.lowerTypeParams(td.TyUse.Params, i)
-		results := l.lowerTypeResults(td.TyUse.Results, i)
+
+		outType := wasmir.FuncType{Name: td.Id}
+		switch {
+		case td.TyUse != nil:
+			outType.Kind = wasmir.TypeDefKindFunc
+			outType.Params = l.lowerTypeParams(td.TyUse.Params, i)
+			outType.Results = l.lowerTypeResults(td.TyUse.Results, i)
+		case td.StructFields != nil:
+			outType.Kind = wasmir.TypeDefKindStruct
+			outType.Fields = l.lowerTypeFields(td.StructFields, i)
+		case td.ArrayField != nil:
+			field, ok := l.lowerFieldType(td.ArrayField, i, 0)
+			if ok {
+				outType.Kind = wasmir.TypeDefKindArray
+				outType.ElemField = field
+			} else {
+				outType.Kind = wasmir.TypeDefKindArray
+			}
+		default:
+			l.diags.Addf("type[%d]: missing type declaration body", i)
+			continue
+		}
+
 		typeIdx := uint32(len(l.out.Types))
-		l.out.Types = append(l.out.Types, wasmir.FuncType{
-			Name:    td.Id,
-			Params:  params,
-			Results: results,
-		})
+		l.out.Types = append(l.out.Types, outType)
 		if td.Id == "" {
 			continue
 		}
@@ -798,7 +815,8 @@ func (l *moduleLowerer) collectFunctionNames(astm *Module) {
 // returned. Otherwise a new type is appended and its new index is returned.
 func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasmir.ValueType, name string) uint32 {
 	for i, ft := range l.out.Types {
-		if equalValueTypeSlices(ft.Params, params) &&
+		if ft.Kind == wasmir.TypeDefKindFunc &&
+			equalValueTypeSlices(ft.Params, params) &&
 			equalValueTypeSlices(ft.Results, results) {
 			return uint32(i)
 		}
@@ -806,6 +824,7 @@ func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasm
 	typeIdx := uint32(len(l.out.Types))
 	l.out.Types = append(l.out.Types, wasmir.FuncType{
 		Name:    name,
+		Kind:    wasmir.TypeDefKindFunc,
 		Params:  params,
 		Results: results,
 	})
@@ -901,6 +920,10 @@ func (fl *functionLowerer) lowerTypeUse() uint32 {
 	refIdx, refType, ok := fl.resolveTypeRef(fl.fn.TyUse.Id)
 	if !ok {
 		fl.diagf(fl.fn.loc.String(), "unknown type use %q", fl.fn.TyUse.Id)
+		return fl.mod.internFuncType(fl.params, fl.results, "")
+	}
+	if refType.Kind != wasmir.TypeDefKindFunc {
+		fl.diagf(fl.fn.loc.String(), "type use %q does not reference a function type", fl.fn.TyUse.Id)
 		return fl.mod.internFuncType(fl.params, fl.results, "")
 	}
 
@@ -1701,6 +1724,41 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "struct.new", "array.new_default", "array.get", "array.set":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
+			return
+		}
+		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid %s type operand", pi.Name)
+			return
+		}
+		kind, _ := instructionKind(pi.Name)
+		fl.emitInstr(wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc})
+		return
+	case "struct.get":
+		if len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "struct.get expects 2 operands")
+			return
+		}
+		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid struct.get type operand")
+			return
+		}
+		fieldIndex, ok := lowerFieldIndexOperand(pi.Operands[1])
+		if !ok {
+			fl.diagf(pi.Operands[1].Loc(), "invalid struct.get field operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:       wasmir.InstrStructGet,
+			TypeIndex:  typeIndex,
+			FieldIndex: fieldIndex,
+			SourceLoc:  instrLoc,
+		})
+		return
 	case "memory.size", "memory.grow", "memory.fill":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "%s expects at most 1 memory operand", pi.Name)
@@ -2676,6 +2734,28 @@ func lowerMemoryIndexOperand(op Operand, memoriesByName map[string]uint32) (uint
 	}
 }
 
+// lowerTypeIndexOperand resolves op as a type index using typesByName.
+// It accepts either a type identifier or an integer type index literal.
+func lowerTypeIndexOperand(op Operand, typesByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := typesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+func lowerFieldIndexOperand(op Operand) (uint32, bool) {
+	intOp, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+	return parseU32Literal(intOp.Value)
+}
+
 // lowerRefHeapTypeOperand lowers op as a reference heaptype operand used by
 // instructions such as ref.null.
 // op must be a keyword heaptype token like "func"/"extern" or an ID heaptype
@@ -3087,6 +3167,30 @@ func (l *moduleLowerer) lowerTypeResults(results []*ResultDecl, typeIdx int) []w
 		out = append(out, vt)
 	}
 	return out
+}
+
+func (l *moduleLowerer) lowerTypeFields(fields []*FieldDecl, typeIdx int) []wasmir.FieldType {
+	out := make([]wasmir.FieldType, 0, len(fields))
+	for i, fd := range fields {
+		field, ok := l.lowerFieldType(fd, typeIdx, i)
+		if ok {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func (l *moduleLowerer) lowerFieldType(fd *FieldDecl, typeIdx int, fieldIdx int) (wasmir.FieldType, bool) {
+	if fd == nil {
+		l.diags.Addf("type[%d] field[%d]: nil field declaration", typeIdx, fieldIdx)
+		return wasmir.FieldType{}, false
+	}
+	vt, ok := lowerValueType(fd.Ty, l.typesByName)
+	if !ok {
+		l.diags.Addf("type[%d] field[%d]: unsupported field type %q", typeIdx, fieldIdx, fd.Ty)
+		return wasmir.FieldType{}, false
+	}
+	return wasmir.FieldType{Type: vt, Mutable: fd.Mutable}, true
 }
 
 // addLowerDiag appends one lowering diagnostic prefixed with function context
