@@ -1112,7 +1112,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	}
 
 	name := elem.tok.value
-	if (name == "if" || name == "block" || name == "loop") && cursor+1 < len(elems) {
+	if instructionHasSyntaxClass(name, instrSyntaxStructured) && cursor+1 < len(elems) {
 		if typeOp, ok := p.parsePlainControlTypeOperand(elems[cursor+1]); ok {
 			return &PlainInstr{Name: name, Operands: []Operand{typeOp}, loc: elem.loc}, cursor + 2
 		}
@@ -1149,7 +1149,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
 	default:
-		if _, ok := memoryInstrKinds[name]; ok {
+		if instructionHasSyntaxClass(name, instrSyntaxMemory) {
 			operands := make([]Operand, 0, 3)
 			next := cursor + 1
 			for next < len(elems) {
