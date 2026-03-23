@@ -138,7 +138,7 @@ type getAction struct {
 //   - commandAssertExhaustion: action + expectText
 //   - commandAssertUnlinkable: moduleExpr + expectText
 //   - commandAssertInvalid: moduleExpr + expectText
-//   - commandAssertMalformed: quotedWAT + expectText
+//   - commandAssertMalformed: moduleExpr/quotedWAT + expectText
 type scriptCommand struct {
 	kind commandKind
 	loc  string
@@ -550,17 +550,30 @@ func parseAssertInvalid(sx *textformat.SExpr) (scriptCommand, error) {
 	}, nil
 }
 
-// parseAssertMalformed parses "(assert_malformed (module quote ...) <failure>)".
+// parseAssertMalformed parses "(assert_malformed <module> <failure>)".
 // sx is the full assertion expression.
-// It returns a command containing reconstructed quoted WAT source and expected text.
+// It accepts the spec's quoted text and binary module forms, and returns a
+// command containing either reconstructed quoted WAT source or the raw module
+// expression for later binary decoding.
 func parseAssertMalformed(sx *textformat.SExpr) (scriptCommand, error) {
 	elems := sx.Children()
 	if len(elems) != 3 {
 		return scriptCommand{}, fmt.Errorf("assert_malformed requires module and text")
 	}
-	quotedWAT, err := parseQuotedModuleWAT(elems[1])
-	if err != nil {
-		return scriptCommand{}, fmt.Errorf("invalid assert_malformed module argument: %w", err)
+	if head, ok := headKeyword(elems[1]); !ok || head != "module" {
+		return scriptCommand{}, fmt.Errorf("assert_malformed expects (module ...) argument")
+	}
+	var quotedWAT string
+	if isModuleBinaryExpr(elems[1]) {
+		if _, err := parseBinaryModuleBytes(elems[1]); err != nil {
+			return scriptCommand{}, fmt.Errorf("invalid assert_malformed module argument: %w", err)
+		}
+	} else {
+		var err error
+		quotedWAT, err = parseQuotedModuleWAT(elems[1])
+		if err != nil {
+			return scriptCommand{}, fmt.Errorf("invalid assert_malformed module argument: %w", err)
+		}
 	}
 	text, err := parseStringToken(elems[2])
 	if err != nil {
@@ -569,6 +582,7 @@ func parseAssertMalformed(sx *textformat.SExpr) (scriptCommand, error) {
 	return scriptCommand{
 		kind:       commandAssertMalformed,
 		loc:        sx.Loc(),
+		moduleExpr: elems[1],
 		quotedWAT:  quotedWAT,
 		expectText: text,
 	}, nil
@@ -1819,21 +1833,46 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 	res.status = true
 }
 
-// runAssertMalformed handles "(assert_malformed (module quote ...) \"...\")".
-// It expects quoted module compilation/parsing to fail.
+// runAssertMalformed handles "(assert_malformed <module> \"...\")".
+// It expects malformed quoted text or malformed binary decoding to fail.
 func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand, opts runOptions) {
-	_, err := watgo.CompileWAT([]byte(cmd.quotedWAT))
+	var err error
+	if isModuleBinaryExpr(cmd.moduleExpr) {
+		var wasmBytes []byte
+		wasmBytes, err = parseBinaryModuleBytes(cmd.moduleExpr)
+		if err == nil {
+			_, err = binaryformat.DecodeModule(wasmBytes)
+		}
+	} else {
+		_, err = watgo.CompileWAT([]byte(cmd.quotedWAT))
+	}
 	if err == nil {
 		res.status = false
 		res.detail = "expected malformed module error, got success"
 		return
 	}
-	if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
+	if opts.strictErrorText && cmd.expectText != "" && !malformedErrorMatches(err.Error(), cmd.expectText) {
 		res.status = false
 		res.detail = fmt.Sprintf("malformed error text mismatch: got %q want substring %q", err.Error(), cmd.expectText)
 		return
 	}
 	res.status = true
+}
+
+func malformedErrorMatches(actual, expected string) bool {
+	if strings.Contains(actual, expected) {
+		return true
+	}
+	switch expected {
+	case "integer too large":
+		// Go's varint decoder reports the same malformed LEB condition as an
+		// overflow, while the spec text phrases it as "integer too large".
+		return strings.Contains(actual, "overflows a 64-bit integer") ||
+			strings.Contains(actual, "u32 overflow") ||
+			strings.Contains(actual, "overflow")
+	default:
+		return false
+	}
 }
 
 // invoke calls an exported function on the current module or a named module.
