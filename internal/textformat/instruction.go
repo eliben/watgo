@@ -236,7 +236,9 @@ func init() {
 	})
 	registerInstructions(instrSyntaxSpecial, map[string]wasmir.InstrKind{
 		"array.get":         wasmir.InstrArrayGet,
+		"array.len":         wasmir.InstrArrayLen,
 		"array.new_default": wasmir.InstrArrayNewDefault,
+		"array.new_fixed":   wasmir.InstrArrayNewFixed,
 		"array.set":         wasmir.InstrArraySet,
 		"br_table":          wasmir.InstrBrTable,
 		"call_indirect":     wasmir.InstrCallIndirect,
@@ -251,6 +253,8 @@ func init() {
 		"table.init":        wasmir.InstrTableInit,
 		"table.set":         wasmir.InstrTableSet,
 		"table.size":        wasmir.InstrTableSize,
+		"ref.cast":          wasmir.InstrRefCast,
+		"ref.test":          wasmir.InstrRefTest,
 		"struct.get":        wasmir.InstrStructGet,
 		"struct.new":        wasmir.InstrStructNew,
 	})
@@ -381,8 +385,10 @@ func init() {
 		"nop":                 wasmir.InstrNop,
 		"ref.as_non_null":     wasmir.InstrRefAsNonNull,
 		"ref.func":            wasmir.InstrRefFunc,
+		"ref.i31":             wasmir.InstrRefI31,
 		"ref.is_null":         wasmir.InstrRefIsNull,
 		"ref.null":            wasmir.InstrRefNull,
+		"i31.get_u":           wasmir.InstrI31GetU,
 		"return":              wasmir.InstrReturn,
 		"select":              wasmir.InstrSelect,
 		"unreachable":         wasmir.InstrUnreachable,

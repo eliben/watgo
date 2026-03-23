@@ -1818,6 +1818,14 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeF32, true
 	case valueTypeF64Code:
 		return wasmir.ValueTypeF64, true
+	case refTypeArrayCode:
+		return wasmir.RefTypeArray(true), true
+	case refTypeStructCode:
+		return wasmir.RefTypeStruct(true), true
+	case refTypeI31Code:
+		return wasmir.RefTypeI31(true), true
+	case refTypeEqCode:
+		return wasmir.RefTypeEq(true), true
 	case refTypeFuncRefCode:
 		return wasmir.RefTypeFunc(true), true
 	case valueTypeExternRefCode:
@@ -1898,6 +1906,14 @@ func isValueTypeLeadByte(b byte) bool {
 func decodeHeapTypeImmediate(typeIndex int64, nullable bool) (wasmir.ValueType, error) {
 	if typeIndex < 0 {
 		switch typeIndex {
+		case -22:
+			return wasmir.RefTypeArray(nullable), nil
+		case -21:
+			return wasmir.RefTypeStruct(nullable), nil
+		case -20:
+			return wasmir.RefTypeI31(nullable), nil
+		case -19:
+			return wasmir.RefTypeEq(nullable), nil
 		case -16:
 			return wasmir.RefTypeFunc(nullable), nil
 		case -17:

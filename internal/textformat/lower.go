@@ -994,10 +994,6 @@ func (fl *functionLowerer) lowerLocals() {
 			fl.diagf("", "nil local declaration")
 			continue
 		}
-		if vt, ok := lowerRefTypeInfo(ld.Ty, fl.mod.typesByName); ok && vt.IsRef() && !vt.Nullable {
-			fl.diagf(ld.loc.String(), "uninitialized local")
-			continue
-		}
 		vt, ok := lowerValueType(ld.Ty, fl.mod.typesByName)
 		if !ok {
 			fl.diagf(ld.loc.String(), "unsupported local type %q", ld.Ty)
@@ -1055,6 +1051,10 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 	}
 	if fi.Name == "call_indirect" {
 		fl.lowerFoldedCallIndirect(fi)
+		return
+	}
+	if fi.Name == "ref.test" || fi.Name == "ref.cast" {
+		fl.lowerFoldedRefTypeTestCast(fi)
 		return
 	}
 
@@ -1136,6 +1136,42 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 		TableIndex:    tableIndex,
 		SourceLoc:     fi.loc.String(),
 	})
+}
+
+// lowerFoldedRefTypeTestCast lowers folded forms like:
+//
+//	(ref.test (ref i31) (local.get $x))
+//	(ref.cast (ref i31) (local.get $x))
+//
+// The first nested "(ref ...)" argument is a type immediate, while the other
+// nested expressions are normal operands evaluated before the instruction.
+func (fl *functionLowerer) lowerFoldedRefTypeTestCast(fi *FoldedInstr) {
+	var refType wasmir.ValueType
+	haveRefType := false
+	for _, arg := range fi.Args {
+		if arg.Operand != nil {
+			fl.diagf(arg.Operand.Loc(), "%s expects folded reference type and value expression", fi.Name)
+			continue
+		}
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if ok && nested.Name == "ref" && !haveRefType {
+			vt, ok := lowerFoldedRefTypeInstr(nested, fl.mod.typesByName)
+			if !ok {
+				fl.diagf(nested.Loc(), "invalid %s reference type", fi.Name)
+				continue
+			}
+			refType = vt
+			haveRefType = true
+			continue
+		}
+		fl.lowerInstruction(arg.Instr)
+	}
+	if !haveRefType {
+		fl.diagf(fi.Loc(), "%s requires reference type immediate", fi.Name)
+		return
+	}
+	kind, _ := instructionKind(fi.Name)
+	fl.emitInstr(wasmir.Instruction{Kind: kind, RefType: refType, SourceLoc: fi.loc.String()})
 }
 
 // lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
@@ -1667,6 +1703,8 @@ var loweringSpecs = map[string]loweringSpec{
 	"ref.is_null":         {operandCount: 0},
 	"ref.as_non_null":     {operandCount: 0},
 	"ref.func":            {operandCount: 1, decode: decodeRefFuncOperands},
+	"ref.i31":             {operandCount: 0},
+	"i31.get_u":           {operandCount: 0},
 	"memory.init":         {operandCount: 1, decode: decodeDataIndexOperands},
 	"data.drop":           {operandCount: 1, decode: decodeDataIndexOperands},
 	"elem.drop":           {operandCount: 1, decode: decodeElemIndexOperands},
@@ -1724,6 +1762,35 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "array.new_fixed":
+		if len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "array.new_fixed expects 2 operands")
+			return
+		}
+		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid array.new_fixed type operand")
+			return
+		}
+		fixedCount, ok := lowerFieldIndexOperand(pi.Operands[1])
+		if !ok {
+			fl.diagf(pi.Operands[1].Loc(), "invalid array.new_fixed length operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:       wasmir.InstrArrayNewFixed,
+			TypeIndex:  typeIndex,
+			FixedCount: fixedCount,
+			SourceLoc:  instrLoc,
+		})
+		return
+	case "array.len":
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "array.len expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrArrayLen, SourceLoc: instrLoc})
+		return
 	case "struct.new", "array.new_default", "array.get", "array.set":
 		if len(pi.Operands) != 1 {
 			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
@@ -2770,6 +2837,14 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 			return wasmir.RefTypeFunc(true), true
 		case "extern":
 			return wasmir.RefTypeExtern(true), true
+		case "eq":
+			return wasmir.RefTypeEq(true), true
+		case "i31":
+			return wasmir.RefTypeI31(true), true
+		case "array":
+			return wasmir.RefTypeArray(true), true
+		case "struct":
+			return wasmir.RefTypeStruct(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}
@@ -3117,6 +3192,14 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 		return wasmir.RefTypeFunc(nullable), true
 	case "extern":
 		return wasmir.RefTypeExtern(nullable), true
+	case "eq":
+		return wasmir.RefTypeEq(nullable), true
+	case "i31":
+		return wasmir.RefTypeI31(nullable), true
+	case "array":
+		return wasmir.RefTypeArray(nullable), true
+	case "struct":
+		return wasmir.RefTypeStruct(nullable), true
 	default:
 		if strings.HasPrefix(name, "$") {
 			typeIndex, ok := typesByName[name]

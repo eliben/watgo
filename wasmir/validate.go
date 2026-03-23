@@ -133,6 +133,47 @@ func isDefaultableValueType(vt ValueType) bool {
 	}
 }
 
+func typeIndexHasKind(m *Module, typeIndex uint32, kind TypeDefKind) bool {
+	if m == nil || int(typeIndex) >= len(m.Types) {
+		return false
+	}
+	return m.Types[typeIndex].Kind == kind
+}
+
+func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
+	if got == want {
+		return true
+	}
+	if !got.IsRef() || !want.IsRef() {
+		return false
+	}
+	if got.Nullable && !want.Nullable {
+		return false
+	}
+	switch want.HeapType.Kind {
+	case HeapKindEq:
+		switch got.HeapType.Kind {
+		case HeapKindEq, HeapKindI31:
+			return true
+		case HeapKindTypeIndex:
+			return typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct) ||
+				typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindArray)
+		default:
+			return false
+		}
+	case HeapKindI31:
+		return got.HeapType.Kind == HeapKindI31
+	case HeapKindArray:
+		return got.HeapType.Kind == HeapKindArray ||
+			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindArray))
+	case HeapKindStruct:
+		return got.HeapType.Kind == HeapKindStruct ||
+			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct))
+	default:
+		return matchesExpectedValue(validatedValueFromType(got), validatedValueFromType(want))
+	}
+}
+
 func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
@@ -359,6 +400,13 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 	locals := make([]ValueType, 0, len(ft.Params)+len(f.Locals))
 	locals = append(locals, ft.Params...)
 	locals = append(locals, f.Locals...)
+	localInitialized := make([]bool, len(locals))
+	for i := range ft.Params {
+		localInitialized[i] = true
+	}
+	for i, vt := range f.Locals {
+		localInitialized[len(ft.Params)+i] = isDefaultableValueType(vt)
+	}
 
 	funcResultValues := valuesOf(ft.Results)
 
@@ -685,6 +733,10 @@ instrLoop:
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
+			if !localInitialized[ins.LocalIndex] {
+				diags.Addf("%s: uninitialized local", insCtx)
+				continue
+			}
 			appendStackValue(valueAt(locals, int(ins.LocalIndex)))
 		case InstrLocalSet:
 			if int(ins.LocalIndex) >= len(locals) {
@@ -700,6 +752,7 @@ instrLoop:
 				diags.Addf("%s: local.set expects %s operand", insCtx, validatedValueName(want))
 				continue
 			}
+			localInitialized[ins.LocalIndex] = true
 			truncateStack(len(stack) - 1)
 		case InstrLocalTee:
 			if int(ins.LocalIndex) >= len(locals) {
@@ -715,6 +768,7 @@ instrLoop:
 				diags.Addf("%s: local.tee expects %s operand", insCtx, validatedValueName(want))
 				continue
 			}
+			localInitialized[ins.LocalIndex] = true
 			// local.tee writes local and preserves operand on stack.
 		case InstrGlobalGet:
 			if int(ins.GlobalIndex) >= len(m.Globals) {
@@ -1060,6 +1114,16 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(td.Fields[ins.FieldIndex].Type))
+		case InstrArrayLen:
+			if len(stack) < 1 {
+				diags.Addf("%s: array.len needs 1 operand", insCtx)
+				continue
+			}
+			if !matchesGCExpectedValue(m, stackValue(len(stack)-1).Type, RefTypeArray(true)) {
+				diags.Addf("%s: array.len expects array reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrArrayNewDefault:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -1083,6 +1147,34 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrArrayNewFixed:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.new_fixed type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.new_fixed type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if len(stack) < int(ins.FixedCount) {
+				diags.Addf("%s: array.new_fixed needs %d operands", insCtx, ins.FixedCount)
+				continue
+			}
+			base := len(stack) - int(ins.FixedCount)
+			operandsOK := true
+			for j := 0; j < int(ins.FixedCount); j++ {
+				if !matchesGCExpectedValue(m, stackValue(base+j).Type, td.ElemField.Type) {
+					diags.Addf("%s: array.new_fixed element %d expects %s", insCtx, j, td.ElemField.Type)
+					operandsOK = false
+					break
+				}
+			}
+			if !operandsOK {
+				continue
+			}
+			truncateStack(base)
+			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
 		case InstrArrayGet:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -1137,6 +1229,46 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 3)
+		case InstrRefTest:
+			if len(stack) < 1 {
+				diags.Addf("%s: ref.test needs 1 operand", insCtx)
+				continue
+			}
+			if !stackValue(len(stack) - 1).Type.IsRef() {
+				diags.Addf("%s: ref.test expects reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrRefCast:
+			if len(stack) < 1 {
+				diags.Addf("%s: ref.cast needs 1 operand", insCtx)
+				continue
+			}
+			if !stackValue(len(stack) - 1).Type.IsRef() {
+				diags.Addf("%s: ref.cast expects reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
+		case InstrRefI31:
+			if len(stack) < 1 {
+				diags.Addf("%s: ref.i31 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: ref.i31 expects i32 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(RefTypeI31(false)))
+		case InstrI31GetU:
+			if len(stack) < 1 {
+				diags.Addf("%s: i31.get_u needs 1 operand", insCtx)
+				continue
+			}
+			if !matchesGCExpectedValue(m, stackValue(len(stack)-1).Type, RefTypeI31(true)) {
+				diags.Addf("%s: i31.get_u expects i31 reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 
 		case InstrI32Const:
 			appendStackType(ValueTypeI32)
@@ -2223,12 +2355,24 @@ func instrName(kind InstrKind) string {
 		return "struct.new"
 	case InstrStructGet:
 		return "struct.get"
+	case InstrArrayLen:
+		return "array.len"
 	case InstrArrayNewDefault:
 		return "array.new_default"
+	case InstrArrayNewFixed:
+		return "array.new_fixed"
 	case InstrArrayGet:
 		return "array.get"
 	case InstrArraySet:
 		return "array.set"
+	case InstrRefTest:
+		return "ref.test"
+	case InstrRefCast:
+		return "ref.cast"
+	case InstrRefI31:
+		return "ref.i31"
+	case InstrI31GetU:
+		return "i31.get_u"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:

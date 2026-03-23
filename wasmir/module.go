@@ -21,6 +21,10 @@ const (
 	HeapKindInvalid HeapKind = iota
 	HeapKindFunc
 	HeapKindExtern
+	HeapKindEq
+	HeapKindI31
+	HeapKindArray
+	HeapKindStruct
 	HeapKindTypeIndex
 )
 
@@ -57,6 +61,22 @@ func RefTypeFunc(nullable bool) ValueType {
 // nullability.
 func RefTypeExtern(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExtern}}
+}
+
+func RefTypeEq(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindEq}}
+}
+
+func RefTypeI31(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindI31}}
+}
+
+func RefTypeArray(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindArray}}
+}
+
+func RefTypeStruct(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindStruct}}
 }
 
 // RefTypeIndexed returns a typed function reference to the given type index
@@ -99,6 +119,26 @@ func (vt ValueType) String() string {
 				return "externref"
 			}
 			return "(ref extern)"
+		case HeapKindEq:
+			if vt.Nullable {
+				return "eqref"
+			}
+			return "(ref eq)"
+		case HeapKindI31:
+			if vt.Nullable {
+				return "i31ref"
+			}
+			return "(ref i31)"
+		case HeapKindArray:
+			if vt.Nullable {
+				return "(ref null array)"
+			}
+			return "(ref array)"
+		case HeapKindStruct:
+			if vt.Nullable {
+				return "(ref null struct)"
+			}
+			return "(ref struct)"
 		case HeapKindTypeIndex:
 			if vt.Nullable {
 				return fmt.Sprintf("(ref null type[%d])", vt.HeapType.TypeIndex)
@@ -152,9 +192,15 @@ const (
 	InstrTableSize
 	InstrStructNew
 	InstrStructGet
+	InstrArrayLen
 	InstrArrayNewDefault
+	InstrArrayNewFixed
 	InstrArrayGet
 	InstrArraySet
+	InstrRefTest
+	InstrRefCast
+	InstrRefI31
+	InstrI31GetU
 	InstrI32Load
 	InstrI32Store
 	InstrI64Load
@@ -613,6 +659,9 @@ type Instruction struct {
 
 	// FieldIndex is the field index immediate used by struct.get and struct.set.
 	FieldIndex uint32
+
+	// FixedCount is the fixed element count immediate used by array.new_fixed.
+	FixedCount uint32
 
 	// TableIndex is the table index immediate used by InstrCallIndirect.
 	TableIndex uint32
