@@ -221,8 +221,12 @@ const (
 	subopDataDropCode   uint32 = 0x09
 	subopMemoryCopyCode uint32 = 0x0a
 	subopMemoryFillCode uint32 = 0x0b
+	subopTableInitCode  uint32 = 0x0c
+	subopElemDropCode   uint32 = 0x0d
+	subopTableCopyCode  uint32 = 0x0e
 	subopTableGrowCode  uint32 = 0x0f
 	subopTableSizeCode  uint32 = 0x10
+	subopTableFillCode  uint32 = 0x11
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -842,6 +846,24 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrTableSet:
 		out.WriteByte(opTableSetCode)
 		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrTableCopy:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopTableCopyCode)
+		writeULEB128(out, instr.TableIndex)
+		writeULEB128(out, instr.SourceTableIndex)
+	case wasmir.InstrTableFill:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopTableFillCode)
+		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrTableInit:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopTableInitCode)
+		writeULEB128(out, instr.ElemIndex)
+		writeULEB128(out, instr.TableIndex)
+	case wasmir.InstrElemDrop:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopElemDropCode)
+		writeULEB128(out, instr.ElemIndex)
 	case wasmir.InstrTableGrow:
 		out.WriteByte(opPrefixFCCode)
 		writeULEB128(out, subopTableGrowCode)

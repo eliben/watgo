@@ -1755,7 +1755,8 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "out of bounds table access" {
 		return strings.Contains(gotLower, "invalid table access") ||
 			strings.Contains(gotLower, "unreachable") ||
-			strings.Contains(gotLower, "table index is out of bounds")
+			strings.Contains(gotLower, "table index is out of bounds") ||
+			strings.Contains(gotLower, "element segment out of bounds")
 	}
 	if wantLower == "undefined element" {
 		return strings.Contains(gotLower, "invalid table access") ||

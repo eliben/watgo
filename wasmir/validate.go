@@ -100,6 +100,20 @@ func tableAddressType(m *Module, tableIndex uint32) ValueType {
 	return ValueTypeI32
 }
 
+func elementRefType(m *Module, elemIndex uint32) (ValueType, bool) {
+	if m == nil || int(elemIndex) >= len(m.Elements) {
+		return ValueType{}, false
+	}
+	elem := m.Elements[elemIndex]
+	if elem.RefType.Kind != ValueKindInvalid {
+		return elem.RefType, true
+	}
+	if len(elem.FuncIndices) > 0 {
+		return RefTypeFunc(true), true
+	}
+	return ValueType{}, false
+}
+
 func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
@@ -740,6 +754,105 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 2)
+		case InstrTableCopy:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: unknown table %d", insCtx, ins.TableIndex)
+				continue
+			}
+			if int(ins.SourceTableIndex) >= len(m.Tables) {
+				diags.Addf("%s: unknown table %d", insCtx, ins.SourceTableIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: table.copy needs 3 operands", insCtx)
+				continue
+			}
+			dstTable := m.Tables[ins.TableIndex]
+			srcTable := m.Tables[ins.SourceTableIndex]
+			if !matchesExpectedValue(validatedValueFromType(srcTable.RefType), validatedValueFromType(dstTable.RefType)) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			dstAddrType := tableAddressType(m, ins.TableIndex)
+			srcAddrType := tableAddressType(m, ins.SourceTableIndex)
+			if stack[len(stack)-3] != dstAddrType {
+				diags.Addf("%s: table.copy expects %s destination index operand", insCtx, dstAddrType)
+				continue
+			}
+			if stack[len(stack)-2] != srcAddrType {
+				diags.Addf("%s: table.copy expects %s source index operand", insCtx, srcAddrType)
+				continue
+			}
+			lenType := ValueTypeI32
+			if dstAddrType == ValueTypeI64 && srcAddrType == ValueTypeI64 {
+				lenType = ValueTypeI64
+			}
+			if stack[len(stack)-1] != lenType {
+				diags.Addf("%s: table.copy expects %s length operand", insCtx, lenType)
+				continue
+			}
+			truncateStack(len(stack) - 3)
+		case InstrTableFill:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: unknown table %d", insCtx, ins.TableIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: table.fill needs 3 operands", insCtx)
+				continue
+			}
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-3] != addrType {
+				diags.Addf("%s: table.fill expects %s index operand", insCtx, addrType)
+				continue
+			}
+			want := validatedValueFromType(m.Tables[ins.TableIndex].RefType)
+			if !matchesExpectedValue(stackValue(len(stack)-2), want) {
+				diags.Addf("%s: table.fill expects %s value operand", insCtx, validatedValueName(want))
+				continue
+			}
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: table.fill expects %s length operand", insCtx, addrType)
+				continue
+			}
+			truncateStack(len(stack) - 3)
+		case InstrTableInit:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: unknown table %d", insCtx, ins.TableIndex)
+				continue
+			}
+			if int(ins.ElemIndex) >= len(m.Elements) {
+				diags.Addf("%s: unknown elem segment %d", insCtx, ins.ElemIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: table.init needs 3 operands", insCtx)
+				continue
+			}
+			elemType, ok := elementRefType(m, ins.ElemIndex)
+			if !ok || !matchesExpectedValue(validatedValueFromType(elemType), validatedValueFromType(m.Tables[ins.TableIndex].RefType)) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-3] != addrType {
+				diags.Addf("%s: table.init expects %s destination index operand", insCtx, addrType)
+				continue
+			}
+			if stack[len(stack)-2] != ValueTypeI32 {
+				diags.Addf("%s: table.init expects i32 source index operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: table.init expects i32 length operand", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 3)
+		case InstrElemDrop:
+			if int(ins.ElemIndex) >= len(m.Elements) {
+				diags.Addf("%s: unknown elem segment %d", insCtx, ins.ElemIndex)
+				continue
+			}
 		case InstrTableGrow:
 			if int(ins.TableIndex) >= len(m.Tables) {
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
@@ -1975,6 +2088,14 @@ func instrName(kind InstrKind) string {
 		return "table.get"
 	case InstrTableSet:
 		return "table.set"
+	case InstrTableCopy:
+		return "table.copy"
+	case InstrTableFill:
+		return "table.fill"
+	case InstrTableInit:
+		return "table.init"
+	case InstrElemDrop:
+		return "elem.drop"
 	case InstrTableGrow:
 		return "table.grow"
 	case InstrTableSize:

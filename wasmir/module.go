@@ -144,6 +144,10 @@ const (
 	InstrGlobalSet
 	InstrTableGet
 	InstrTableSet
+	InstrTableCopy
+	InstrTableFill
+	InstrTableInit
+	InstrElemDrop
 	InstrTableGrow
 	InstrTableSize
 	InstrI32Load
@@ -577,6 +581,9 @@ type Instruction struct {
 	// TableIndex is the table index immediate used by InstrCallIndirect.
 	TableIndex uint32
 
+	// SourceTableIndex is the source table index immediate used by table.copy.
+	SourceTableIndex uint32
+
 	// BranchDepth is the label depth immediate used by InstrBr and InstrBrIf.
 	BranchDepth uint32
 
@@ -605,6 +612,10 @@ type Instruction struct {
 	// DataIndex is the data segment index immediate used by memory.init and
 	// data.drop.
 	DataIndex uint32
+
+	// ElemIndex is the element segment index immediate used by table.init and
+	// elem.drop.
+	ElemIndex uint32
 
 	// BlockType is the if block result type for InstrIf when BlockHasResult is
 	// true.

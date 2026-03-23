@@ -56,6 +56,10 @@ type moduleLowerer struct {
 	// elemRefTypeByName records named element-segment payload types for
 	// instructions (for example table.init) that reference element ids.
 	elemRefTypeByName map[string]wasmir.ValueType
+
+	// elemIndicesByName maps element segment identifiers to their module
+	// element indices for instructions such as table.init and elem.drop.
+	elemIndicesByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -142,6 +146,7 @@ func newModuleLowerer() *moduleLowerer {
 		memoriesByName:    map[string]uint32{},
 		tableNonNullable:  map[uint32]bool{},
 		elemRefTypeByName: map[string]wasmir.ValueType{},
+		elemIndicesByName: map[string]uint32{},
 	}
 }
 
@@ -173,6 +178,7 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 			continue
 		}
 		if ed.Id != "" {
+			l.elemIndicesByName[ed.Id] = uint32(len(l.out.Elements))
 			if refTy, ok := l.inferElemPayloadRefType(ed); ok {
 				l.elemRefTypeByName[ed.Id] = refTy
 			}
@@ -244,6 +250,14 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 				seg.Exprs = append(seg.Exprs, ce.Instr)
 			}
 		} else {
+			if ed.RefTy != nil {
+				refTy, ok := lowerValueType(ed.RefTy, l.typesByName)
+				if !ok {
+					l.diags.Addf("elem[%d]: unsupported reference type %q", i, ed.RefTy)
+					continue
+				}
+				seg.RefType = refTy
+			}
 			tableRefType := wasmir.RefTypeFunc(true)
 			if seg.Mode == wasmir.ElemSegmentModeActive && int(seg.TableIndex) < len(l.out.Tables) {
 				tableRefType = l.out.Tables[seg.TableIndex].RefType
@@ -1659,6 +1673,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"ref.func":            {kind: wasmir.InstrRefFunc, operandCount: 1, decode: decodeRefFuncOperands},
 	"memory.init":         {kind: wasmir.InstrMemoryInit, operandCount: 1, decode: decodeDataIndexOperands},
 	"data.drop":           {kind: wasmir.InstrDataDrop, operandCount: 1, decode: decodeDataIndexOperands},
+	"elem.drop":           {kind: wasmir.InstrElemDrop, operandCount: 1, decode: decodeElemIndexOperands},
 }
 
 // lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
@@ -1779,6 +1794,50 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: kind, TableIndex: tableIndex, SourceLoc: instrLoc})
 		return
+	case "table.copy":
+		if len(pi.Operands) != 0 && len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "table.copy expects 0 or 2 table operands")
+			return
+		}
+		dstTableIndex := uint32(0)
+		srcTableIndex := uint32(0)
+		if len(pi.Operands) == 2 {
+			dst, ok := lowerTableIndexOperand(pi.Operands[0], fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid table.copy destination table operand")
+				return
+			}
+			src, ok := lowerTableIndexOperand(pi.Operands[1], fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(pi.Operands[1].Loc(), "invalid table.copy source table operand")
+				return
+			}
+			dstTableIndex = dst
+			srcTableIndex = src
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:             wasmir.InstrTableCopy,
+			TableIndex:       dstTableIndex,
+			SourceTableIndex: srcTableIndex,
+			SourceLoc:        instrLoc,
+		})
+		return
+	case "table.fill":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "table.fill expects at most 1 table operand")
+			return
+		}
+		tableIndex := uint32(0)
+		if len(pi.Operands) == 1 {
+			idx, ok := lowerTableIndexOperand(pi.Operands[0], fl.mod.tablesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid table.fill table index operand")
+				return
+			}
+			tableIndex = idx
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrTableFill, TableIndex: tableIndex, SourceLoc: instrLoc})
+		return
 	case "table.grow", "table.size":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
@@ -1875,8 +1934,22 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			tableIndex = idx
 			elemOp = pi.Operands[1]
 		}
+		elemIndex, ok := lowerElemIndexOperand(elemOp, fl.mod.elemIndicesByName)
+		if !ok {
+			fl.diagf(elemOp.Loc(), "invalid table.init element operand")
+			return
+		}
 		if int(tableIndex) < len(fl.mod.out.Tables) {
-			if elemID, ok := elemOp.(*IdOperand); ok {
+			if int(elemIndex) < len(fl.mod.out.Elements) {
+				elemTy := fl.mod.out.Elements[elemIndex].RefType
+				if elemTy.Kind != wasmir.ValueKindInvalid {
+					tableTy := fl.mod.out.Tables[tableIndex].RefType
+					if !matchesExpectedValueType(elemTy, tableTy) {
+						fl.diagf(instrLoc, "type mismatch")
+						return
+					}
+				}
+			} else if elemID, ok := elemOp.(*IdOperand); ok {
 				if elemTy, found := fl.mod.elemRefTypeByName[elemID.Value]; found {
 					tableTy := fl.mod.out.Tables[tableIndex].RefType
 					if !matchesExpectedValueType(elemTy, tableTy) {
@@ -1886,10 +1959,13 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 				}
 			}
 		}
-		// Bulk-memory table.init is not lowered in this subset yet.
-		// Emit a deterministic trap so spec assertions expecting trap behavior
-		// still execute through the pipeline.
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrUnreachable, SourceLoc: instrLoc})
+		fl.emitInstr(wasmir.Instruction{
+			Kind:       wasmir.InstrTableInit,
+			TableIndex: tableIndex,
+			ElemIndex:  elemIndex,
+			SourceLoc:  instrLoc,
+		})
+		return
 
 	default:
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
@@ -2145,6 +2221,16 @@ func decodeDataIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operan
 		return false
 	}
 	ins.DataIndex = dataIndex
+	return true
+}
+
+// decodeElemIndexOperands decodes operands into ins.ElemIndex for elem.drop.
+func decodeElemIndexOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	elemIndex, ok := lowerElemIndexOperand(operands[0], fl.mod.elemIndicesByName)
+	if !ok {
+		return false
+	}
+	ins.ElemIndex = elemIndex
 	return true
 }
 
@@ -2654,6 +2740,21 @@ func lowerDataIndexOperand(op Operand) (uint32, bool) {
 		return 0, false
 	}
 	return parseU32Literal(intOp.Value)
+}
+
+// lowerElemIndexOperand resolves op as an element segment index using
+// elemIndicesByName. It accepts either an element identifier or an integer
+// element index literal.
+func lowerElemIndexOperand(op Operand, elemIndicesByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := elemIndicesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
 }
 
 func operandText(op Operand) string {
