@@ -317,6 +317,16 @@ func usesExprElementSegment(refType wasmir.ValueType) bool {
 // type indices for later function type-use resolution.
 func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 	for i, td := range astm.Types {
+		if td == nil || td.Id == "" {
+			continue
+		}
+		if prev, exists := l.typesByName[td.Id]; exists {
+			l.diags.Addf("type[%d] %s: duplicate type id (first seen at type[%d])", i, td.Id, prev)
+			continue
+		}
+		l.typesByName[td.Id] = uint32(i)
+	}
+	for i, td := range astm.Types {
 		if td == nil {
 			l.diags.Addf("type[%d]: nil type declaration", i)
 			continue
@@ -345,15 +355,10 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 		}
 
 		typeIdx := uint32(len(l.out.Types))
+		if typeIdx != uint32(i) {
+			l.diags.Addf("type[%d]: internal type index mismatch", i)
+		}
 		l.out.Types = append(l.out.Types, outType)
-		if td.Id == "" {
-			continue
-		}
-		if prev, exists := l.typesByName[td.Id]; exists {
-			l.diags.Addf("type[%d] %s: duplicate type id (first seen at type[%d])", i, td.Id, prev)
-			continue
-		}
-		l.typesByName[td.Id] = typeIdx
 	}
 }
 
@@ -1814,7 +1819,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			fl.diagf(pi.Operands[0].Loc(), "invalid struct.get type operand")
 			return
 		}
-		fieldIndex, ok := lowerFieldIndexOperand(pi.Operands[1])
+		fieldIndex, ok := fl.lowerStructFieldOperand(typeIndex, pi.Operands[1])
 		if !ok {
 			fl.diagf(pi.Operands[1].Loc(), "invalid struct.get field operand")
 			return
@@ -2823,6 +2828,26 @@ func lowerFieldIndexOperand(op Operand) (uint32, bool) {
 	return parseU32Literal(intOp.Value)
 }
 
+func (fl *functionLowerer) lowerStructFieldOperand(typeIndex uint32, op Operand) (uint32, bool) {
+	if idx, ok := lowerFieldIndexOperand(op); ok {
+		return idx, true
+	}
+	idOp, ok := op.(*IdOperand)
+	if !ok || int(typeIndex) >= len(fl.mod.out.Types) {
+		return 0, false
+	}
+	td := fl.mod.out.Types[typeIndex]
+	if td.Kind != wasmir.TypeDefKindStruct {
+		return 0, false
+	}
+	for i, field := range td.Fields {
+		if field.Name == idOp.Value {
+			return uint32(i), true
+		}
+	}
+	return 0, false
+}
+
 // lowerRefHeapTypeOperand lowers op as a reference heaptype operand used by
 // instructions such as ref.null.
 // op must be a keyword heaptype token like "func"/"extern" or an ID heaptype
@@ -3281,7 +3306,7 @@ func (l *moduleLowerer) lowerFieldType(fd *FieldDecl, typeIdx int, fieldIdx int)
 		l.diags.Addf("type[%d] field[%d]: unsupported field type %q", typeIdx, fieldIdx, fd.Ty)
 		return wasmir.FieldType{}, false
 	}
-	return wasmir.FieldType{Type: vt, Mutable: fd.Mutable}, true
+	return wasmir.FieldType{Name: fd.Id, Type: vt, Mutable: fd.Mutable}, true
 }
 
 // addLowerDiag appends one lowering diagnostic prefixed with function context

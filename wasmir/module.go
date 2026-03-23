@@ -427,6 +427,7 @@ const (
 
 // FieldType is one GC struct or array field type.
 type FieldType struct {
+	Name    string
 	Type    ValueType
 	Mutable bool
 }

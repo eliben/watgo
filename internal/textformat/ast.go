@@ -276,6 +276,9 @@ type TypeDecl struct {
 
 // FieldDecl is one GC struct/array field declaration.
 type FieldDecl struct {
+	// Id is the optional field identifier for struct fields.
+	Id string
+
 	// Ty is the stored field type.
 	Ty Type
 

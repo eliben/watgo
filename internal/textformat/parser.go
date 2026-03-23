@@ -963,11 +963,25 @@ func (p *Parser) parseFieldDecl(sx *SExpr) *FieldDecl {
 		p.emitError(sx.loc, "struct type expects (field ...)")
 		return nil
 	}
-	if len(sx.list) != 2 {
-		p.emitError(sx.loc, "field declaration expects exactly one field type")
+	if len(sx.list) < 2 || len(sx.list) > 3 {
+		p.emitError(sx.loc, "field declaration expects optional id plus one field type")
 		return nil
 	}
-	return p.parseFieldType(sx.list[1])
+	cursor := 1
+	fieldID := ""
+	if len(sx.list) == 3 {
+		if !sx.list[cursor].IsTokenKind(ID) {
+			p.emitError(sx.list[cursor].loc, "field id must be an identifier")
+			return nil
+		}
+		fieldID = sx.list[cursor].tok.value
+		cursor++
+	}
+	field := p.parseFieldType(sx.list[cursor])
+	if field != nil {
+		field.Id = fieldID
+	}
+	return field
 }
 
 func (p *Parser) parseFieldType(sx *SExpr) *FieldDecl {
@@ -1236,7 +1250,9 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
 			return nil, cursor + 3
 		}
-		if _, ok := fieldOp.(*IntOperand); !ok {
+		switch fieldOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
 			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
 			return nil, cursor + 3
 		}
