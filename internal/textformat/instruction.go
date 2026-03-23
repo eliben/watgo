@@ -388,6 +388,7 @@ func init() {
 		"ref.i31":             wasmir.InstrRefI31,
 		"ref.is_null":         wasmir.InstrRefIsNull,
 		"ref.null":            wasmir.InstrRefNull,
+		"i31.get_s":           wasmir.InstrI31GetS,
 		"i31.get_u":           wasmir.InstrI31GetU,
 		"return":              wasmir.InstrReturn,
 		"select":              wasmir.InstrSelect,

@@ -210,6 +210,7 @@ const (
 	InstrRefTest
 	InstrRefCast
 	InstrRefI31
+	InstrI31GetS
 	InstrI31GetU
 	InstrI32Load
 	InstrI32Store

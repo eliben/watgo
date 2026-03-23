@@ -250,6 +250,7 @@ const (
 	subopRefCastCode         uint32 = 0x16
 	subopRefCastNullCode     uint32 = 0x17
 	subopRefI31Code          uint32 = 0x1c
+	subopI31GetSCode         uint32 = 0x1d
 	subopI31GetUCode         uint32 = 0x1e
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
@@ -986,6 +987,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrRefI31:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopRefI31Code)
+	case wasmir.InstrI31GetS:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopI31GetSCode)
 	case wasmir.InstrI31GetU:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopI31GetUCode)

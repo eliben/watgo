@@ -1709,6 +1709,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"ref.as_non_null":     {operandCount: 0},
 	"ref.func":            {operandCount: 1, decode: decodeRefFuncOperands},
 	"ref.i31":             {operandCount: 0},
+	"i31.get_s":           {operandCount: 0},
 	"i31.get_u":           {operandCount: 0},
 	"memory.init":         {operandCount: 1, decode: decodeDataIndexOperands},
 	"data.drop":           {operandCount: 1, decode: decodeDataIndexOperands},
@@ -2278,18 +2279,11 @@ func decodeTableGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operan
 
 // decodeRefNullOperands decodes operands into ins.RefType for ref.null.
 func decodeRefNullOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	if refType, ok := lowerRefHeapTypeOperand(operands[0]); ok {
+		ins.RefType = refType
+		return true
+	}
 	switch op := operands[0].(type) {
-	case *KeywordOperand:
-		switch op.Value {
-		case "func":
-			ins.RefType = wasmir.RefTypeFunc(true)
-			return true
-		case "extern":
-			ins.RefType = wasmir.RefTypeExtern(true)
-			return true
-		default:
-			return false
-		}
 	case *IdOperand:
 		typeIndex, _, found := fl.resolveTypeRef(op.Value)
 		if !found {

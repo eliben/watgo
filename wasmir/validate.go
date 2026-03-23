@@ -185,6 +185,10 @@ func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
 	}
 }
 
+func matchesExpectedValueInModule(m *Module, got, want validatedValue) bool {
+	return matchesGCExpectedValue(m, got.Type, want.Type)
+}
+
 func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
@@ -238,7 +242,7 @@ func ValidateModule(m *Module) error {
 			diags.Addf("global[%d]: unsupported initializer instruction kind %d", i, g.Init.Kind)
 			continue
 		}
-		if !matchesExpectedValue(validatedValue{Type: initType}, validatedValue{Type: g.Type}) {
+		if !matchesExpectedValueInModule(m, validatedValue{Type: initType}, validatedValue{Type: g.Type}) {
 			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, valueTypeName(initType), valueTypeName(g.Type))
 		}
 	}
@@ -260,7 +264,7 @@ func ValidateModule(m *Module) error {
 				diags.Addf("table[%d]: invalid initializer", i)
 				continue
 			}
-			if !matchesExpectedValue(validatedValue{Type: initType}, validatedValue{Type: table.RefType}) {
+			if !matchesExpectedValueInModule(m, validatedValue{Type: initType}, validatedValue{Type: table.RefType}) {
 				diags.Addf("table[%d]: type mismatch", i)
 			}
 		}
@@ -328,7 +332,7 @@ func ValidateModule(m *Module) error {
 			}
 		}
 		if len(elem.Exprs) > 0 {
-			if !matchesExpectedValue(validatedValue{Type: elem.RefType}, validatedValue{Type: tableTy}) {
+			if !matchesExpectedValueInModule(m, validatedValue{Type: elem.RefType}, validatedValue{Type: tableTy}) {
 				diags.Addf("element[%d]: type mismatch", i)
 			}
 			for j, expr := range elem.Exprs {
@@ -337,7 +341,7 @@ func ValidateModule(m *Module) error {
 					diags.Addf("element[%d] expr[%d]: constant expression required", i, j)
 					continue
 				}
-				if !matchesExpectedValue(validatedValue{Type: ty}, validatedValue{Type: elem.RefType}) {
+				if !matchesExpectedValueInModule(m, validatedValue{Type: ty}, validatedValue{Type: elem.RefType}) {
 					diags.Addf("element[%d] expr[%d]: type mismatch", i, j)
 				}
 			}
@@ -475,7 +479,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		for i := range frame.resultTypes {
 			got := stackValue(frame.entryHeight + i)
 			want := valueAt(frame.resultTypes, i)
-			if !matchesExpectedValue(got, want) {
+			if !matchesExpectedValueInModule(m, got, want) {
 				diags.Addf("%s: %s result type mismatch at %d: got %s want %s", insCtx, context, i, validatedValueName(got), validatedValueName(want))
 				return
 			}
@@ -512,7 +516,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 		for i, want := range targetValues {
 			got := stackValue(base + i)
-			if !matchesExpectedValue(got, want) {
+			if !matchesExpectedValueInModule(m, got, want) {
 				diags.Addf("%s: %s depth %d target type mismatch at %d: got %s want %s", insCtx, opName, depth, i, validatedValueName(got), validatedValueName(want))
 				return controlFrame{}, nil, 0, false
 			}
@@ -627,7 +631,7 @@ instrLoop:
 			for j := range params {
 				want := valueAt(params, j)
 				got := stackValue(base + j)
-				if !matchesExpectedValue(got, want) {
+				if !matchesExpectedValueInModule(m, got, want) {
 					diags.Addf("%s: block parameter %d expects %s", insCtx, j, validatedValueName(want))
 					matched = false
 					break
@@ -659,7 +663,7 @@ instrLoop:
 			for j := range params {
 				want := valueAt(params, j)
 				got := stackValue(base + j)
-				if !matchesExpectedValue(got, want) {
+				if !matchesExpectedValueInModule(m, got, want) {
 					diags.Addf("%s: loop parameter %d expects %s", insCtx, j, validatedValueName(want))
 					matched = false
 					break
@@ -700,7 +704,7 @@ instrLoop:
 			for j := range params {
 				want := valueAt(params, j)
 				got := stackValue(base + j)
-				if !matchesExpectedValue(got, want) {
+				if !matchesExpectedValueInModule(m, got, want) {
 					diags.Addf("%s: if parameter %d expects %s", insCtx, j, validatedValueName(want))
 					matched = false
 					break
@@ -759,7 +763,7 @@ instrLoop:
 				continue
 			}
 			want := valueAt(locals, int(ins.LocalIndex))
-			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), want) {
 				diags.Addf("%s: local.set expects %s operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -775,7 +779,7 @@ instrLoop:
 				continue
 			}
 			want := valueAt(locals, int(ins.LocalIndex))
-			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), want) {
 				diags.Addf("%s: local.tee expects %s operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -802,7 +806,7 @@ instrLoop:
 				continue
 			}
 			want := validatedValueFromType(g.Type)
-			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), want) {
 				diags.Addf("%s: global.set expects %s operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -837,7 +841,7 @@ instrLoop:
 				continue
 			}
 			want := validatedValueFromType(m.Tables[ins.TableIndex].RefType)
-			if !matchesExpectedValue(stackValue(len(stack)-1), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), want) {
 				diags.Addf("%s: table.set expects %s value operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -857,7 +861,7 @@ instrLoop:
 			}
 			dstTable := m.Tables[ins.TableIndex]
 			srcTable := m.Tables[ins.SourceTableIndex]
-			if !matchesExpectedValue(validatedValueFromType(srcTable.RefType), validatedValueFromType(dstTable.RefType)) {
+			if !matchesExpectedValueInModule(m, validatedValueFromType(srcTable.RefType), validatedValueFromType(dstTable.RefType)) {
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
@@ -895,7 +899,7 @@ instrLoop:
 				continue
 			}
 			want := validatedValueFromType(m.Tables[ins.TableIndex].RefType)
-			if !matchesExpectedValue(stackValue(len(stack)-2), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-2), want) {
 				diags.Addf("%s: table.fill expects %s value operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -918,7 +922,7 @@ instrLoop:
 				continue
 			}
 			elemType, ok := elementRefType(m, ins.ElemIndex)
-			if !ok || !matchesExpectedValue(validatedValueFromType(elemType), validatedValueFromType(m.Tables[ins.TableIndex].RefType)) {
+			if !ok || !matchesExpectedValueInModule(m, validatedValueFromType(elemType), validatedValueFromType(m.Tables[ins.TableIndex].RefType)) {
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
@@ -951,7 +955,7 @@ instrLoop:
 				continue
 			}
 			want := validatedValueFromType(m.Tables[ins.TableIndex].RefType)
-			if !matchesExpectedValue(stackValue(len(stack)-2), want) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-2), want) {
 				diags.Addf("%s: table.grow expects %s value operand", insCtx, validatedValueName(want))
 				continue
 			}
@@ -987,7 +991,7 @@ instrLoop:
 			operandsOK := true
 			for j := range calleeType.Params {
 				want := valueAt(calleeType.Params, j)
-				if !matchesExpectedValue(stackValue(base+j), want) {
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), validatedValueName(want))
 					operandsOK = false
 					break
@@ -1026,7 +1030,7 @@ instrLoop:
 			ok := true
 			for j := range calleeType.Params {
 				want := valueAt(calleeType.Params, j)
-				if !matchesExpectedValue(stackValue(base+j), want) {
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: call_indirect expects operand %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
 					break
@@ -1053,7 +1057,7 @@ instrLoop:
 				continue
 			}
 			calleeRefWant := validatedValue{Type: RefTypeIndexed(ins.CallTypeIndex, false)}
-			if !matchesExpectedValue(stackValue(len(stack)-1), calleeRefWant) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), calleeRefWant) {
 				diags.Addf("%s: call_ref expects operand of type %s", insCtx, validatedValueName(calleeRefWant))
 				continue
 			}
@@ -1061,7 +1065,7 @@ instrLoop:
 			ok := true
 			for j := range calleeType.Params {
 				want := valueAt(calleeType.Params, j)
-				if !matchesExpectedValue(stackValue(base+j), want) {
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: call_ref expects operand %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
 					break
@@ -1090,7 +1094,7 @@ instrLoop:
 			operandsOK := true
 			for j, field := range td.Fields {
 				want := validatedValueFromType(field.Type)
-				if !matchesExpectedValue(stackValue(base+j), want) {
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: struct.new field %d expects %s", insCtx, j, validatedValueName(want))
 					operandsOK = false
 					break
@@ -1120,7 +1124,7 @@ instrLoop:
 				continue
 			}
 			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
-			if !matchesExpectedValue(stackValue(len(stack)-1), wantRef) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), wantRef) {
 				diags.Addf("%s: struct.get expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
@@ -1205,7 +1209,7 @@ instrLoop:
 				continue
 			}
 			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
-			if !matchesExpectedValue(stackValue(len(stack)-2), wantRef) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-2), wantRef) {
 				diags.Addf("%s: array.get expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
@@ -1226,7 +1230,7 @@ instrLoop:
 				continue
 			}
 			wantValue := validatedValueFromType(td.ElemField.Type)
-			if !matchesExpectedValue(stackValue(len(stack)-1), wantValue) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), wantValue) {
 				diags.Addf("%s: array.set expects value operand of type %s", insCtx, validatedValueName(wantValue))
 				continue
 			}
@@ -1235,7 +1239,7 @@ instrLoop:
 				continue
 			}
 			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
-			if !matchesExpectedValue(stackValue(len(stack)-3), wantRef) {
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-3), wantRef) {
 				diags.Addf("%s: array.set expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
@@ -1270,6 +1274,16 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeI31(false)))
+		case InstrI31GetS:
+			if len(stack) < 1 {
+				diags.Addf("%s: i31.get_s needs 1 operand", insCtx)
+				continue
+			}
+			if !matchesGCExpectedValue(m, stackValue(len(stack)-1).Type, RefTypeI31(true)) {
+				diags.Addf("%s: i31.get_s expects i31 reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI31GetU:
 			if len(stack) < 1 {
 				diags.Addf("%s: i31.get_u needs 1 operand", insCtx)
@@ -1699,7 +1713,7 @@ instrLoop:
 			matches := true
 			for i, want := range targetValues {
 				got := stackValue(base + i)
-				if !matchesExpectedValue(got, want) {
+				if !matchesExpectedValueInModule(m, got, want) {
 					diags.Addf("%s: br_on_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, validatedValueName(got), validatedValueName(want))
 					matches = false
 					break
@@ -1746,7 +1760,7 @@ instrLoop:
 			for i := 0; i < len(targetValues)-1; i++ {
 				got := stackValue(base + i)
 				want := targetValues[i]
-				if !matchesExpectedValue(got, want) {
+				if !matchesExpectedValueInModule(m, got, want) {
 					diags.Addf("%s: br_on_non_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, validatedValueName(got), validatedValueName(want))
 					matches = false
 					break
@@ -1757,7 +1771,7 @@ instrLoop:
 			}
 			wantRef := targetValues[len(targetValues)-1]
 			gotRef := refinedNonNullValue(refVal)
-			if !matchesExpectedValue(gotRef, wantRef) {
+			if !matchesExpectedValueInModule(m, gotRef, wantRef) {
 				diags.Addf("%s: br_on_non_null depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, len(targetValues)-1, validatedValueName(gotRef), validatedValueName(wantRef))
 				continue
 			}
@@ -1798,7 +1812,7 @@ instrLoop:
 					}
 					for k, want := range otherValues {
 						got := stackValue(base + k)
-						if !matchesExpectedValue(got, want) {
+						if !matchesExpectedValueInModule(m, got, want) {
 							diags.Addf("%s: br_table depth %d target type mismatch at %d: got %s want %s", insCtx, depth, k, validatedValueName(got), validatedValueName(want))
 							break
 						}
@@ -1825,7 +1839,7 @@ instrLoop:
 			ok := true
 			for j := range ft.Results {
 				want := valueAt(ft.Results, j)
-				if !matchesExpectedValue(stackValue(base+j), want) {
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: return expects result %d to be %s", insCtx, j, validatedValueName(want))
 					ok = false
 					break
@@ -2178,7 +2192,7 @@ instrLoop:
 	for i := range stack {
 		got := stackValue(i)
 		want := valueAt(ft.Results, i)
-		if !matchesExpectedValue(got, want) {
+		if !matchesExpectedValueInModule(m, got, want) {
 			diags.Addf("%sresult type mismatch at %d: got %s want %s", funcLocCtx, i, validatedValueName(got), validatedValueName(want))
 		}
 	}
@@ -2382,6 +2396,8 @@ func instrName(kind InstrKind) string {
 		return "ref.cast"
 	case InstrRefI31:
 		return "ref.i31"
+	case InstrI31GetS:
+		return "i31.get_s"
 	case InstrI31GetU:
 		return "i31.get_u"
 	case InstrBlock:
