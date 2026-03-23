@@ -286,6 +286,31 @@ func TestParseModule_FoldedInstructions(t *testing.T) {
 	}
 }
 
+func TestParseModule_Memory64InlineDataShorthand(t *testing.T) {
+	wat := `(module
+  (memory i64 (data "x"))
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Memories) != 1 {
+		t.Fatalf("got %d memories, want 1", len(m.Memories))
+	}
+
+	mem := m.Memories[0]
+	if mem.AddressType != "i64" {
+		t.Fatalf("got address type %q, want i64", mem.AddressType)
+	}
+	if got := len(mem.InlineData); got != 1 {
+		t.Fatalf("got %d inline data strings, want 1", got)
+	}
+	if mem.InlineData[0] != "x" {
+		t.Fatalf("got inline data %q, want x", mem.InlineData[0])
+	}
+}
+
 func TestParseModule_MultiParamAndResultClauses(t *testing.T) {
 	wat := `(module
   (func (param i32 i64) (result i32 i64)

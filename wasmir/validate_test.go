@@ -233,3 +233,20 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
+
+func TestValidateModule_Memory64PageLimit(t *testing.T) {
+	m := &Module{
+		Memories: []Memory{
+			{AddressType: ValueTypeI64, Min: maxMemoryPages64 + 1},
+		},
+	}
+
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "memory[0]: memory size") {
+		t.Fatalf("got errors %q, want memory size diagnostic", errs.Error())
+	}
+}

@@ -16,19 +16,9 @@ func TestWasmSpecScripts(t *testing.T) {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
 	}
 
-	entries, err := os.ReadDir(wasmSpecScriptsDir)
+	scripts, err := findWasmSpecScripts(wasmSpecScriptsDir)
 	if err != nil {
-		t.Fatalf("ReadDir %q failed: %v", wasmSpecScriptsDir, err)
-	}
-
-	var scripts []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if strings.HasSuffix(e.Name(), ".wast") {
-			scripts = append(scripts, e.Name())
-		}
+		t.Fatalf("findWasmSpecScripts %q failed: %v", wasmSpecScriptsDir, err)
 	}
 	sort.Strings(scripts)
 
@@ -37,11 +27,30 @@ func TestWasmSpecScripts(t *testing.T) {
 	}
 
 	for _, script := range scripts {
-		name := strings.TrimSuffix(script, filepath.Ext(script))
+		name := filepath.ToSlash(strings.TrimSuffix(script, filepath.Ext(script)))
 		t.Run(name, func(t *testing.T) {
 			runWasmSpecScriptFile(t, filepath.Join(wasmSpecScriptsDir, script))
 		})
 	}
+}
+
+func findWasmSpecScripts(root string) ([]string, error) {
+	var scripts []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".wast") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		scripts = append(scripts, rel)
+		return nil
+	})
+	return scripts, err
 }
 
 func runWasmSpecScriptFile(t *testing.T, scriptPath string) {

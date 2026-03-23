@@ -6,7 +6,10 @@ import (
 	"github.com/eliben/watgo/diag"
 )
 
-const maxMemoryPages32 = 65536
+const (
+	maxMemoryPages32 uint64 = 65536
+	maxMemoryPages64 uint64 = 1 << 48
+)
 
 type validatedValue struct {
 	Type ValueType
@@ -144,11 +147,15 @@ func ValidateModule(m *Module) error {
 
 	for i, mem := range m.Memories {
 		addrType := memoryAddressType(m, uint32(i))
-		if addrType == ValueTypeI32 && mem.Min > maxMemoryPages32 {
+		maxPages := maxMemoryPages32
+		if addrType == ValueTypeI64 {
+			maxPages = maxMemoryPages64
+		}
+		if mem.Min > maxPages {
 			diags.Addf("memory[%d]: memory size", i)
 		}
 		if mem.HasMax {
-			if addrType == ValueTypeI32 && mem.Max > maxMemoryPages32 {
+			if mem.Max > maxPages {
 				diags.Addf("memory[%d]: memory size", i)
 			}
 			if mem.Min > mem.Max {
@@ -859,7 +866,7 @@ instrLoop:
 				diags.Addf("%s: i32.load expects %s address operand", insCtx, addrType)
 				continue
 			}
-			// i32 address replaced by loaded i32 value.
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI64Load:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i64.load requires memory", insCtx)

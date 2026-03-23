@@ -553,6 +553,8 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 //   - (memory 1 2)
 //   - (memory $m (export "mem") 1 2)
 //   - (memory (import "M" "m") 1 2)
+//   - (memory i64 1 2)
+//   - (memory i64 (data "abc"))
 //   - (memory (data "abc" "..."))
 func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 	md := &MemoryDecl{loc: sx.loc, AddressType: "i32"}
@@ -580,17 +582,16 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 		return md
 	}
 
-	if sx.list[cursor].IsList() && sx.list[cursor].HeadKeyword() == "data" {
-		md.InlineData = p.parseDataStrings(sx.list[cursor])
-		return md
-	}
-
 	if sx.list[cursor].IsTokenKind(KEYWORD) && (sx.list[cursor].tok.value == "i32" || sx.list[cursor].tok.value == "i64") {
 		md.AddressType = sx.list[cursor].tok.value
 		cursor++
 	}
 	if cursor >= len(sx.list) {
 		p.emitError(sx.loc, "memory declaration missing minimum size")
+		return md
+	}
+	if sx.list[cursor].IsList() && sx.list[cursor].HeadKeyword() == "data" {
+		md.InlineData = p.parseDataStrings(sx.list[cursor])
 		return md
 	}
 
