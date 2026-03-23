@@ -205,6 +205,9 @@ const (
 	opBrOnNullCode          byte = 0xd5
 	opBrOnNonNullCode       byte = 0xd6
 	opPrefixFCCode          byte = 0xfc
+	opI32ReinterpretF32Code byte = 0xbc
+	opI64ReinterpretF64Code byte = 0xbd
+	opF32ReinterpretI32Code byte = 0xbe
 	opF64ReinterpretI64Code byte = 0xbf
 	opI32Extend8SCode       byte = 0xc0
 	opI32Extend16SCode      byte = 0xc1
@@ -681,12 +684,12 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
 	if instr.MemoryIndex == 0 {
 		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		writeULEB64(out, instr.MemoryOffset)
 		return
 	}
 	writeULEB128(out, instr.MemoryAlign+(1<<6))
 	writeULEB128(out, instr.MemoryIndex)
-	writeULEB128(out, instr.MemoryOffset)
+	writeULEB64(out, instr.MemoryOffset)
 }
 
 func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment, diags *diag.ErrorList) {
@@ -1079,6 +1082,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opF64EqCode)
 	case wasmir.InstrF64Le:
 		out.WriteByte(opF64LeCode)
+	case wasmir.InstrI32ReinterpretF32:
+		out.WriteByte(opI32ReinterpretF32Code)
+	case wasmir.InstrI64ReinterpretF64:
+		out.WriteByte(opI64ReinterpretF64Code)
+	case wasmir.InstrF32ReinterpretI32:
+		out.WriteByte(opF32ReinterpretI32Code)
 	case wasmir.InstrF64ReinterpretI64:
 		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:

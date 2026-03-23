@@ -725,7 +725,7 @@ func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction,
 		}
 		align = alignField - (1 << 6)
 	}
-	offset, err := readU32(r)
+	offset, err := readU64(r)
 	if err != nil {
 		return wasmir.Instruction{}, err
 	}
@@ -1535,6 +1535,12 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Eq})
 		case opF64LeCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Le})
+		case opI32ReinterpretF32Code:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ReinterpretF32})
+		case opI64ReinterpretF64Code:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ReinterpretF64})
+		case opF32ReinterpretI32Code:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32ReinterpretI32})
 		case opF64ReinterpretI64Code:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ReinterpretI64})
 		case opRefNullCode:

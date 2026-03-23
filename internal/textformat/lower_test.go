@@ -313,3 +313,34 @@ func TestLowerModule_Memory64DataOffset(t *testing.T) {
 		t.Fatalf("data init=%q, want %q", got, "abc")
 	}
 }
+
+func TestLowerModule_Memory64MemArgOffset(t *testing.T) {
+	wat := `(module
+  (memory i64 1)
+  (func
+    i64.const 0
+    i32.load offset=0xFFFF_FFFF_FFFF_FFFF
+    drop
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	body := m.Funcs[0].Body
+	if len(body) < 2 {
+		t.Fatalf("got %d body instructions, want at least 2", len(body))
+	}
+	if body[1].Kind != wasmir.InstrI32Load {
+		t.Fatalf("body[1]=%#v, want i32.load", body[1])
+	}
+	if got := body[1].MemoryOffset; got != 0xFFFF_FFFF_FFFF_FFFF {
+		t.Fatalf("memory offset=0x%x, want 0xffffffffffffffff", got)
+	}
+}

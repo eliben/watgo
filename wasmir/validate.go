@@ -90,6 +90,21 @@ func memoryAddressType(m *Module, memoryIndex uint32) ValueType {
 	return ValueTypeI32
 }
 
+func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
+	switch kind {
+	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
+		return 0, true
+	case InstrI32Load16S, InstrI32Load16U, InstrI64Load16S, InstrI64Load16U, InstrI32Store16, InstrI64Store16:
+		return 1, true
+	case InstrI32Load, InstrF32Load, InstrI64Load32S, InstrI64Load32U, InstrI32Store, InstrI64Store32, InstrF32Store:
+		return 2, true
+	case InstrI64Load, InstrF64Load, InstrI64Store, InstrF64Store:
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
 // ValidateModule validates m.
 // Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
@@ -171,6 +186,15 @@ func ValidateModule(m *Module) error {
 		}
 		if data.OffsetType != memoryAddressType(m, data.MemoryIndex) {
 			diags.Addf("data[%d]: offset type mismatch", i)
+		}
+	}
+
+	for i, f := range m.Funcs {
+		for j, ins := range f.Body {
+			natural, ok := naturalMemoryAlignExponent(ins.Kind)
+			if ok && ins.MemoryAlign > natural {
+				diags.Addf("func[%d] instruction[%d]: alignment must not be larger than natural", i, j)
+			}
 		}
 	}
 
@@ -1559,6 +1583,36 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
+		case InstrI32ReinterpretF32:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32.reinterpret_f32 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF32 {
+				diags.Addf("%s: i32.reinterpret_f32 expects f32 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrI64ReinterpretF64:
+			if len(stack) < 1 {
+				diags.Addf("%s: i64.reinterpret_f64 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeF64 {
+				diags.Addf("%s: i64.reinterpret_f64 expects f64 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
+		case InstrF32ReinterpretI32:
+			if len(stack) < 1 {
+				diags.Addf("%s: f32.reinterpret_i32 needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: f32.reinterpret_i32 expects i32 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
 		case InstrF64ReinterpretI64:
 			if len(stack) < 1 {
 				diags.Addf("%s: f64.reinterpret_i64 needs 1 operand", insCtx)
@@ -2118,6 +2172,12 @@ func instrName(kind InstrKind) string {
 		return "f64.eq"
 	case InstrF64Le:
 		return "f64.le"
+	case InstrI32ReinterpretF32:
+		return "i32.reinterpret_f32"
+	case InstrI64ReinterpretF64:
+		return "i64.reinterpret_f64"
+	case InstrF32ReinterpretI32:
+		return "f32.reinterpret_i32"
 	case InstrF64ReinterpretI64:
 		return "f64.reinterpret_i64"
 	case InstrRefNull:

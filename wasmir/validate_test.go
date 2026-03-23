@@ -250,3 +250,30 @@ func TestValidateModule_Memory64PageLimit(t *testing.T) {
 		t.Fatalf("got errors %q, want memory size diagnostic", errs.Error())
 	}
 }
+
+func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{{Params: nil, Results: nil}},
+		Memories: []Memory{
+			{AddressType: ValueTypeI64, Min: 1},
+		},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI64Const, I64Const: 0},
+				{Kind: InstrI32Load8S, MemoryAlign: 1},
+				{Kind: InstrDrop},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	err := ValidateModule(m)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "alignment must not be larger than natural") {
+		t.Fatalf("got errors %q, want alignment diagnostic", errs.Error())
+	}
+}

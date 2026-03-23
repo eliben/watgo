@@ -1142,10 +1142,37 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
 	default:
-		// For this initial subset, parse all other instructions as plain
-		// zero-operand instructions.
-		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+		if _, ok := memoryInstrKinds[name]; ok {
+			operands := make([]Operand, 0, 3)
+			next := cursor + 1
+			for next < len(elems) {
+				op := p.parseOperand(elems[next])
+				if op == nil {
+					break
+				}
+				switch operand := op.(type) {
+				case *IdOperand, *IntOperand:
+					if len(operands) > 0 {
+						return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+					}
+					operands = append(operands, operand)
+					next++
+				case *KeywordOperand:
+					if !strings.Contains(operand.Value, "=") {
+						return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+					}
+					operands = append(operands, operand)
+					next++
+				default:
+					return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+				}
+			}
+			return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+		}
 	}
+	// For this initial subset, parse all other instructions as plain
+	// zero-operand instructions.
+	return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
 }
 
 // parsePlainControlTypeOperand parses a single-result blocktype clause used by

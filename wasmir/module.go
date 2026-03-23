@@ -275,6 +275,9 @@ const (
 	InstrF64Nearest
 	InstrF64Eq
 	InstrF64Le
+	InstrI32ReinterpretF32
+	InstrI64ReinterpretF64
+	InstrF32ReinterpretI32
 	InstrF64ReinterpretI64
 	InstrEnd
 )
@@ -572,7 +575,7 @@ type Instruction struct {
 	MemoryAlign uint32
 
 	// MemoryOffset is the offset immediate used by memory load/store ops.
-	MemoryOffset uint32
+	MemoryOffset uint64
 
 	// MemoryIndex is the memory index immediate used by memory.grow.
 	MemoryIndex uint32

@@ -1610,6 +1610,9 @@ var loweringSpecs = map[string]loweringSpec{
 	"f64.nearest":         {kind: wasmir.InstrF64Nearest, operandCount: 0},
 	"f64.eq":              {kind: wasmir.InstrF64Eq, operandCount: 0},
 	"f64.le":              {kind: wasmir.InstrF64Le, operandCount: 0},
+	"i32.reinterpret_f32": {kind: wasmir.InstrI32ReinterpretF32, operandCount: 0},
+	"i64.reinterpret_f64": {kind: wasmir.InstrI64ReinterpretF64, operandCount: 0},
+	"f32.reinterpret_i32": {kind: wasmir.InstrF32ReinterpretI32, operandCount: 0},
 	"f64.reinterpret_i64": {kind: wasmir.InstrF64ReinterpretI64, operandCount: 0},
 	"local.get":           {kind: wasmir.InstrLocalGet, operandCount: 1, decode: decodeLocalGetOperands},
 	"local.set":           {kind: wasmir.InstrLocalSet, operandCount: 1, decode: decodeLocalSetOperands},
@@ -1911,9 +1914,9 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 //   - ["align=4"] -> (2, 0, 0, true)
 //   - ["$mem", "offset=8", "align=2"] -> (1, 8, memidx($mem), true)
 //   - ["align=3"] -> (0, 0, 0, false) // not a power-of-two byte alignment
-func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (uint32, uint32, uint32, bool) {
+func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (uint32, uint64, uint32, bool) {
 	var align uint32
-	var offset uint32
+	var offset uint64
 	var memoryIndex uint32
 	seenAlign := false
 	seenOffset := false
@@ -1942,12 +1945,12 @@ func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (
 		if len(parts) != 2 {
 			return 0, 0, 0, false
 		}
-		value, ok := parseU32Literal(parts[1])
-		if !ok {
-			return 0, 0, 0, false
-		}
 		switch parts[0] {
 		case "align":
+			value, ok := parseU32Literal(parts[1])
+			if !ok {
+				return 0, 0, 0, false
+			}
 			if seenAlign {
 				return 0, 0, 0, false
 			}
@@ -1958,6 +1961,10 @@ func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (
 			align = exp
 			seenAlign = true
 		case "offset":
+			value, ok := parseU64Literal(parts[1])
+			if !ok {
+				return 0, 0, 0, false
+			}
 			if seenOffset {
 				return 0, 0, 0, false
 			}
@@ -2789,6 +2796,17 @@ func parseU32Literal(s string) (uint32, bool) {
 		return 0, false
 	}
 	return uint32(value), true
+}
+
+// parseU64Literal parses s as an unsigned 64-bit integer literal.
+// It returns the parsed value and true on success, or 0/false on failure.
+func parseU64Literal(s string) (uint64, bool) {
+	clean := strings.ReplaceAll(s, "_", "")
+	value, err := strconv.ParseUint(clean, 0, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 // decodeWATStringBytes decodes a WAT STRING token payload to raw bytes.
