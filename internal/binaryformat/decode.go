@@ -697,9 +697,21 @@ func decodeElemFuncIndices(r *bytes.Reader, elemIdx uint32, diags *diag.ErrorLis
 }
 
 func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
-	align, err := readU32(r)
+	alignField, err := readU32(r)
 	if err != nil {
 		return wasmir.Instruction{}, err
+	}
+	memoryIndex := uint32(0)
+	align := alignField
+	if alignField >= 1<<6 {
+		if alignField >= 1<<7 {
+			return wasmir.Instruction{}, fmt.Errorf("alignment field %d exceeds supported memarg range", alignField)
+		}
+		memoryIndex, err = readU32(r)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		align = alignField - (1 << 6)
 	}
 	offset, err := readU32(r)
 	if err != nil {
@@ -707,6 +719,7 @@ func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction,
 	}
 	return wasmir.Instruction{
 		Kind:         kind,
+		MemoryIndex:  memoryIndex,
 		MemoryAlign:  align,
 		MemoryOffset: offset,
 	}, nil
@@ -1020,6 +1033,22 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			switch subop {
+			case subopMemoryCopyCode:
+				dstMemIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: memory.copy missing/invalid destination memory immediate: %v", funcIdx, err)
+					return out
+				}
+				srcMemIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: memory.copy missing/invalid source memory immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{
+					Kind:              wasmir.InstrMemoryCopy,
+					MemoryIndex:       dstMemIndex,
+					SourceMemoryIndex: srcMemIndex,
+				})
 			case subopMemoryFillCode:
 				memIndex, err := readU32(r)
 				if err != nil {

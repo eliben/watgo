@@ -213,6 +213,7 @@ const (
 	opI64Extend32SCode      byte = 0xc4
 
 	// FC-prefixed table instruction subopcodes.
+	subopMemoryCopyCode uint32 = 0x0a
 	subopMemoryFillCode uint32 = 0x0b
 	subopTableGrowCode  uint32 = 0x0f
 	subopTableSizeCode  uint32 = 0x10
@@ -670,6 +671,22 @@ func encodeCodeSection(funcs []wasmir.Function, diags *diag.ErrorList) []byte {
 	return payload.Bytes()
 }
 
+// encodeMemArg writes a memory instruction immediate.
+//
+// In the multi-memory encoding, bit 6 in the alignment field signals that an
+// explicit memory index follows before the offset. Memory index 0 uses the
+// compact MVP memarg form without that extra index field.
+func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
+	if instr.MemoryIndex == 0 {
+		writeULEB128(out, instr.MemoryAlign)
+		writeULEB128(out, instr.MemoryOffset)
+		return
+	}
+	writeULEB128(out, instr.MemoryAlign+(1<<6))
+	writeULEB128(out, instr.MemoryIndex)
+	writeULEB128(out, instr.MemoryOffset)
+}
+
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
 	switch instr.Kind {
@@ -766,102 +783,84 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.CallTypeIndex)
 	case wasmir.InstrI32Load:
 		out.WriteByte(opI32LoadCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load:
 		out.WriteByte(opI64LoadCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrF32Load:
 		out.WriteByte(opF32LoadCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrF64Load:
 		out.WriteByte(opF64LoadCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Load8S:
 		out.WriteByte(opI32Load8SCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Load8U:
 		out.WriteByte(opI32Load8UCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Load16S:
 		out.WriteByte(opI32Load16SCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Load16U:
 		out.WriteByte(opI32Load16UCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load8S:
 		out.WriteByte(opI64Load8SCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load8U:
 		out.WriteByte(opI64Load8UCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load16S:
 		out.WriteByte(opI64Load16SCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load16U:
 		out.WriteByte(opI64Load16UCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load32S:
 		out.WriteByte(opI64Load32SCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Load32U:
 		out.WriteByte(opI64Load32UCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Store:
 		out.WriteByte(opI32StoreCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Store:
 		out.WriteByte(opI64StoreCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Store8:
 		out.WriteByte(opI32Store8Code)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI32Store16:
 		out.WriteByte(opI32Store16Code)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Store8:
 		out.WriteByte(opI64Store8Code)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Store16:
 		out.WriteByte(opI64Store16Code)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrI64Store32:
 		out.WriteByte(opI64Store32Code)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrF32Store:
 		out.WriteByte(opF32StoreCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrF64Store:
 		out.WriteByte(opF64StoreCode)
-		writeULEB128(out, instr.MemoryAlign)
-		writeULEB128(out, instr.MemoryOffset)
+		encodeMemArg(out, instr)
 	case wasmir.InstrMemorySize:
 		out.WriteByte(opMemorySizeCode)
 		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrMemoryGrow:
 		out.WriteByte(opMemoryGrowCode)
 		writeULEB128(out, instr.MemoryIndex)
+	case wasmir.InstrMemoryCopy:
+		out.WriteByte(opPrefixFCCode)
+		writeULEB128(out, subopMemoryCopyCode)
+		writeULEB128(out, instr.MemoryIndex)
+		writeULEB128(out, instr.SourceMemoryIndex)
 	case wasmir.InstrMemoryFill:
 		out.WriteByte(opPrefixFCCode)
 		writeULEB128(out, subopMemoryFillCode)

@@ -171,6 +171,7 @@ const (
 	InstrF64Store
 	InstrMemorySize
 	InstrMemoryGrow
+	InstrMemoryCopy
 	InstrMemoryFill
 	InstrRefNull
 	InstrRefIsNull
@@ -565,6 +566,10 @@ type Instruction struct {
 
 	// MemoryIndex is the memory index immediate used by memory.grow.
 	MemoryIndex uint32
+
+	// SourceMemoryIndex is the source memory index immediate used by
+	// memory.copy.
+	SourceMemoryIndex uint32
 
 	// BlockType is the if block result type for InstrIf when BlockHasResult is
 	// true.

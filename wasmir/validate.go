@@ -133,9 +133,6 @@ func ValidateModule(m *Module) error {
 		}
 	}
 
-	if len(m.Memories) > 1 {
-		diags.Addf("duplicate memory")
-	}
 	for i, mem := range m.Memories {
 		if mem.Min > maxMemoryPages {
 			diags.Addf("memory[%d]: memory size", i)
@@ -835,6 +832,10 @@ instrLoop:
 				diags.Addf("%s: i32.load requires memory", insCtx)
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: i32.load memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 1 {
 				diags.Addf("%s: i32.load needs 1 operand", insCtx)
 				continue
@@ -847,6 +848,10 @@ instrLoop:
 		case InstrI64Load:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i64.load requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: i64.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 1 {
@@ -863,6 +868,10 @@ instrLoop:
 				diags.Addf("%s: f32.load requires memory", insCtx)
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: f32.load memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 1 {
 				diags.Addf("%s: f32.load needs 1 operand", insCtx)
 				continue
@@ -875,6 +884,10 @@ instrLoop:
 		case InstrF64Load:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: f64.load requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: f64.load memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 1 {
@@ -891,6 +904,10 @@ instrLoop:
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 1 {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
@@ -903,6 +920,10 @@ instrLoop:
 		case InstrI64Load8S, InstrI64Load8U, InstrI64Load16S, InstrI64Load16U, InstrI64Load32S, InstrI64Load32U:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 1 {
@@ -919,6 +940,10 @@ instrLoop:
 				diags.Addf("%s: i32.store requires memory", insCtx)
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: i32.store memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 2 {
 				diags.Addf("%s: i32.store needs 2 operands", insCtx)
 				continue
@@ -931,6 +956,10 @@ instrLoop:
 		case InstrI64Store:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i64.store requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: i64.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 2 {
@@ -947,6 +976,10 @@ instrLoop:
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
@@ -959,6 +992,10 @@ instrLoop:
 		case InstrI64Store8, InstrI64Store16, InstrI64Store32:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 2 {
@@ -975,6 +1012,10 @@ instrLoop:
 				diags.Addf("%s: f32.store requires memory", insCtx)
 				continue
 			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: f32.store memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
 			if len(stack) < 2 {
 				diags.Addf("%s: f32.store needs 2 operands", insCtx)
 				continue
@@ -987,6 +1028,10 @@ instrLoop:
 		case InstrF64Store:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: f64.store requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: f64.store memory index %d out of range", insCtx, ins.MemoryIndex)
 				continue
 			}
 			if len(stack) < 2 {
@@ -1026,6 +1071,28 @@ instrLoop:
 				continue
 			}
 			// i32 pages operand replaced by i32 previous-size result.
+		case InstrMemoryCopy:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: memory.copy requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.copy destination memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			if int(ins.SourceMemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: memory.copy source memory index %d out of range", insCtx, ins.SourceMemoryIndex)
+				continue
+			}
+			if len(stack) < 3 {
+				diags.Addf("%s: memory.copy needs 3 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: memory.copy expects i32 destination, source, and length operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 3)
 		case InstrMemoryFill:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: memory.fill requires memory", insCtx)
@@ -1816,6 +1883,8 @@ func instrName(kind InstrKind) string {
 		return "memory.size"
 	case InstrMemoryGrow:
 		return "memory.grow"
+	case InstrMemoryCopy:
+		return "memory.copy"
 	case InstrMemoryFill:
 		return "memory.fill"
 	case InstrI32Eq:

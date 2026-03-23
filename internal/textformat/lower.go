@@ -1604,9 +1604,6 @@ var loweringSpecs = map[string]loweringSpec{
 	"br_on_non_null":      {kind: wasmir.InstrBrOnNonNull, operandCount: 1, decode: decodeBrOperands},
 	"global.get":          {kind: wasmir.InstrGlobalGet, operandCount: 1, decode: decodeGlobalGetOperands},
 	"global.set":          {kind: wasmir.InstrGlobalSet, operandCount: 1, decode: decodeGlobalSetOperands},
-	"memory.size":         {kind: wasmir.InstrMemorySize, operandCount: 0},
-	"memory.grow":         {kind: wasmir.InstrMemoryGrow, operandCount: 0},
-	"memory.fill":         {kind: wasmir.InstrMemoryFill, operandCount: 0},
 	"unreachable":         {kind: wasmir.InstrUnreachable, operandCount: 0},
 	"return":              {kind: wasmir.InstrReturn, operandCount: 0},
 	"i32.eq":              {kind: wasmir.InstrI32Eq, operandCount: 0},
@@ -1669,6 +1666,57 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "memory.size", "memory.grow", "memory.fill":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "%s expects at most 1 memory operand", pi.Name)
+			return
+		}
+		memoryIndex := uint32(0)
+		if len(pi.Operands) == 1 {
+			idx, ok := lowerMemoryIndexOperand(pi.Operands[0], fl.mod.memoriesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid %s memory index operand", pi.Name)
+				return
+			}
+			memoryIndex = idx
+		}
+		kind := wasmir.InstrMemorySize
+		switch pi.Name {
+		case "memory.grow":
+			kind = wasmir.InstrMemoryGrow
+		case "memory.fill":
+			kind = wasmir.InstrMemoryFill
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: kind, MemoryIndex: memoryIndex, SourceLoc: instrLoc})
+		return
+	case "memory.copy":
+		if len(pi.Operands) != 0 && len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "memory.copy expects 0 or 2 memory operands")
+			return
+		}
+		dstMemoryIndex := uint32(0)
+		srcMemoryIndex := uint32(0)
+		if len(pi.Operands) == 2 {
+			dst, ok := lowerMemoryIndexOperand(pi.Operands[0], fl.mod.memoriesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid memory.copy destination memory operand")
+				return
+			}
+			src, ok := lowerMemoryIndexOperand(pi.Operands[1], fl.mod.memoriesByName)
+			if !ok {
+				fl.diagf(pi.Operands[1].Loc(), "invalid memory.copy source memory operand")
+				return
+			}
+			dstMemoryIndex = dst
+			srcMemoryIndex = src
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:              wasmir.InstrMemoryCopy,
+			MemoryIndex:       dstMemoryIndex,
+			SourceMemoryIndex: srcMemoryIndex,
+			SourceLoc:         instrLoc,
+		})
+		return
 	case "table.get", "table.set":
 		if len(pi.Operands) > 1 {
 			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
@@ -1813,7 +1861,7 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 	if !ok {
 		return false
 	}
-	align, offset, ok := parseMemArgOperands(pi.Operands)
+	align, offset, memoryIndex, ok := parseMemArgOperands(pi.Operands, fl.mod.memoriesByName)
 	if !ok {
 		fl.diagf(instrLoc, "invalid %s memory operands", pi.Name)
 		return true
@@ -1822,6 +1870,7 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 		Kind:         kind,
 		MemoryAlign:  align,
 		MemoryOffset: offset,
+		MemoryIndex:  memoryIndex,
 		SourceLoc:    instrLoc,
 	})
 	return true
@@ -1834,55 +1883,73 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 //  1. alignExp: alignment exponent stored in the binary memarg immediate
 //     (for example align=4 -> 2, align=1 -> 0). If align is omitted, this is 0.
 //  2. offset: byte offset immediate. If offset is omitted, this is 0.
-//  3. ok: true when all operands are valid memarg keywords; false on any
-//     malformed/duplicate/unknown operand.
+//  3. memoryIndex: memory index immediate. If omitted, this is 0.
+//  4. ok: true when all operands are valid; false on any malformed,
+//     duplicate, or misplaced operand.
 //
 // Examples:
-//   - [] -> (0, 0, true)
-//   - ["align=4"] -> (2, 0, true)
-//   - ["offset=8"] -> (0, 8, true)
-//   - ["offset=8", "align=2"] -> (1, 8, true)
-//   - ["align=3"] -> (0, 0, false) // not a power-of-two byte alignment
-func parseMemArgOperands(operands []Operand) (uint32, uint32, bool) {
+//   - [] -> (0, 0, 0, true)
+//   - ["$mem"] -> (0, 0, memidx($mem), true)
+//   - ["align=4"] -> (2, 0, 0, true)
+//   - ["$mem", "offset=8", "align=2"] -> (1, 8, memidx($mem), true)
+//   - ["align=3"] -> (0, 0, 0, false) // not a power-of-two byte alignment
+func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (uint32, uint32, uint32, bool) {
 	var align uint32
 	var offset uint32
+	var memoryIndex uint32
 	seenAlign := false
 	seenOffset := false
-	for _, op := range operands {
+	seenMemory := false
+	for i, op := range operands {
+		if !seenMemory {
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				idx, ok := lowerMemoryIndexOperand(op, memoriesByName)
+				if !ok {
+					return 0, 0, 0, false
+				}
+				memoryIndex = idx
+				seenMemory = true
+				continue
+			}
+		}
 		kw, ok := op.(*KeywordOperand)
 		if !ok {
-			return 0, 0, false
+			return 0, 0, 0, false
+		}
+		if seenMemory && i == 0 {
+			return 0, 0, 0, false
 		}
 		parts := strings.SplitN(kw.Value, "=", 2)
 		if len(parts) != 2 {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		value, ok := parseU32Literal(parts[1])
 		if !ok {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		switch parts[0] {
 		case "align":
 			if seenAlign {
-				return 0, 0, false
+				return 0, 0, 0, false
 			}
 			exp, ok := alignToExponent(value)
 			if !ok {
-				return 0, 0, false
+				return 0, 0, 0, false
 			}
 			align = exp
 			seenAlign = true
 		case "offset":
 			if seenOffset {
-				return 0, 0, false
+				return 0, 0, 0, false
 			}
 			offset = value
 			seenOffset = true
 		default:
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 	}
-	return align, offset, true
+	return align, offset, memoryIndex, true
 }
 
 func alignToExponent(alignBytes uint32) (uint32, bool) {
@@ -2391,6 +2458,20 @@ func lowerTableIndexOperand(op Operand, tablesByName map[string]uint32) (uint32,
 	switch o := op.(type) {
 	case *IdOperand:
 		idx, ok := tablesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerMemoryIndexOperand resolves op as a memory index using memoriesByName.
+// It accepts either a memory identifier or an integer memory index literal.
+func lowerMemoryIndexOperand(op Operand, memoriesByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := memoriesByName[o.Value]
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)
