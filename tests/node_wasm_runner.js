@@ -61,10 +61,177 @@ const modules = new Map();
 // assigned by the Go harness for externref values.
 const externRefs = new Map();
 
+// floatResultWrappers caches tiny helper modules used to preserve exact float
+// result bits across the Wasm/JS boundary. JS numbers do not preserve NaN
+// payloads, so when a wasm export returns a single f32/f64 result we route the
+// call through a generated wrapper module that:
+//   1. imports the target export as a wasm function,
+//   2. calls it with the original arguments, and
+//   3. reinterprets the float result to i32/i64 inside wasm.
+//
+// Example wrapper for an imported `(func (param i64) (result f32))`:
+//   (module
+//     (import "m" "f" (func (param i64) (result f32)))
+//     (func (export "call") (param i64) (result i32)
+//       local.get 0
+//       call 0
+//       i32.reinterpret_f32))
+//
+// The wrapper returns integer bits, which JS can transport exactly.
+const floatResultWrappers = new Map();
+
 // decodeBytes turns a base64-encoded wasm payload from the Go harness into raw
 // bytes suitable for WebAssembly.Module / WebAssembly.Instance.
 function decodeBytes(wasmBase64) {
   return Buffer.from(wasmBase64, 'base64');
+}
+
+// encodeULEB128 appends one unsigned LEB128 integer to bytes.
+function encodeULEB128(bytes, value) {
+  let v = Number(value);
+  do {
+    let byte = v & 0x7f;
+    v >>>= 7;
+    if (v !== 0) {
+      byte |= 0x80;
+    }
+    bytes.push(byte);
+  } while (v !== 0);
+}
+
+// encodeName appends one wasm name string.
+function encodeName(bytes, text) {
+  const utf8 = Buffer.from(text, 'utf8');
+  encodeULEB128(bytes, utf8.length);
+  bytes.push(...utf8);
+}
+
+// valueTypeCode returns the binary valtype encoding for one supported type.
+function valueTypeCode(type) {
+  switch (type) {
+    case 'i32':
+      return 0x7f;
+    case 'i64':
+      return 0x7e;
+    case 'f32':
+      return 0x7d;
+    case 'f64':
+      return 0x7c;
+    case 'funcref':
+      return 0x70;
+    case 'externref':
+      return 0x6f;
+    default:
+      throw new Error(`unsupported wrapper value type ${type}`);
+  }
+}
+
+// pushFuncType appends one wasm functype to bytes.
+function pushFuncType(bytes, paramTypes, resultTypes) {
+  bytes.push(0x60);
+  encodeULEB128(bytes, paramTypes.length);
+  for (const type of paramTypes) {
+    bytes.push(valueTypeCode(type));
+  }
+  encodeULEB128(bytes, resultTypes.length);
+  for (const type of resultTypes) {
+    bytes.push(valueTypeCode(type));
+  }
+}
+
+// pushSection appends one complete wasm section.
+function pushSection(bytes, id, payload) {
+  bytes.push(id);
+  encodeULEB128(bytes, payload.length);
+  bytes.push(...payload);
+}
+
+// reinterpretOpcode returns the wasm reinterpret instruction used to turn a
+// single float result into exact integer bits.
+function reinterpretOpcode(resultType) {
+  switch (resultType) {
+    case 'f32':
+      return 0xbc; // i32.reinterpret_f32
+    case 'f64':
+      return 0xbd; // i64.reinterpret_f64
+    default:
+      throw new Error(`unsupported float wrapper result ${resultType}`);
+  }
+}
+
+// intBitsTypeForFloat maps one float result type to the integer type carrying
+// its exact IEEE-754 bits.
+function intBitsTypeForFloat(resultType) {
+  switch (resultType) {
+    case 'f32':
+      return 'i32';
+    case 'f64':
+      return 'i64';
+    default:
+      throw new Error(`unsupported float wrapper result ${resultType}`);
+  }
+}
+
+// buildSingleFloatResultWrapper builds a minimal wasm module that imports one
+// function and reinterprets its single float result to raw integer bits.
+function buildSingleFloatResultWrapper(paramTypes, resultType) {
+  const bitsType = intBitsTypeForFloat(resultType);
+  const key = `${paramTypes.join(',')}->${resultType}`;
+  let cached = floatResultWrappers.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const bytes = [
+    0x00, 0x61, 0x73, 0x6d, // \0asm
+    0x01, 0x00, 0x00, 0x00, // version 1
+  ];
+
+  const typeSection = [];
+  encodeULEB128(typeSection, 2);
+  pushFuncType(typeSection, paramTypes, [resultType]);
+  pushFuncType(typeSection, paramTypes, [bitsType]);
+  pushSection(bytes, 1, typeSection);
+
+  const importSection = [];
+  encodeULEB128(importSection, 1);
+  encodeName(importSection, 'm');
+  encodeName(importSection, 'f');
+  importSection.push(0x00); // function import
+  encodeULEB128(importSection, 0);
+  pushSection(bytes, 2, importSection);
+
+  const functionSection = [];
+  encodeULEB128(functionSection, 1);
+  encodeULEB128(functionSection, 1);
+  pushSection(bytes, 3, functionSection);
+
+  const exportSection = [];
+  encodeULEB128(exportSection, 1);
+  encodeName(exportSection, 'call');
+  exportSection.push(0x00); // function export
+  encodeULEB128(exportSection, 1);
+  pushSection(bytes, 7, exportSection);
+
+  const body = [];
+  encodeULEB128(body, 0); // local decl count
+  for (let i = 0; i < paramTypes.length; i++) {
+    body.push(0x20); // local.get
+    encodeULEB128(body, i);
+  }
+  body.push(0x10, 0x00); // call 0
+  body.push(reinterpretOpcode(resultType));
+  body.push(0x0b); // end
+
+  const codeSection = [];
+  encodeULEB128(codeSection, 1);
+  encodeULEB128(codeSection, body.length);
+  codeSection.push(...body);
+  pushSection(bytes, 10, codeSection);
+
+  cached = Uint8Array.from(bytes);
+  floatResultWrappers.set(key, cached);
+  return cached;
 }
 
 // buildImports builds the import object visible to a new instantiation from all
@@ -180,6 +347,20 @@ function encodeValue(valueType, value) {
   }
 }
 
+// encodeSingleFloatResultPreservingBits routes one single-result f32/f64 call
+// through a tiny wasm wrapper so exact NaN payloads survive the bridge back to
+// the Go harness.
+function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
+  const wrapperBytes = buildSingleFloatResultWrapper(argTypes, resultType);
+  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
+  const bits = wrapperInstance.exports.call(...args);
+  if (resultType === 'f32') {
+    return { type: resultType, bits: String(bits >>> 0) };
+  }
+  return { type: resultType, bits: String(BigInt.asUintN(64, bits)) };
+}
+
 // encodeResults normalizes a JS function return value into the array form used
 // by the harness, then encodes each result with the corresponding wasm type.
 function encodeResults(raw, resultTypes) {
@@ -236,9 +417,18 @@ function handleMessage(msg) {
       if (typeof fn !== 'function') {
         throw new Error(`exported function ${JSON.stringify(msg.funcName)} not found`);
       }
-      const args = (msg.args || []).map(decodeValue);
+      const rawArgs = msg.args || [];
+      const args = rawArgs.map(decodeValue);
+      const resultTypes = msg.resultTypes || [];
+      if (resultTypes.length === 1 && (resultTypes[0] === 'f32' || resultTypes[0] === 'f64')) {
+        const argTypes = rawArgs.map((arg) => arg.type);
+        return {
+          ok: true,
+          results: [encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultTypes[0])],
+        };
+      }
       const raw = fn(...args);
-      return { ok: true, results: encodeResults(raw, msg.resultTypes || []) };
+      return { ok: true, results: encodeResults(raw, resultTypes) };
     }
     case 'get': {
       const record = getModuleRecord(msg.moduleName);

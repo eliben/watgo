@@ -311,6 +311,31 @@ func TestParseModule_Memory64InlineDataShorthand(t *testing.T) {
 	}
 }
 
+func TestParseModule_Table64Declaration(t *testing.T) {
+	wat := `(module
+  (table i64 10 funcref)
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Tables) != 1 {
+		t.Fatalf("got %d tables, want 1", len(m.Tables))
+	}
+
+	tab := m.Tables[0]
+	if tab.AddressType != "i64" {
+		t.Fatalf("got address type %q, want i64", tab.AddressType)
+	}
+	if tab.Min != 10 {
+		t.Fatalf("got minimum %d, want 10", tab.Min)
+	}
+	if tab.RefTy.String() != "funcref" {
+		t.Fatalf("got ref type %q, want funcref", tab.RefTy)
+	}
+}
+
 func TestParseModule_MultiParamAndResultClauses(t *testing.T) {
 	wat := `(module
   (func (param i32 i64) (result i32 i64)

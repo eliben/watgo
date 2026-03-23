@@ -79,6 +79,9 @@ type TableDecl struct {
 	// import field name.
 	ImportName string
 
+	// AddressType is the table index type keyword, either "i32" or "i64".
+	AddressType string
+
 	// Min is the minimum table size in elements.
 	Min uint32
 

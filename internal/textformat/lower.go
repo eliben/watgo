@@ -346,12 +346,18 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			l.diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
 			continue
 		}
+		addressType, ok := lowerMemoryAddressType(td.AddressType)
+		if !ok {
+			l.diags.Addf("table[%d]: unsupported table address type %q", i, td.AddressType)
+			continue
+		}
 
 		tb := wasmir.Table{
-			Min:     min,
-			HasMax:  td.HasMax,
-			Max:     td.Max,
-			RefType: refType,
+			AddressType: addressType,
+			Min:         min,
+			HasMax:      td.HasMax,
+			Max:         td.Max,
+			RefType:     refType,
 		}
 		if td.ImportModule != "" {
 			tb.Imported = true

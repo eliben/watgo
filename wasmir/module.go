@@ -405,6 +405,9 @@ type Import struct {
 
 // Table is one table definition.
 type Table struct {
+	// AddressType is the table index type, either i32 or i64.
+	AddressType ValueType
+
 	// Min is the minimum table size in elements.
 	Min uint32
 

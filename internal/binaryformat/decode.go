@@ -274,13 +274,14 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				diags.Addf("import[%d]: invalid table ref type: %v", i, err)
 				break
 			}
-			min, hasMax, max, err := decodeLimits(r)
+			addrType, min, hasMax, max, err := decodeTableLimits(r)
 			if err != nil {
 				diags.Addf("import[%d]: invalid table limits: %v", i, err)
 				break
 			}
 			imp.Kind = wasmir.ExternalKindTable
 			imp.Table = wasmir.Table{
+				AddressType:  addrType,
 				Min:          min,
 				HasMax:       hasMax,
 				Max:          max,
@@ -379,7 +380,7 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid ref type: %v", i, err)
 				break
 			}
-			min, hasMax, max, err := decodeLimits(r)
+			addrType, min, hasMax, max, err := decodeTableLimits(r)
 			if err != nil {
 				diags.Addf("table[%d]: invalid limits: %v", i, err)
 				break
@@ -389,7 +390,7 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid init expr: %v", i, err)
 				break
 			}
-			out = append(out, wasmir.Table{Min: min, HasMax: hasMax, Max: max, RefType: refType, HasInit: true, Init: init})
+			out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType, HasInit: true, Init: init})
 			continue
 		}
 		refType, err := decodeValueTypeFromLeadingByte(r, first)
@@ -400,12 +401,12 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 			diags.Addf("table[%d]: invalid ref type: %v", i, err)
 			break
 		}
-		min, hasMax, max, err := decodeLimits(r)
+		addrType, min, hasMax, max, err := decodeTableLimits(r)
 		if err != nil {
 			diags.Addf("table[%d]: invalid limits: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.Table{Min: min, HasMax: hasMax, Max: max, RefType: refType})
+		out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType})
 	}
 	return out
 }
@@ -786,6 +787,20 @@ func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
 	default:
 		return 0, false, 0, fmt.Errorf("unsupported limits flags 0x%x", flags)
 	}
+}
+
+func decodeTableLimits(r *bytes.Reader) (wasmir.ValueType, uint32, bool, uint32, error) {
+	addrType, min, hasMax, max, err := decodeMemoryLimits(r)
+	if err != nil {
+		return wasmir.ValueTypeI32, 0, false, 0, err
+	}
+	if min > math.MaxUint32 {
+		return wasmir.ValueTypeI32, 0, false, 0, fmt.Errorf("table minimum exceeds uint32")
+	}
+	if hasMax && max > math.MaxUint32 {
+		return wasmir.ValueTypeI32, 0, false, 0, fmt.Errorf("table maximum exceeds uint32")
+	}
+	return addrType, uint32(min), hasMax, uint32(max), nil
 }
 
 func decodeExportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Export {

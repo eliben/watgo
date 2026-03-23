@@ -461,8 +461,9 @@ func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 // Supported form in the current parser:
 //   - (table funcref (elem $f ...))
 //   - (table $t funcref (elem $f ...))
+//   - (table i64 10 funcref)
 func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
-	td := &TableDecl{loc: sx.loc}
+	td := &TableDecl{loc: sx.loc, AddressType: "i32"}
 	cursor := 1
 	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
 		td.Id = sx.list[cursor].tok.value
@@ -480,6 +481,15 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		}
 		td.ImportModule = modName
 		td.ImportName = fieldName
+		cursor++
+	}
+	if cursor >= len(sx.list) {
+		p.emitError(sx.loc, "table declaration missing limits or element type")
+		return td
+	}
+
+	if sx.list[cursor].IsTokenKind(KEYWORD) && (sx.list[cursor].tok.value == "i32" || sx.list[cursor].tok.value == "i64") {
+		td.AddressType = sx.list[cursor].tok.value
 		cursor++
 	}
 	if cursor >= len(sx.list) {

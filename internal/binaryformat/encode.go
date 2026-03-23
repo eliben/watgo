@@ -400,7 +400,7 @@ func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte 
 				diags.Addf("import[%d]: unsupported table ref type %s", i, imp.Table.RefType)
 				payload.WriteByte(refTypeFuncRefCode)
 			}
-			writeLimits(&payload, imp.Table.Min, imp.Table.HasMax, imp.Table.Max)
+			writeTableLimits(&payload, imp.Table)
 		case wasmir.ExternalKindMemory:
 			payload.WriteByte(importKindMemoryCode)
 			writeMemoryLimits(&payload, imp.Memory)
@@ -469,7 +469,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 			diags.Addf("table[%d]: unsupported ref type %s", i, tb.RefType)
 			payload.WriteByte(refTypeFuncRefCode)
 		}
-		writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
+		writeTableLimits(&payload, tb)
 	}
 	return payload.Bytes()
 }
@@ -1263,6 +1263,21 @@ func writeLimits(out *bytes.Buffer, min uint32, hasMax bool, max uint32) {
 	}
 	out.WriteByte(limitsFlagMinOnly)
 	writeULEB128(out, min)
+}
+
+func writeTableLimits(out *bytes.Buffer, table wasmir.Table) {
+	if table.AddressType == wasmir.ValueTypeI64 {
+		if table.HasMax {
+			out.WriteByte(limitsFlagMinMax64)
+			writeULEB64(out, uint64(table.Min))
+			writeULEB64(out, uint64(table.Max))
+			return
+		}
+		out.WriteByte(limitsFlagMinOnly64)
+		writeULEB64(out, uint64(table.Min))
+		return
+	}
+	writeLimits(out, table.Min, table.HasMax, table.Max)
 }
 
 func writeMemoryLimits(out *bytes.Buffer, mem wasmir.Memory) {
