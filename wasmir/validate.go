@@ -9,6 +9,7 @@ import (
 const (
 	maxMemoryPages32 uint64 = 65536
 	maxMemoryPages64 uint64 = 1 << 48
+	maxTableElems32  uint64 = 1<<32 - 1
 )
 
 type validatedValue struct {
@@ -90,6 +91,15 @@ func memoryAddressType(m *Module, memoryIndex uint32) ValueType {
 	return ValueTypeI32
 }
 
+func tableAddressType(m *Module, tableIndex uint32) ValueType {
+	if m != nil && int(tableIndex) < len(m.Tables) {
+		if m.Tables[tableIndex].AddressType == ValueTypeI64 {
+			return ValueTypeI64
+		}
+	}
+	return ValueTypeI32
+}
+
 func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
@@ -145,8 +155,15 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, table := range m.Tables {
+		addrType := tableAddressType(m, uint32(i))
+		if addrType == ValueTypeI32 && table.Min > maxTableElems32 {
+			diags.Addf("table[%d]: table size", i)
+		}
 		if table.HasMax && table.Min > table.Max {
 			diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
+		}
+		if addrType == ValueTypeI32 && table.HasMax && table.Max > maxTableElems32 {
+			diags.Addf("table[%d]: table size", i)
 		}
 		if table.HasInit {
 			initType, ok := globalInitType(m, table.Init)
@@ -209,6 +226,9 @@ func ValidateModule(m *Module) error {
 				continue
 			}
 			tableTy = m.Tables[elem.TableIndex].RefType
+			if elem.OffsetType != tableAddressType(m, elem.TableIndex) {
+				diags.Addf("element[%d]: offset type mismatch", i)
+			}
 			if len(elem.FuncIndices) > 0 && tableTy.HeapType.Kind != HeapKindFunc && tableTy.HeapType.Kind != HeapKindTypeIndex {
 				diags.Addf("element[%d]: type mismatch", i)
 			}
@@ -694,8 +714,9 @@ instrLoop:
 				diags.Addf("%s: table.get needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: table.get expects i32 index operand", insCtx)
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: table.get expects %s index operand", insCtx, addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(m.Tables[ins.TableIndex].RefType))
@@ -708,8 +729,9 @@ instrLoop:
 				diags.Addf("%s: table.set needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 {
-				diags.Addf("%s: table.set expects i32 index operand", insCtx)
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-2] != addrType {
+				diags.Addf("%s: table.set expects %s index operand", insCtx, addrType)
 				continue
 			}
 			want := validatedValueFromType(m.Tables[ins.TableIndex].RefType)
@@ -732,18 +754,19 @@ instrLoop:
 				diags.Addf("%s: table.grow expects %s value operand", insCtx, validatedValueName(want))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: table.grow expects i32 delta operand", insCtx)
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: table.grow expects %s delta operand", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
-			appendStackType(ValueTypeI32)
+			appendStackType(addrType)
 		case InstrTableSize:
 			if int(ins.TableIndex) >= len(m.Tables) {
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			appendStackType(ValueTypeI32)
+			appendStackType(tableAddressType(m, ins.TableIndex))
 		case InstrCall:
 			if ins.FuncIndex >= totalFuncCount {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -789,8 +812,9 @@ instrLoop:
 				diags.Addf("%s: call_indirect needs %d operands", insCtx, need)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: call_indirect expects i32 table index operand", insCtx)
+			addrType := tableAddressType(m, ins.TableIndex)
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: call_indirect expects %s table index operand", insCtx, addrType)
 				continue
 			}
 			base := len(stack) - 1 - len(calleeType.Params)

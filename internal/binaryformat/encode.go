@@ -563,9 +563,7 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 			default:
 				payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
 				writeULEB128(&payload, elem.TableIndex)
-				payload.WriteByte(opI32ConstCode)
-				writeSLEB128(&payload, int64(elem.OffsetI32))
-				payload.WriteByte(opEndCode)
+				encodeElemOffsetExpr(&payload, i, elem, diags)
 			}
 
 			if !encodeValueType(&payload, elem.RefType) {
@@ -589,9 +587,7 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 			// Active segment with explicit table index and function-index payload.
 			payload.WriteByte(elemSegmentFlagActiveExplicitTableFuncIndices)
 			writeULEB128(&payload, elem.TableIndex)
-			payload.WriteByte(opI32ConstCode)
-			writeSLEB128(&payload, int64(elem.OffsetI32))
-			payload.WriteByte(opEndCode)
+			encodeElemOffsetExpr(&payload, i, elem, diags)
 		}
 		// Legacy element kind tag for function-index payloads.
 		payload.WriteByte(elemKindFuncRef)
@@ -601,6 +597,20 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 		}
 	}
 	return payload.Bytes()
+}
+
+func encodeElemOffsetExpr(out *bytes.Buffer, elemIdx int, elem wasmir.ElementSegment, diags *diag.ErrorList) {
+	switch elem.OffsetType {
+	case wasmir.ValueTypeI32:
+		out.WriteByte(opI32ConstCode)
+	case wasmir.ValueTypeI64:
+		out.WriteByte(opI64ConstCode)
+	default:
+		diags.Addf("element[%d]: unsupported offset type %s", elemIdx, elem.OffsetType)
+		out.WriteByte(opI32ConstCode)
+	}
+	writeSLEB128(out, elem.OffsetI64)
+	out.WriteByte(opEndCode)
 }
 
 // encodeDataSection emits section 11 as active or passive data segments.
@@ -1320,27 +1330,27 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 	}
 }
 
-func writeLimits(out *bytes.Buffer, min uint32, hasMax bool, max uint32) {
+func writeLimits(out *bytes.Buffer, min uint64, hasMax bool, max uint64) {
 	if hasMax {
 		out.WriteByte(limitsFlagMinMax)
-		writeULEB128(out, min)
-		writeULEB128(out, max)
+		writeULEB64(out, min)
+		writeULEB64(out, max)
 		return
 	}
 	out.WriteByte(limitsFlagMinOnly)
-	writeULEB128(out, min)
+	writeULEB64(out, min)
 }
 
 func writeTableLimits(out *bytes.Buffer, table wasmir.Table) {
 	if table.AddressType == wasmir.ValueTypeI64 {
 		if table.HasMax {
 			out.WriteByte(limitsFlagMinMax64)
-			writeULEB64(out, uint64(table.Min))
-			writeULEB64(out, uint64(table.Max))
+			writeULEB64(out, table.Min)
+			writeULEB64(out, table.Max)
 			return
 		}
 		out.WriteByte(limitsFlagMinOnly64)
-		writeULEB64(out, uint64(table.Min))
+		writeULEB64(out, table.Min)
 		return
 	}
 	writeLimits(out, table.Min, table.HasMax, table.Max)

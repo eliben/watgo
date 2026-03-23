@@ -520,7 +520,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		p.emitError(sx.list[cursor].loc, "table declaration expects minimum size")
 		return td
 	}
-	min, ok := parseU32Token(sx.list[cursor].tok.value)
+	min, ok := parseU64Token(sx.list[cursor].tok.value)
 	if !ok {
 		p.emitError(sx.list[cursor].loc, "invalid table minimum size")
 		return td
@@ -529,7 +529,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 	cursor++
 
 	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(INT) {
-		max, ok := parseU32Token(sx.list[cursor].tok.value)
+		max, ok := parseU64Token(sx.list[cursor].tok.value)
 		if !ok {
 			p.emitError(sx.list[cursor].loc, "invalid table maximum size")
 			return td

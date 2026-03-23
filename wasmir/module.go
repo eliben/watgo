@@ -414,13 +414,13 @@ type Table struct {
 	AddressType ValueType
 
 	// Min is the minimum table size in elements.
-	Min uint32
+	Min uint64
 
 	// HasMax reports whether Max is present.
 	HasMax bool
 
 	// Max is the maximum table size in elements when HasMax is true.
-	Max uint32
+	Max uint64
 
 	// RefType is the table element reference type.
 	RefType ValueType
@@ -527,8 +527,12 @@ type ElementSegment struct {
 	// TableIndex is the target table index.
 	TableIndex uint32
 
-	// OffsetI32 is the i32.const offset used by the active segment.
-	OffsetI32 int32
+	// OffsetType is the const type used by the active segment offset expr.
+	OffsetType ValueType
+
+	// OffsetI64 is the integer value used by the active segment offset expr.
+	// For i32 offsets it is sign-extended from the original i32.const.
+	OffsetI64 int64
 
 	// FuncIndices are function indices written into the table.
 	FuncIndices []uint32

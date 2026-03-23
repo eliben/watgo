@@ -83,13 +83,13 @@ type TableDecl struct {
 	AddressType string
 
 	// Min is the minimum table size in elements.
-	Min uint32
+	Min uint64
 
 	// HasMax reports whether a maximum table size was specified.
 	HasMax bool
 
 	// Max is the maximum table size when HasMax is true.
-	Max uint32
+	Max uint64
 
 	// RefTy is the declared table reference element type.
 	RefTy Type

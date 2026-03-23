@@ -203,13 +203,18 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 				}
 			}
 
-			offsetValue, ok := l.evalI32ConstExpr(ed.Offset)
+			offsetType := wasmir.ValueTypeI32
+			if int(tableIndex) < len(l.out.Tables) {
+				offsetType = l.out.Tables[tableIndex].AddressType
+			}
+			offsetValue, ok := l.evalMemoryOffsetConst(ed.Offset, offsetType)
 			if !ok {
-				l.diags.Addf("elem[%d]: offset must be i32.const", i)
+				l.diags.Addf("elem[%d]: offset must be %s.const", i, offsetType)
 				continue
 			}
 			seg.TableIndex = tableIndex
-			seg.OffsetI32 = offsetValue
+			seg.OffsetType = offsetType
+			seg.OffsetI64 = offsetValue
 		}
 		if len(ed.Exprs) > 0 {
 			hasSegRefType := false
@@ -336,11 +341,11 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		nullable := refType.Nullable
 
 		min := td.Min
-		if len(td.ElemRefs) > 0 && min < uint32(len(td.ElemRefs)) {
-			min = uint32(len(td.ElemRefs))
+		if len(td.ElemRefs) > 0 && min < uint64(len(td.ElemRefs)) {
+			min = uint64(len(td.ElemRefs))
 		}
-		if len(td.ElemExprs) > 0 && min < uint32(len(td.ElemExprs)) {
-			min = uint32(len(td.ElemExprs))
+		if len(td.ElemExprs) > 0 && min < uint64(len(td.ElemExprs)) {
+			min = uint64(len(td.ElemExprs))
 		}
 		if td.HasMax && td.Max < min {
 			l.diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
@@ -390,7 +395,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		}
 
 		if len(td.ElemRefs) > 0 {
-			seg := wasmir.ElementSegment{TableIndex: tableIdx, OffsetI32: 0}
+			seg := wasmir.ElementSegment{TableIndex: tableIdx, OffsetType: addressType, OffsetI64: 0}
 			if usesExprElementSegment(refType) {
 				// Typed or non-null function tables cannot use the legacy
 				// function-index element encoding. For example,
@@ -423,7 +428,8 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		if len(td.ElemExprs) > 0 {
 			seg := wasmir.ElementSegment{
 				TableIndex: tableIdx,
-				OffsetI32:  0,
+				OffsetType: addressType,
+				OffsetI64:  0,
 				RefType:    refType,
 				Exprs:      make([]wasmir.Instruction, 0, len(td.ElemExprs)),
 			}
@@ -1073,7 +1079,13 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 		fl.lowerInstruction(nested)
 	}
 	if typeRef == "" {
-		fl.diagf(fi.Loc(), "call_indirect requires a (type ...) clause")
+		typeIdx := fl.mod.internFuncType(nil, nil, "")
+		fl.emitInstr(wasmir.Instruction{
+			Kind:          wasmir.InstrCallIndirect,
+			CallTypeIndex: typeIdx,
+			TableIndex:    tableIndex,
+			SourceLoc:     fi.loc.String(),
+		})
 		return
 	}
 	typeIdx, _, ok := fl.resolveTypeRef(typeRef)

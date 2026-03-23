@@ -501,15 +501,17 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
 				break
 			}
-			if offsetInstr.Kind != wasmir.InstrI32Const {
-				diags.Addf("element[%d]: offset expr must be i32.const", i)
+			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
+			if !ok {
+				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			funcIndices := decodeElemFuncIndices(r, i, diags)
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  0,
-				OffsetI32:   offsetInstr.I32Const,
+				OffsetType:  offsetType,
+				OffsetI64:   offsetValue,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagPassiveFuncIndices:
@@ -538,8 +540,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
 				break
 			}
-			if offsetInstr.Kind != wasmir.InstrI32Const {
-				diags.Addf("element[%d]: offset expr must be i32.const", i)
+			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
+			if !ok {
+				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			elemKind, err := readByte(r)
@@ -555,7 +558,8 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  tableIndex,
-				OffsetI32:   offsetInstr.I32Const,
+				OffsetType:  offsetType,
+				OffsetI64:   offsetValue,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagDeclarativeFuncIndices:
@@ -584,8 +588,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
 				break
 			}
-			if offsetInstr.Kind != wasmir.InstrI32Const {
-				diags.Addf("element[%d]: offset expr must be i32.const", i)
+			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
+			if !ok {
+				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			refType, err := decodeRefTypeFromReader(r)
@@ -610,7 +615,8 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:       wasmir.ElemSegmentModeActive,
 				TableIndex: tableIndex,
-				OffsetI32:  offsetInstr.I32Const,
+				OffsetType: offsetType,
+				OffsetI64:  offsetValue,
 				Exprs:      exprs,
 				RefType:    refType,
 			})
@@ -738,6 +744,17 @@ func decodeElemFuncIndices(r *bytes.Reader, elemIdx uint32, diags *diag.ErrorLis
 	return funcIndices
 }
 
+func decodeElemOffsetExpr(instr wasmir.Instruction) (wasmir.ValueType, int64, bool) {
+	switch instr.Kind {
+	case wasmir.InstrI32Const:
+		return wasmir.ValueTypeI32, int64(instr.I32Const), true
+	case wasmir.InstrI64Const:
+		return wasmir.ValueTypeI64, instr.I64Const, true
+	default:
+		return wasmir.ValueType{}, 0, false
+	}
+}
+
 func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
 	alignField, err := readU32(r)
 	if err != nil {
@@ -819,18 +836,8 @@ func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
 	}
 }
 
-func decodeTableLimits(r *bytes.Reader) (wasmir.ValueType, uint32, bool, uint32, error) {
-	addrType, min, hasMax, max, err := decodeMemoryLimits(r)
-	if err != nil {
-		return wasmir.ValueTypeI32, 0, false, 0, err
-	}
-	if min > math.MaxUint32 {
-		return wasmir.ValueTypeI32, 0, false, 0, fmt.Errorf("table minimum exceeds uint32")
-	}
-	if hasMax && max > math.MaxUint32 {
-		return wasmir.ValueTypeI32, 0, false, 0, fmt.Errorf("table maximum exceeds uint32")
-	}
-	return addrType, uint32(min), hasMax, uint32(max), nil
+func decodeTableLimits(r *bytes.Reader) (wasmir.ValueType, uint64, bool, uint64, error) {
+	return decodeMemoryLimits(r)
 }
 
 func decodeExportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Export {

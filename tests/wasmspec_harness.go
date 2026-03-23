@@ -2183,6 +2183,7 @@ func (r *scriptRunner) instantiateSpectest() error {
   (func (export "print_i32_f32") (param i32 f32))
   (func (export "print_f64_f64") (param f64 f64))
   (table (export "table") 10 20 funcref)
+  (table (export "table64") i64 0 funcref)
   (memory (export "memory") 1 2)
   (global (export "global_i32") i32 (i32.const 666))
   (global (export "global_i64") i64 (i64.const 666))
@@ -2246,9 +2247,9 @@ func detectElemInitTrap(wasm []byte) (bool, string, error) {
 		if len(elem.Exprs) > 0 {
 			length = len(elem.Exprs)
 		}
-		start := uint64(uint32(elem.OffsetI32))
+		start := uint64(elem.OffsetI64)
 		end := start + uint64(length)
-		if end > uint64(t.Min) {
+		if end > t.Min {
 			return true, "out of bounds table access", nil
 		}
 	}
