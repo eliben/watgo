@@ -1788,7 +1788,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: instrLoc}
 		if len(pi.Operands) == 1 {
-			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0])
+			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0], fl.mod.typesByName)
 			if !ok {
 				fl.diagf(pi.Operands[0].Loc(), "invalid if result type")
 				return
@@ -1808,7 +1808,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
 		if len(pi.Operands) == 1 {
-			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0])
+			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0], fl.mod.typesByName)
 			if !ok {
 				fl.diagf(pi.Operands[0].Loc(), "invalid %s result type", pi.Name)
 				return
@@ -2612,12 +2612,15 @@ func (fl *functionLowerer) lowerLabelOperand(op Operand) (uint32, bool) {
 
 // lowerBlockResultTypeOperand resolves op as a block/if result type keyword.
 // It returns the lowered type and true on success.
-func lowerBlockResultTypeOperand(op Operand) (wasmir.ValueType, bool) {
-	kw, ok := op.(*KeywordOperand)
-	if !ok {
+func lowerBlockResultTypeOperand(op Operand, typesByName map[string]uint32) (wasmir.ValueType, bool) {
+	switch o := op.(type) {
+	case *KeywordOperand:
+		return lowerValueType(&BasicType{Name: o.Value}, typesByName)
+	case *TypeOperand:
+		return lowerValueType(o.Ty, typesByName)
+	default:
 		return wasmir.ValueType{}, false
 	}
-	return lowerValueType(&BasicType{Name: kw.Value}, nil)
 }
 
 // lowerFoldedBlockTypeArg lowers one folded block/if signature argument.

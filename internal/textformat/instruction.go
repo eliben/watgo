@@ -143,3 +143,17 @@ func (*KeywordOperand) isOperand() {}
 func (op *KeywordOperand) Loc() string {
 	return op.loc.String()
 }
+
+// TypeOperand is a parsed value/reference type used as a plain structured
+// control blocktype operand, for example in `if (result i32)`.
+type TypeOperand struct {
+	Ty  Type
+	loc location
+}
+
+func (*TypeOperand) isOperand() {}
+
+// Loc returns the source location of this operand as "line:column".
+func (op *TypeOperand) Loc() string {
+	return op.loc.String()
+}

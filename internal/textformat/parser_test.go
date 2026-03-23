@@ -390,6 +390,41 @@ func TestParseModule_FoldedIf(t *testing.T) {
 	}
 }
 
+func TestParseModule_PlainIfWithResultClause(t *testing.T) {
+	wat := `(module
+  (func (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.gt_s
+    if (result i32)
+      i32.const 1
+    else
+      i32.const 0
+    end
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if len(f.Instrs) < 4 {
+		t.Fatalf("got %d instructions, want at least 4", len(f.Instrs))
+	}
+	ifInstr := mustPlainInstr(t, f.Instrs[3])
+	if ifInstr.Name != "if" {
+		t.Fatalf("instruction name=%q, want if", ifInstr.Name)
+	}
+	if len(ifInstr.Operands) != 1 {
+		t.Fatalf("if operand count=%d, want 1", len(ifInstr.Operands))
+	}
+	if _, ok := ifInstr.Operands[0].(*TypeOperand); !ok {
+		t.Fatalf("if operand=%T, want *TypeOperand", ifInstr.Operands[0])
+	}
+}
+
 func TestParseModule_FoldedStructuredBodyAllowsPlainInstructions(t *testing.T) {
 	wat := `(module
   (func

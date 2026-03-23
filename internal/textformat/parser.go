@@ -1085,6 +1085,11 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	}
 
 	name := elem.tok.value
+	if (name == "if" || name == "block" || name == "loop") && cursor+1 < len(elems) {
+		if typeOp, ok := p.parsePlainControlTypeOperand(elems[cursor+1]); ok {
+			return &PlainInstr{Name: name, Operands: []Operand{typeOp}, loc: elem.loc}, cursor + 2
+		}
+	}
 	switch name {
 	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null":
 		if cursor+1 >= len(elems) {
@@ -1121,6 +1126,24 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		// zero-operand instructions.
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
 	}
+}
+
+// parsePlainControlTypeOperand parses a single-result blocktype clause used by
+// linear control forms such as `if (result i32)` and `block (result (ref $t))`.
+func (p *Parser) parsePlainControlTypeOperand(sx *SExpr) (Operand, bool) {
+	if !sx.IsList() || sx.HeadKeyword() != "result" {
+		return nil, false
+	}
+	if len(sx.list) != 2 {
+		p.emitError(sx.loc, "plain control result clause expects exactly one type")
+		return nil, true
+	}
+	ty := p.parseType(sx.list[1])
+	if ty == nil {
+		p.emitError(sx.loc, "invalid plain control result type")
+		return nil, true
+	}
+	return &TypeOperand{Ty: ty, loc: sx.loc}, true
 }
 
 // parseFoldedInstr parses one folded instruction expression and preserves it
