@@ -238,16 +238,73 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 			diags.Addf("type[%d]: failed to read form: %v", i, err)
 			break
 		}
-		if form != typeCodeFunc {
+		switch form {
+		case typeCodeFunc:
+			params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", i), diags)
+			results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", i), diags)
+			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindFunc, Params: params, Results: results})
+		case typeCodeStruct:
+			fieldCount, err := readU32(r)
+			if err != nil {
+				diags.Addf("type[%d]: invalid struct field count: %v", i, err)
+				break
+			}
+			fields := make([]wasmir.FieldType, 0, fieldCount)
+			for j := uint32(0); j < fieldCount; j++ {
+				field, err := decodeFieldType(r)
+				if err != nil {
+					diags.Addf("type[%d] field[%d]: %v", i, j, err)
+					break
+				}
+				fields = append(fields, field)
+			}
+			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindStruct, Fields: fields})
+		case typeCodeArray:
+			field, err := decodeFieldType(r)
+			if err != nil {
+				diags.Addf("type[%d] element: %v", i, err)
+				break
+			}
+			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindArray, ElemField: field})
+		default:
 			diags.Addf("type[%d]: unsupported type form 0x%x", i, form)
 			break
 		}
-
-		params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", i), diags)
-		results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", i), diags)
-		out = append(out, wasmir.FuncType{Params: params, Results: results})
 	}
 	return out
+}
+
+func decodeFieldType(r *bytes.Reader) (wasmir.FieldType, error) {
+	b, err := readByte(r)
+	if err != nil {
+		return wasmir.FieldType{}, err
+	}
+	field := wasmir.FieldType{}
+	switch b {
+	case packedTypeI8Code:
+		field.Packed = wasmir.PackedTypeI8
+	case packedTypeI16Code:
+		field.Packed = wasmir.PackedTypeI16
+	default:
+		vt, err := decodeValueTypeFromLeadingByte(r, b)
+		if err != nil {
+			return wasmir.FieldType{}, err
+		}
+		field.Type = vt
+	}
+	mut, err := readByte(r)
+	if err != nil {
+		return wasmir.FieldType{}, err
+	}
+	switch mut {
+	case fieldImmutableCode:
+		field.Mutable = false
+	case fieldMutableCode:
+		field.Mutable = true
+	default:
+		return wasmir.FieldType{}, fmt.Errorf("invalid mutability 0x%x", mut)
+	}
+	return field, nil
 }
 
 func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import {
@@ -467,7 +524,7 @@ func decodeGlobalSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Global
 			diags.Addf("global[%d]: unsupported mutability 0x%x", i, mut)
 			break
 		}
-		init, err := decodeConstExpr(r)
+		init, err := decodeConstExprInstrs(r)
 		if err != nil {
 			diags.Addf("global[%d]: invalid initializer: %v", i, err)
 			break
@@ -1237,6 +1294,73 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				diags.Addf("code[%d]: unsupported 0xfc subopcode 0x%x", funcIdx, subop)
 				return out
 			}
+		case opPrefixFBCode:
+			subop, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: 0xfb prefixed op missing/invalid subopcode: %v", funcIdx, err)
+				return out
+			}
+			switch subop {
+			case subopArrayNewCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIndex})
+			case subopArrayNewDefaultCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new_default missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIndex})
+			case subopArrayNewDataCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new_data missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				dataIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new_data missing/invalid data immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewData, TypeIndex: typeIndex, DataIndex: dataIndex})
+			case subopArrayGetUCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.get_u missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetU, TypeIndex: typeIndex})
+			case subopArrayGetSCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.get_s missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetS, TypeIndex: typeIndex})
+			case subopArrayCopyCode:
+				dstTypeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.copy missing/invalid destination type immediate: %v", funcIdx, err)
+					return out
+				}
+				srcTypeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.copy missing/invalid source type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{
+					Kind:            wasmir.InstrArrayCopy,
+					TypeIndex:       dstTypeIndex,
+					SourceTypeIndex: srcTypeIndex,
+				})
+			default:
+				diags.Addf("code[%d]: unsupported 0xfb subopcode 0x%x", funcIdx, subop)
+				return out
+			}
 		case opCallCode:
 			funcIndex, err := readU32(r)
 			if err != nil {
@@ -1720,10 +1844,35 @@ func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instru
 }
 
 func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
-	op, err := readByte(r)
+	instrs, err := decodeConstExprInstrs(r)
 	if err != nil {
 		return wasmir.Instruction{}, err
 	}
+	if len(instrs) != 1 {
+		return wasmir.Instruction{}, fmt.Errorf("const expr must contain exactly one instruction")
+	}
+	return instrs[0], nil
+}
+
+func decodeConstExprInstrs(r *bytes.Reader) ([]wasmir.Instruction, error) {
+	var out []wasmir.Instruction
+	for {
+		op, err := readByte(r)
+		if err != nil {
+			return nil, err
+		}
+		if op == opEndCode {
+			return out, nil
+		}
+		ins, err := decodeConstExprInstr(r, op)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ins)
+	}
+}
+
+func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) {
 	var ins wasmir.Instruction
 	switch op {
 	case opI32ConstCode:
@@ -1768,15 +1917,29 @@ func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
 			return wasmir.Instruction{}, err
 		}
 		ins = wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIndex}
+	case opPrefixFBCode:
+		subop, err := readU32(r)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		switch subop {
+		case subopArrayNewCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIndex}
+		case subopArrayNewDefaultCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIndex}
+		default:
+			return wasmir.Instruction{}, fmt.Errorf("unsupported const expr 0xfb subopcode 0x%x", subop)
+		}
 	default:
 		return wasmir.Instruction{}, fmt.Errorf("unsupported const expr opcode 0x%x", op)
-	}
-	end, err := readByte(r)
-	if err != nil {
-		return wasmir.Instruction{}, err
-	}
-	if end != opEndCode {
-		return wasmir.Instruction{}, fmt.Errorf("const expr missing end")
 	}
 	return ins, nil
 }

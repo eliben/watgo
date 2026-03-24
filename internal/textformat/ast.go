@@ -149,6 +149,9 @@ type MemoryDecl struct {
 
 // DataDecl is one module-level data segment declaration "(data ...)".
 type DataDecl struct {
+	// Id is the optional data segment identifier.
+	Id string
+
 	// MemoryRef is the optional memory reference from "(data (memory X) ...)".
 	// It is empty when omitted, which implies memory index 0 for active
 	// segments.

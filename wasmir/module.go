@@ -202,11 +202,16 @@ const (
 	InstrTableSize
 	InstrStructNew
 	InstrStructGet
+	InstrArrayNew
 	InstrArrayLen
 	InstrArrayNewDefault
+	InstrArrayNewData
 	InstrArrayNewFixed
 	InstrArrayGet
+	InstrArrayGetS
+	InstrArrayGetU
 	InstrArraySet
+	InstrArrayCopy
 	InstrRefTest
 	InstrRefCast
 	InstrRefI31
@@ -430,8 +435,17 @@ const (
 type FieldType struct {
 	Name    string
 	Type    ValueType
+	Packed  PackedType
 	Mutable bool
 }
+
+type PackedType uint8
+
+const (
+	PackedTypeNone PackedType = iota
+	PackedTypeI8
+	PackedTypeI16
+)
 
 // Function is a function definition with locals and body instructions.
 type Function struct {
@@ -606,8 +620,9 @@ type Global struct {
 	ImportName string
 
 	// Init is the initializer constant expression for this global.
-	// It is expected to be a valid constant expression instruction.
-	Init Instruction
+	// The instruction slice is expected to leave exactly one result on the
+	// const-expression stack.
+	Init []Instruction
 }
 
 // ElementSegment is one active table element segment.
@@ -668,6 +683,9 @@ type Instruction struct {
 	// TypeIndex is the referenced GC or function type index immediate used by
 	// aggregate instructions such as struct.new, struct.get, and array.get.
 	TypeIndex uint32
+
+	// SourceTypeIndex is the secondary type index immediate used by array.copy.
+	SourceTypeIndex uint32
 
 	// FieldIndex is the field index immediate used by struct.get and struct.set.
 	FieldIndex uint32

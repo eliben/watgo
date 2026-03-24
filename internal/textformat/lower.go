@@ -60,6 +60,10 @@ type moduleLowerer struct {
 	// elemIndicesByName maps element segment identifiers to their module
 	// element indices for instructions such as table.init and elem.drop.
 	elemIndicesByName map[string]uint32
+
+	// dataIndicesByName maps data segment identifiers to their module data
+	// indices for instructions such as array.new_data.
+	dataIndicesByName map[string]uint32
 }
 
 // functionLowerer owns state while lowering one function.
@@ -147,6 +151,7 @@ func newModuleLowerer() *moduleLowerer {
 		tableNonNullable:  map[uint32]bool{},
 		elemRefTypeByName: map[string]wasmir.ValueType{},
 		elemIndicesByName: map[string]uint32{},
+		dataIndicesByName: map[string]uint32{},
 	}
 }
 
@@ -247,7 +252,11 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 					l.diags.Addf("elem[%d] expr[%d]: type mismatch", i, j)
 					continue
 				}
-				seg.Exprs = append(seg.Exprs, ce.Instr)
+				if len(ce.Instrs) != 1 {
+					l.diags.Addf("elem[%d] expr[%d]: constant expression must be a single instruction", i, j)
+					continue
+				}
+				seg.Exprs = append(seg.Exprs, ce.Instrs[0])
 			}
 		} else {
 			if ed.RefTy != nil {
@@ -479,7 +488,11 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 					l.diags.Addf("table[%d] elem expr[%d]: type mismatch", i, j)
 					continue
 				}
-				seg.Exprs = append(seg.Exprs, ci.Instr)
+				if len(ci.Instrs) != 1 {
+					l.diags.Addf("table[%d] elem expr[%d]: constant expression must be a single instruction", i, j)
+					continue
+				}
+				seg.Exprs = append(seg.Exprs, ci.Instrs[0])
 			}
 			l.out.Elements = append(l.out.Elements, seg)
 		}
@@ -494,12 +507,16 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
-			if !nullable && ci.Instr.Kind == wasmir.InstrRefNull {
+			if len(ci.Instrs) != 1 {
+				l.diags.Addf("table[%d]: inline initializer must be a single constant instruction", i)
+				continue
+			}
+			if !nullable && ci.Instrs[0].Kind == wasmir.InstrRefNull {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
 			l.out.Tables[tableIdx].HasInit = true
-			l.out.Tables[tableIdx].Init = ci.Instr
+			l.out.Tables[tableIdx].Init = ci.Instrs[0]
 		} else if !nullable {
 			l.diags.Addf("table[%d]: type mismatch", i)
 		}
@@ -608,7 +625,15 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 		seg := wasmir.DataSegment{Init: init}
 		if dd.Offset == nil {
 			seg.Mode = wasmir.DataSegmentModePassive
+			dataIndex := uint32(len(l.out.Data))
 			l.out.Data = append(l.out.Data, seg)
+			if dd.Id != "" {
+				if prev, exists := l.dataIndicesByName[dd.Id]; exists {
+					l.diags.Addf("data[%d] %s: duplicate data id (first seen at data[%d])", i, dd.Id, prev)
+				} else {
+					l.dataIndicesByName[dd.Id] = dataIndex
+				}
+			}
 			continue
 		}
 
@@ -625,7 +650,15 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 		seg.MemoryIndex = memoryIndex
 		seg.OffsetType = offsetType
 		seg.OffsetI64 = offset
+		dataIndex := uint32(len(l.out.Data))
 		l.out.Data = append(l.out.Data, seg)
+		if dd.Id != "" {
+			if prev, exists := l.dataIndicesByName[dd.Id]; exists {
+				l.diags.Addf("data[%d] %s: duplicate data id (first seen at data[%d])", i, dd.Id, prev)
+			} else {
+				l.dataIndicesByName[dd.Id] = dataIndex
+			}
+		}
 	}
 }
 
@@ -668,7 +701,7 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 				l.diags.Addf("global[%d]: initializer type mismatch", i)
 				continue
 			}
-			g.Init = ci.Instr
+			g.Init = append([]wasmir.Instruction(nil), ci.Instrs...)
 		}
 		l.out.Globals = append(l.out.Globals, g)
 		if gd.Id == "" {
@@ -1768,6 +1801,63 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set":
+		if len(pi.Operands) != 1 {
+			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
+			return
+		}
+		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid %s type operand", pi.Name)
+			return
+		}
+		kind, _ := instructionKind(pi.Name)
+		fl.emitInstr(wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc})
+		return
+	case "array.new_data":
+		if len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "array.new_data expects 2 operands")
+			return
+		}
+		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid array.new_data type operand")
+			return
+		}
+		dataIndex, ok := lowerDataIndexOperand(pi.Operands[1], fl.mod.dataIndicesByName)
+		if !ok {
+			fl.diagf(pi.Operands[1].Loc(), "invalid array.new_data data operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:      wasmir.InstrArrayNewData,
+			TypeIndex: typeIndex,
+			DataIndex: dataIndex,
+			SourceLoc: instrLoc,
+		})
+		return
+	case "array.copy":
+		if len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "array.copy expects 2 operands")
+			return
+		}
+		dstTypeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid array.copy destination type operand")
+			return
+		}
+		srcTypeIndex, ok := lowerTypeIndexOperand(pi.Operands[1], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[1].Loc(), "invalid array.copy source type operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:            wasmir.InstrArrayCopy,
+			TypeIndex:       dstTypeIndex,
+			SourceTypeIndex: srcTypeIndex,
+			SourceLoc:       instrLoc,
+		})
+		return
 	case "array.new_fixed":
 		if len(pi.Operands) != 2 {
 			fl.diagf(instrLoc, "array.new_fixed expects 2 operands")
@@ -1797,7 +1887,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrArrayLen, SourceLoc: instrLoc})
 		return
-	case "struct.new", "array.new_default", "array.get", "array.set":
+	case "struct.new":
 		if len(pi.Operands) != 1 {
 			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
 			return
@@ -2309,7 +2399,7 @@ func decodeRefFuncOperands(fl *functionLowerer, ins *wasmir.Instruction, operand
 // decodeDataIndexOperands decodes operands into ins.DataIndex for memory.init
 // and data.drop.
 func decodeDataIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
-	dataIndex, ok := lowerDataIndexOperand(operands[0])
+	dataIndex, ok := lowerDataIndexOperand(operands[0], nil)
 	if !ok {
 		return false
 	}
@@ -2452,8 +2542,8 @@ func lowerF64ConstOperand(op Operand) (uint64, bool) {
 
 // loweredConstInstr is one lowered constant expression plus its resulting type.
 type loweredConstInstr struct {
-	Instr wasmir.Instruction
-	Type  wasmir.ValueType
+	Instrs []wasmir.Instruction
+	Type   wasmir.ValueType
 }
 
 // evalI32ConstExpr evaluates an element offset constant expression to i32.
@@ -2496,11 +2586,14 @@ func (l *moduleLowerer) evalI32ConstExpr(init Instruction) (int32, bool) {
 	if !ok {
 		return 0, false
 	}
-	switch ci.Instr.Kind {
+	if len(ci.Instrs) != 1 {
+		return 0, false
+	}
+	switch ci.Instrs[0].Kind {
 	case wasmir.InstrI32Const:
-		return ci.Instr.I32Const, true
+		return ci.Instrs[0].I32Const, true
 	case wasmir.InstrGlobalGet:
-		return l.evalImportedI32Global(ci.Instr.GlobalIndex)
+		return l.evalImportedI32Global(ci.Instrs[0].GlobalIndex)
 	default:
 		return 0, false
 	}
@@ -2552,9 +2645,12 @@ func (l *moduleLowerer) evalI64ConstExpr(init Instruction) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	switch ci.Instr.Kind {
+	if len(ci.Instrs) != 1 {
+		return 0, false
+	}
+	switch ci.Instrs[0].Kind {
 	case wasmir.InstrI64Const:
-		return ci.Instr.I64Const, true
+		return ci.Instrs[0].I64Const, true
 	default:
 		return 0, false
 	}
@@ -2600,8 +2696,8 @@ func (l *moduleLowerer) evalImportedI32Global(globalIdx uint32) (int32, bool) {
 		return 0, false
 	}
 	if !g.Imported {
-		if g.Init.Kind == wasmir.InstrI32Const {
-			return g.Init.I32Const, true
+		if len(g.Init) == 1 && g.Init[0].Kind == wasmir.InstrI32Const {
+			return g.Init[0].I32Const, true
 		}
 		return 0, false
 	}
@@ -2613,37 +2709,29 @@ func (l *moduleLowerer) evalImportedI32Global(globalIdx uint32) (int32, bool) {
 
 // lowerConstInstr lowers init as a module-level constant expression.
 //
-// Accepted source forms are one-operand plain/folded instructions:
-//   - i32.const, i64.const, f32.const, f64.const
-//   - ref.null <heaptype>
-//   - ref.func <funcidx-or-id>
-//   - global.get <globalidx-or-id>
+// Besides simple one-op forms like `i32.const` and `ref.null`, this also
+// accepts folded GC aggregate initializers such as:
+//   - (array.new $arr (i32.const 10) (i32.const 12))
+//   - (array.new_default $arr (i32.const 12))
 //
-// The returned loweredConstInstr contains both the semantic instruction and the
-// statically known resulting value type. global.get is resolved against globals
-// already collected in l.out.Globals, so only earlier globals are valid here.
-//
-// This is a moduleLowerer method because it needs module-level resolution state
-// (function/global name maps and current globals) that is already owned by l.
+// The returned loweredConstInstr contains the full flat instruction sequence
+// plus the statically known resulting value type.
 func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, bool) {
-	var name string
-	var op Operand
 	switch in := init.(type) {
 	case *PlainInstr:
-		if len(in.Operands) != 1 {
-			return nil, false
-		}
-		name = in.Name
-		op = in.Operands[0]
+		return l.lowerPlainConstInstr(in.Name, in.Operands)
 	case *FoldedInstr:
-		if len(in.Args) != 1 || in.Args[0].Instr != nil || in.Args[0].Operand == nil {
-			return nil, false
-		}
-		name = in.Name
-		op = in.Args[0].Operand
+		return l.lowerFoldedConstInstr(in)
 	default:
 		return nil, false
 	}
+}
+
+func (l *moduleLowerer) lowerPlainConstInstr(name string, operands []Operand) (*loweredConstInstr, bool) {
+	if len(operands) != 1 {
+		return nil, false
+	}
+	op := operands[0]
 
 	switch name {
 	case "i32.const":
@@ -2652,8 +2740,8 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: imm},
-			Type:  wasmir.ValueTypeI32,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrI32Const, I32Const: imm}},
+			Type:   wasmir.ValueTypeI32,
 		}, true
 	case "i64.const":
 		imm, ok := lowerI64ConstOperand(op)
@@ -2661,8 +2749,8 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: imm},
-			Type:  wasmir.ValueTypeI64,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrI64Const, I64Const: imm}},
+			Type:   wasmir.ValueTypeI64,
 		}, true
 	case "f32.const":
 		imm, ok := lowerF32ConstOperand(op)
@@ -2670,8 +2758,8 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: imm},
-			Type:  wasmir.ValueTypeF32,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrF32Const, F32Const: imm}},
+			Type:   wasmir.ValueTypeF32,
 		}, true
 	case "f64.const":
 		imm, ok := lowerF64ConstOperand(op)
@@ -2679,33 +2767,17 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: imm},
-			Type:  wasmir.ValueTypeF64,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrF64Const, F64Const: imm}},
+			Type:   wasmir.ValueTypeF64,
 		}, true
 	case "ref.null":
-		var vt wasmir.ValueType
-		switch o := op.(type) {
-		case *KeywordOperand:
-			switch o.Value {
-			case "func":
-				vt = wasmir.RefTypeFunc(true)
-			case "extern":
-				vt = wasmir.RefTypeExtern(true)
-			default:
-				return nil, false
-			}
-		case *IdOperand:
-			typeIdx, ok := l.typesByName[o.Value]
-			if !ok {
-				return nil, false
-			}
-			vt = wasmir.RefTypeIndexed(typeIdx, true)
-		default:
+		vt, ok := l.lowerConstRefNullType(op)
+		if !ok {
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: vt},
-			Type:  vt,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrRefNull, RefType: vt}},
+			Type:   vt,
 		}, true
 	case "ref.func":
 		funcIdx, ok := lowerFuncIndexOperand(op, l.funcsByName)
@@ -2713,8 +2785,8 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx},
-			Type:  wasmir.RefTypeFunc(false),
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx}},
+			Type:   wasmir.RefTypeFunc(false),
 		}, true
 	case "global.get":
 		globalIdx, ok := lowerGlobalIndexOperand(op, l.globalsByName)
@@ -2722,11 +2794,90 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 			return nil, false
 		}
 		return &loweredConstInstr{
-			Instr: wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx},
-			Type:  l.out.Globals[globalIdx].Type,
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx}},
+			Type:   l.out.Globals[globalIdx].Type,
 		}, true
 	default:
 		return nil, false
+	}
+}
+
+func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstInstr, bool) {
+	switch fi.Name {
+	case "array.new":
+		if len(fi.Args) != 3 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil ||
+			fi.Args[1].Instr == nil || fi.Args[1].Operand != nil ||
+			fi.Args[2].Instr == nil || fi.Args[2].Operand != nil {
+			return nil, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(fi.Args[0].Operand)
+		if !ok {
+			return nil, false
+		}
+		valueExpr, ok := l.lowerConstInstr(fi.Args[1].Instr)
+		if !ok {
+			return nil, false
+		}
+		lenExpr, ok := l.lowerConstInstr(fi.Args[2].Instr)
+		if !ok {
+			return nil, false
+		}
+		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
+		instrs = append(instrs, lenExpr.Instrs...)
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIdx})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
+	case "array.new_default":
+		if len(fi.Args) != 2 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil ||
+			fi.Args[1].Instr == nil || fi.Args[1].Operand != nil {
+			return nil, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(fi.Args[0].Operand)
+		if !ok {
+			return nil, false
+		}
+		lenExpr, ok := l.lowerConstInstr(fi.Args[1].Instr)
+		if !ok {
+			return nil, false
+		}
+		instrs := append([]wasmir.Instruction{}, lenExpr.Instrs...)
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIdx})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
+	default:
+		operands := make([]Operand, 0, len(fi.Args))
+		for _, arg := range fi.Args {
+			if arg.Operand == nil || arg.Instr != nil {
+				return nil, false
+			}
+			operands = append(operands, arg.Operand)
+		}
+		return l.lowerPlainConstInstr(fi.Name, operands)
+	}
+}
+
+func (l *moduleLowerer) lowerConstRefNullType(op Operand) (wasmir.ValueType, bool) {
+	if refType, ok := lowerRefHeapTypeOperand(op); ok {
+		return refType, true
+	}
+	idOp, ok := op.(*IdOperand)
+	if !ok {
+		return wasmir.ValueType{}, false
+	}
+	typeIdx, ok := l.typesByName[idOp.Value]
+	if !ok {
+		return wasmir.ValueType{}, false
+	}
+	return wasmir.RefTypeIndexed(typeIdx, true), true
+}
+
+func (l *moduleLowerer) lowerConstTypeIndexOperand(op Operand) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		typeIdx, found := l.typesByName[o.Value]
+		return typeIdx, found
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
 	}
 }
 
@@ -2879,12 +3030,19 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 }
 
 // lowerDataIndexOperand resolves op as a data segment index.
-func lowerDataIndexOperand(op Operand) (uint32, bool) {
-	intOp, ok := op.(*IntOperand)
-	if !ok {
+func lowerDataIndexOperand(op Operand, dataIndicesByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		if dataIndicesByName == nil {
+			return 0, false
+		}
+		idx, ok := dataIndicesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
 		return 0, false
 	}
-	return parseU32Literal(intOp.Value)
 }
 
 // lowerElemIndexOperand resolves op as an element segment index using
@@ -3294,6 +3452,14 @@ func (l *moduleLowerer) lowerFieldType(fd *FieldDecl, typeIdx int, fieldIdx int)
 	if fd == nil {
 		l.diags.Addf("type[%d] field[%d]: nil field declaration", typeIdx, fieldIdx)
 		return wasmir.FieldType{}, false
+	}
+	if bt, ok := fd.Ty.(*BasicType); ok {
+		switch bt.Name {
+		case "i8":
+			return wasmir.FieldType{Name: fd.Id, Packed: wasmir.PackedTypeI8, Mutable: fd.Mutable}, true
+		case "i16":
+			return wasmir.FieldType{Name: fd.Id, Packed: wasmir.PackedTypeI16, Mutable: fd.Mutable}, true
+		}
 	}
 	vt, ok := lowerValueType(fd.Ty, l.typesByName)
 	if !ok {

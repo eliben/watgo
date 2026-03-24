@@ -236,9 +236,14 @@ func init() {
 	})
 	registerInstructions(instrSyntaxSpecial, map[string]wasmir.InstrKind{
 		"array.get":         wasmir.InstrArrayGet,
+		"array.get_s":       wasmir.InstrArrayGetS,
+		"array.get_u":       wasmir.InstrArrayGetU,
 		"array.len":         wasmir.InstrArrayLen,
+		"array.new":         wasmir.InstrArrayNew,
+		"array.new_data":    wasmir.InstrArrayNewData,
 		"array.new_default": wasmir.InstrArrayNewDefault,
 		"array.new_fixed":   wasmir.InstrArrayNewFixed,
+		"array.copy":        wasmir.InstrArrayCopy,
 		"array.set":         wasmir.InstrArraySet,
 		"br_table":          wasmir.InstrBrTable,
 		"call_indirect":     wasmir.InstrCallIndirect,

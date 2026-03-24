@@ -1776,6 +1776,12 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "out of bounds memory access" {
 		return strings.Contains(gotLower, "memory access out of bounds")
 	}
+	if wantLower == "null array reference" {
+		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
+	if wantLower == "out of bounds array access" {
+		return strings.Contains(gotLower, "array element access out of bounds")
+	}
 	return false
 }
 

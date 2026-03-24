@@ -38,6 +38,8 @@ const (
 	valueTypeI64Code       byte = 0x7e
 	valueTypeF32Code       byte = 0x7d
 	valueTypeF64Code       byte = 0x7c
+	packedTypeI16Code      byte = 0x77
+	packedTypeI8Code       byte = 0x78
 	refTypeArrayCode       byte = 0x6a
 	refTypeStructCode      byte = 0x6b
 	refTypeI31Code         byte = 0x6c
@@ -240,11 +242,16 @@ const (
 
 	subopStructNewCode       uint32 = 0x00
 	subopStructGetCode       uint32 = 0x02
+	subopArrayNewCode        uint32 = 0x06
 	subopArrayLenCode        uint32 = 0x0f
 	subopArrayNewDefaultCode uint32 = 0x07
 	subopArrayNewFixedCode   uint32 = 0x08
+	subopArrayNewDataCode    uint32 = 0x09
 	subopArrayGetCode        uint32 = 0x0b
+	subopArrayGetSCode       uint32 = 0x0c
+	subopArrayGetUCode       uint32 = 0x0d
 	subopArraySetCode        uint32 = 0x0e
+	subopArrayCopyCode       uint32 = 0x11
 	subopRefTestCode         uint32 = 0x14
 	subopRefTestNullCode     uint32 = 0x15
 	subopRefCastCode         uint32 = 0x16
@@ -421,8 +428,8 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 			payload.WriteByte(typeCodeStruct)
 			writeULEB128(&payload, uint32(len(ft.Fields)))
 			for j, field := range ft.Fields {
-				if !encodeValueType(&payload, field.Type) {
-					diags.Addf("type[%d] field[%d]: unsupported value type %s", i, j, field.Type)
+				if !encodeFieldStorageType(&payload, field) {
+					diags.Addf("type[%d] field[%d]: unsupported storage type", i, j)
 					payload.WriteByte(0)
 				}
 				if field.Mutable {
@@ -433,8 +440,8 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 			}
 		case wasmir.TypeDefKindArray:
 			payload.WriteByte(typeCodeArray)
-			if !encodeValueType(&payload, ft.ElemField.Type) {
-				diags.Addf("type[%d] element: unsupported value type %s", i, ft.ElemField.Type)
+			if !encodeFieldStorageType(&payload, ft.ElemField) {
+				diags.Addf("type[%d] element: unsupported storage type", i)
 				payload.WriteByte(0)
 			}
 			if ft.ElemField.Mutable {
@@ -602,7 +609,7 @@ func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte 
 		} else {
 			payload.WriteByte(globalMutabilityConstCode)
 		}
-		encodeConstExpr(&payload, fmt.Sprintf("global[%d]", i), g.Init, diags)
+		encodeConstExprInstrs(&payload, fmt.Sprintf("global[%d]", i), g.Init, diags)
 	}
 	return payload.Bytes()
 }
@@ -787,7 +794,7 @@ func moduleUsesDataIndexInstructions(m *wasmir.Module) bool {
 	for _, fn := range m.Funcs {
 		for _, instr := range fn.Body {
 			switch instr.Kind {
-			case wasmir.InstrMemoryInit, wasmir.InstrDataDrop:
+			case wasmir.InstrMemoryInit, wasmir.InstrDataDrop, wasmir.InstrArrayNewData:
 				return true
 			}
 		}
@@ -948,6 +955,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, subopStructGetCode)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.FieldIndex)
+	case wasmir.InstrArrayNew:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewCode)
+		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrArrayLen:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayLenCode)
@@ -955,6 +966,11 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewDefaultCode)
 		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayNewData:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewDataCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.DataIndex)
 	case wasmir.InstrArrayNewFixed:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewFixedCode)
@@ -964,10 +980,23 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayGetCode)
 		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayGetS:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayGetSCode)
+		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayGetU:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayGetUCode)
+		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrArraySet:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArraySetCode)
 		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayCopy:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayCopyCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.SourceTypeIndex)
 	case wasmir.InstrRefTest:
 		out.WriteByte(opPrefixFBCode)
 		if instr.RefType.Nullable {
@@ -1316,8 +1345,19 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	}
 }
 
-// encodeConstExpr emits a constant expression terminated by end.
+// encodeConstExpr emits a single-instruction constant expression terminated by end.
 func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
+	encodeConstExprInstrs(out, where, []wasmir.Instruction{init}, diags)
+}
+
+func encodeConstExprInstrs(out *bytes.Buffer, where string, instrs []wasmir.Instruction, diags *diag.ErrorList) {
+	for _, init := range instrs {
+		encodeConstExprInstr(out, where, init, diags)
+	}
+	out.WriteByte(opEndCode)
+}
+
+func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
 	switch init.Kind {
 	case wasmir.InstrI32Const:
 		out.WriteByte(opI32ConstCode)
@@ -1349,12 +1389,19 @@ func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, d
 	case wasmir.InstrGlobalGet:
 		out.WriteByte(opGlobalGetCode)
 		writeULEB128(out, init.GlobalIndex)
+	case wasmir.InstrArrayNew:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewCode)
+		writeULEB128(out, init.TypeIndex)
+	case wasmir.InstrArrayNewDefault:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewDefaultCode)
+		writeULEB128(out, init.TypeIndex)
 	default:
 		diags.Addf("%s: unsupported initializer instruction kind %d", where, init.Kind)
 		out.WriteByte(opI32ConstCode)
 		writeSLEB128(out, 0)
 	}
-	out.WriteByte(opEndCode)
 }
 
 func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string, instr wasmir.Instruction, diags *diag.ErrorList) {
@@ -1432,6 +1479,19 @@ func encodeValueType(out *bytes.Buffer, vt wasmir.ValueType) bool {
 	}
 	out.WriteByte(b)
 	return true
+}
+
+func encodeFieldStorageType(out *bytes.Buffer, ft wasmir.FieldType) bool {
+	switch ft.Packed {
+	case wasmir.PackedTypeI8:
+		out.WriteByte(packedTypeI8Code)
+		return true
+	case wasmir.PackedTypeI16:
+		out.WriteByte(packedTypeI16Code)
+		return true
+	default:
+		return encodeValueType(out, ft.Type)
+	}
 }
 
 func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {

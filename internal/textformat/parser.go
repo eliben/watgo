@@ -656,6 +656,10 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	}
 
 	cursor := 1
+	if sx.list[cursor].IsTokenKind(ID) {
+		dd.Id = sx.list[cursor].tok.value
+		cursor++
+	}
 	if sx.list[cursor].HeadKeyword() == "memory" {
 		memClause := sx.list[cursor]
 		if len(memClause.list) != 2 {
@@ -991,15 +995,25 @@ func (p *Parser) parseFieldType(sx *SExpr) *FieldDecl {
 			return nil
 		}
 		return &FieldDecl{
-			Ty:      p.parseType(sx.list[1]),
+			Ty:      p.parseFieldStorageType(sx.list[1]),
 			Mutable: true,
 			loc:     sx.loc,
 		}
 	}
 	return &FieldDecl{
-		Ty:  p.parseType(sx),
+		Ty:  p.parseFieldStorageType(sx),
 		loc: sx.loc,
 	}
+}
+
+func (p *Parser) parseFieldStorageType(sx *SExpr) Type {
+	if sx.IsTokenKind(KEYWORD) {
+		switch sx.tok.value {
+		case "i8", "i16":
+			return &BasicType{Name: sx.tok.value}
+		}
+	}
+	return p.parseType(sx)
 }
 
 // parseElemRefs parses an inline "(elem ...)" payload inside a table
@@ -1224,7 +1238,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			}
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
-	case "struct.new", "array.new_default":
+	case "struct.new", "array.new", "array.new_default", "array.get_s", "array.get_u":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1
@@ -1237,6 +1251,46 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "array.new_data":
+		if cursor+2 >= len(elems) {
+			p.emitError(elem.loc, "%s expects two operands", name)
+			return nil, cursor + 1
+		}
+		typeOp := p.parseOperand(elems[cursor+1])
+		dataOp := p.parseOperand(elems[cursor+2])
+		switch typeOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		switch dataOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{typeOp, dataOp}, loc: elem.loc}, cursor + 3
+	case "array.copy":
+		if cursor+2 >= len(elems) {
+			p.emitError(elem.loc, "%s expects two operands", name)
+			return nil, cursor + 1
+		}
+		dstOp := p.parseOperand(elems[cursor+1])
+		srcOp := p.parseOperand(elems[cursor+2])
+		switch dstOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		switch srcOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{dstOp, srcOp}, loc: elem.loc}, cursor + 3
 	case "struct.get":
 		if cursor+2 >= len(elems) {
 			p.emitError(elem.loc, "%s expects two operands", name)
