@@ -211,6 +211,7 @@ const (
 	InstrArrayGetS
 	InstrArrayGetU
 	InstrArraySet
+	InstrArrayFill
 	InstrArrayCopy
 	InstrRefTest
 	InstrRefCast

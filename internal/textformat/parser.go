@@ -1238,7 +1238,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			}
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
-	case "struct.new", "array.new", "array.new_default", "array.get_s", "array.get_u":
+	case "struct.new", "array.new", "array.new_default", "array.get_s", "array.get_u", "array.fill":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1

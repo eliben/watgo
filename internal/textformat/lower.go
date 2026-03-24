@@ -1801,7 +1801,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
-	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set":
+	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill":
 		if len(pi.Operands) != 1 {
 			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
 			return

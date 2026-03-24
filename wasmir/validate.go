@@ -1346,6 +1346,43 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 3)
+		case InstrArrayFill:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.fill type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.fill type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if !td.ElemField.Mutable {
+				diags.Addf("%s: immutable array", insCtx)
+				continue
+			}
+			if len(stack) < 4 {
+				diags.Addf("%s: array.fill needs 4 operands", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-4), wantRef) {
+				diags.Addf("%s: array.fill expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			if stack[len(stack)-3] != ValueTypeI32 {
+				diags.Addf("%s: array.fill expects i32 index operand", insCtx)
+				continue
+			}
+			wantValue := validatedValueFromType(fieldValueType(td.ElemField))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-2), wantValue) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.fill expects i32 length operand", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 4)
 		case InstrArrayCopy:
 			dstType, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -2597,6 +2634,8 @@ func instrName(kind InstrKind) string {
 		return "array.get_u"
 	case InstrArraySet:
 		return "array.set"
+	case InstrArrayFill:
+		return "array.fill"
 	case InstrArrayCopy:
 		return "array.copy"
 	case InstrRefTest:

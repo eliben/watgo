@@ -243,6 +243,7 @@ func init() {
 		"array.new_data":    wasmir.InstrArrayNewData,
 		"array.new_default": wasmir.InstrArrayNewDefault,
 		"array.new_fixed":   wasmir.InstrArrayNewFixed,
+		"array.fill":        wasmir.InstrArrayFill,
 		"array.copy":        wasmir.InstrArrayCopy,
 		"array.set":         wasmir.InstrArraySet,
 		"br_table":          wasmir.InstrBrTable,

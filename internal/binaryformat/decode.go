@@ -1341,6 +1341,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetS, TypeIndex: typeIndex})
+			case subopArrayFillCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.fill missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayFill, TypeIndex: typeIndex})
 			case subopArrayCopyCode:
 				dstTypeIndex, err := readU32(r)
 				if err != nil {

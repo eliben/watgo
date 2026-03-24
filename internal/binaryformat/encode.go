@@ -251,6 +251,7 @@ const (
 	subopArrayGetSCode       uint32 = 0x0c
 	subopArrayGetUCode       uint32 = 0x0d
 	subopArraySetCode        uint32 = 0x0e
+	subopArrayFillCode       uint32 = 0x10
 	subopArrayCopyCode       uint32 = 0x11
 	subopRefTestCode         uint32 = 0x14
 	subopRefTestNullCode     uint32 = 0x15
@@ -991,6 +992,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrArraySet:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArraySetCode)
+		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrArrayFill:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayFillCode)
 		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrArrayCopy:
 		out.WriteByte(opPrefixFBCode)
