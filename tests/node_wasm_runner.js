@@ -61,6 +61,11 @@ const modules = new Map();
 // assigned by the Go harness for externref values.
 const externRefs = new Map();
 
+// opaqueExternRefs assigns stable synthetic identities to externref values that
+// did not originate from a watgo-managed host token.
+const opaqueExternRefs = new Map();
+let nextOpaqueExternRefId = 1n;
+
 // floatResultWrappers caches tiny helper modules used to preserve exact float
 // result bits across the Wasm/JS boundary. JS numbers do not preserve NaN
 // payloads, so when a wasm export returns a single f32/f64 result we route the
@@ -79,6 +84,10 @@ const externRefs = new Map();
 //
 // The wrapper returns integer bits, which JS can transport exactly.
 const floatResultWrappers = new Map();
+
+// anyRefResultClassifiers caches tiny helper modules used to classify a single
+// anyref result inside wasm, where ref.test can distinguish i31/struct/array.
+const anyRefResultClassifiers = new Map();
 
 // decodeBytes turns a base64-encoded wasm payload from the Go harness into raw
 // bytes suitable for WebAssembly.Module / WebAssembly.Instance.
@@ -121,6 +130,16 @@ function valueTypeCode(type) {
       return 0x70;
     case 'externref':
       return 0x6f;
+    case 'anyref':
+      return 0x6e;
+    case 'eqref':
+      return 0x6d;
+    case 'i31ref':
+      return 0x6c;
+    case 'structref':
+      return 0x6b;
+    case 'arrayref':
+      return 0x6a;
     default:
       throw new Error(`unsupported wrapper value type ${type}`);
   }
@@ -234,6 +253,117 @@ function buildSingleFloatResultWrapper(paramTypes, resultType) {
   return cached;
 }
 
+// buildSingleAnyRefResultClassifier builds a minimal wasm module that imports
+// one `(func (param ...) (result anyref))` and classifies its result as:
+//   0 = null
+//   1 = i31
+//   2 = struct
+//   3 = array
+//   4 = other anyref
+function buildSingleAnyRefResultClassifier(paramTypes) {
+  const key = paramTypes.join(',');
+  let cached = anyRefResultClassifiers.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const bytes = [
+    0x00, 0x61, 0x73, 0x6d,
+    0x01, 0x00, 0x00, 0x00,
+  ];
+
+  const typeSection = [];
+  encodeULEB128(typeSection, 2);
+  pushFuncType(typeSection, paramTypes, ['anyref']);
+  pushFuncType(typeSection, paramTypes, ['i32']);
+  pushSection(bytes, 1, typeSection);
+
+  const importSection = [];
+  encodeULEB128(importSection, 1);
+  encodeName(importSection, 'm');
+  encodeName(importSection, 'f');
+  importSection.push(0x00);
+  encodeULEB128(importSection, 0);
+  pushSection(bytes, 2, importSection);
+
+  const functionSection = [];
+  encodeULEB128(functionSection, 1);
+  encodeULEB128(functionSection, 1);
+  pushSection(bytes, 3, functionSection);
+
+  const exportSection = [];
+  encodeULEB128(exportSection, 1);
+  encodeName(exportSection, 'classify');
+  exportSection.push(0x00);
+  encodeULEB128(exportSection, 1);
+  pushSection(bytes, 7, exportSection);
+
+  const body = [];
+  encodeULEB128(body, 1); // local decl groups
+  encodeULEB128(body, 1); // one local
+  body.push(0x6e); // anyref
+
+  for (let i = 0; i < paramTypes.length; i++) {
+    body.push(0x20);
+    encodeULEB128(body, i);
+  }
+  body.push(0x10);
+  encodeULEB128(body, 0);
+  body.push(0x21);
+  encodeULEB128(body, paramTypes.length);
+
+  body.push(0x20);
+  encodeULEB128(body, paramTypes.length);
+  body.push(0xd1); // ref.is_null
+  body.push(0x04, 0x7f); // if (result i32)
+  body.push(0x41);
+  encodeULEB128(body, 0);
+  body.push(0x05);
+
+  body.push(0x20);
+  encodeULEB128(body, paramTypes.length);
+  body.push(0xfb);
+  encodeULEB128(body, 0x14); // ref.test
+  body.push(0x6c); // i31
+  body.push(0x04, 0x7f);
+  body.push(0x41);
+  encodeULEB128(body, 1);
+  body.push(0x05);
+
+  body.push(0x20);
+  encodeULEB128(body, paramTypes.length);
+  body.push(0xfb);
+  encodeULEB128(body, 0x14);
+  body.push(0x6b); // struct
+  body.push(0x04, 0x7f);
+  body.push(0x41);
+  encodeULEB128(body, 2);
+  body.push(0x05);
+
+  body.push(0x20);
+  encodeULEB128(body, paramTypes.length);
+  body.push(0xfb);
+  encodeULEB128(body, 0x14);
+  body.push(0x6a); // array
+  body.push(0x04, 0x7f);
+  body.push(0x41);
+  encodeULEB128(body, 3);
+  body.push(0x05);
+  body.push(0x41);
+  encodeULEB128(body, 4);
+  body.push(0x0b, 0x0b, 0x0b, 0x0b, 0x0b);
+
+  const codeSection = [];
+  encodeULEB128(codeSection, 1);
+  encodeULEB128(codeSection, body.length);
+  codeSection.push(...body);
+  pushSection(bytes, 10, codeSection);
+
+  cached = Uint8Array.from(bytes);
+  anyRefResultClassifiers.set(key, cached);
+  return cached;
+}
+
 // buildImports builds the import object visible to a new instantiation from all
 // modules currently registered in this process.
 function buildImports() {
@@ -290,6 +420,18 @@ function getExternRef(bitsText) {
   return ref;
 }
 
+// getOpaqueExternRefId returns a stable synthetic identity string for an
+// arbitrary JS value that crosses the bridge as a non-managed externref.
+function getOpaqueExternRefId(value) {
+  let id = opaqueExternRefs.get(value);
+  if (!id) {
+    id = String(nextOpaqueExternRefId);
+    nextOpaqueExternRefId += 1n;
+    opaqueExternRefs.set(value, id);
+  }
+  return id;
+}
+
 // decodeValue converts one JSON-encoded wasm value from the harness into the JS
 // value expected by the WebAssembly JS API.
 function decodeValue(arg) {
@@ -312,6 +454,22 @@ function decodeValue(arg) {
         return null;
       }
       return getExternRef(arg.bits);
+    case 'anyref':
+      if (arg.null) {
+        return null;
+      }
+      if (arg.refKind === 'host') {
+        return getExternRef(arg.bits);
+      }
+      throw new Error(`unsupported anyref argument kind ${arg.refKind ?? '<missing>'}`);
+    case 'eqref':
+    case 'i31ref':
+    case 'structref':
+    case 'arrayref':
+      if (arg.null) {
+        return null;
+      }
+      throw new Error(`non-null ${arg.type} arguments are not supported`);
     default:
       throw new Error(`unsupported value type ${arg.type}`);
   }
@@ -339,9 +497,46 @@ function encodeValue(valueType, value) {
         return { type: valueType, null: true };
       }
       if (typeof value === 'object' && value !== null && typeof value.__watgoExternRef === 'string') {
-        return { type: valueType, bits: value.__watgoExternRef };
+        return { type: valueType, refKind: 'extern', bits: value.__watgoExternRef };
       }
-      throw new Error('externref result is not a watgo-managed reference');
+      return { type: valueType, refKind: 'extern', bits: getOpaqueExternRefId(value) };
+    case 'anyref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      if (typeof value === 'object' && value !== null && typeof value.__watgoExternRef === 'string') {
+        return { type: valueType, refKind: 'host', bits: value.__watgoExternRef };
+      }
+      if (typeof value === 'number') {
+        return { type: valueType, refKind: 'i31' };
+      }
+      if (typeof WebAssembly.Struct === 'function' && value instanceof WebAssembly.Struct) {
+        return { type: valueType, refKind: 'struct' };
+      }
+      if (typeof WebAssembly.Array === 'function' && value instanceof WebAssembly.Array) {
+        return { type: valueType, refKind: 'array' };
+      }
+      return { type: valueType, refKind: 'eq' };
+    case 'eqref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      return { type: valueType, refKind: 'eq' };
+    case 'i31ref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      return { type: valueType, refKind: 'i31' };
+    case 'structref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      return { type: valueType, refKind: 'struct' };
+    case 'arrayref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      return { type: valueType, refKind: 'array' };
     default:
       throw new Error(`unsupported value type ${valueType}`);
   }
@@ -359,6 +554,33 @@ function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
     return { type: resultType, bits: String(bits >>> 0) };
   }
   return { type: resultType, bits: String(BigInt.asUintN(64, bits)) };
+}
+
+// encodeSingleAnyRefResult classifies a single anyref result with a helper wasm
+// wrapper. Only the generic "other anyref" case falls back to direct JS
+// inspection so host references can preserve their identity token.
+function encodeSingleAnyRefResult(fn, args, argTypes) {
+  const wrapperBytes = buildSingleAnyRefResultClassifier(argTypes);
+  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
+  const code = wrapperInstance.exports.classify(...args);
+  switch (code) {
+    case 0:
+      return { type: 'anyref', null: true };
+    case 1:
+      return { type: 'anyref', refKind: 'i31' };
+    case 2:
+      return { type: 'anyref', refKind: 'struct' };
+    case 3:
+      return { type: 'anyref', refKind: 'array' };
+    default: {
+      const value = fn(...args);
+      if (typeof value === 'object' && value !== null && typeof value.__watgoExternRef === 'string') {
+        return { type: 'anyref', refKind: 'host', bits: value.__watgoExternRef };
+      }
+      return { type: 'anyref', refKind: 'eq' };
+    }
+  }
 }
 
 // encodeResults normalizes a JS function return value into the array form used
@@ -425,6 +647,13 @@ function handleMessage(msg) {
         return {
           ok: true,
           results: [encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultTypes[0])],
+        };
+      }
+      if (resultTypes.length === 1 && resultTypes[0] === 'anyref') {
+        const argTypes = rawArgs.map((arg) => arg.type);
+        return {
+          ok: true,
+          results: [encodeSingleAnyRefResult(fn, args, argTypes)],
         };
       }
       const raw = fn(...args);

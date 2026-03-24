@@ -3051,6 +3051,28 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
 		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrRefI31})
 		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeI31(false)}, true
+	case "extern.convert_any":
+		if len(fi.Args) != 1 || fi.Args[0].Instr == nil || fi.Args[0].Operand != nil {
+			return nil, false
+		}
+		valueExpr, ok := l.lowerConstInstr(fi.Args[0].Instr)
+		if !ok || !valueExpr.Type.IsRef() || valueExpr.Type.HeapType.Kind != wasmir.HeapKindAny {
+			return nil, false
+		}
+		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrExternConvertAny})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeExtern(valueExpr.Type.Nullable)}, true
+	case "any.convert_extern":
+		if len(fi.Args) != 1 || fi.Args[0].Instr == nil || fi.Args[0].Operand != nil {
+			return nil, false
+		}
+		valueExpr, ok := l.lowerConstInstr(fi.Args[0].Instr)
+		if !ok || !valueExpr.Type.IsRef() || valueExpr.Type.HeapType.Kind != wasmir.HeapKindExtern {
+			return nil, false
+		}
+		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeAny(valueExpr.Type.Nullable)}, true
 	default:
 		operands := make([]Operand, 0, len(fi.Args))
 		for _, arg := range fi.Args {

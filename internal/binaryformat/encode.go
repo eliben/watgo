@@ -1512,6 +1512,12 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 		writeULEB128(out, subopArrayNewFixedCode)
 		writeULEB128(out, init.TypeIndex)
 		writeULEB128(out, init.FixedCount)
+	case wasmir.InstrExternConvertAny:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopExternConvertAnyCode)
+	case wasmir.InstrAnyConvertExtern:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopAnyConvertExternCode)
 	case wasmir.InstrRefI31:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopRefI31Code)

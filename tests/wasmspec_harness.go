@@ -68,6 +68,9 @@ const (
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
 	valueRefEq            valueKind = "ref.eq"
+	valueRefHost          valueKind = "ref.host"
+	valueRefI31           valueKind = "ref.i31"
+	valueRefStruct        valueKind = "ref.struct"
 	valueRefArray         valueKind = "ref.array"
 	valueRefExtern        valueKind = "ref.extern"
 )
@@ -791,10 +794,39 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("ref.eq expects no operands in script assertion")
 		}
 		return scriptValue{kind: valueRefEq, literal: "ref.eq"}, nil
-	case "ref.extern":
+	case "ref.host":
 		elems := sx.Children()
 		if len(elems) != 2 {
-			return scriptValue{}, fmt.Errorf("ref.extern expects one literal")
+			return scriptValue{}, fmt.Errorf("ref.host expects one literal")
+		}
+		litKind, litValue, ok := elems[1].Token()
+		if !ok || litKind != "INT" {
+			return scriptValue{}, fmt.Errorf("ref.host literal must be INT token")
+		}
+		bits, err := numlit.ParseIntBits(litValue, 64)
+		if err != nil {
+			return scriptValue{}, err
+		}
+		return scriptValue{kind: valueRefHost, bits: bits, literal: litValue}, nil
+	case "ref.i31":
+		elems := sx.Children()
+		if len(elems) != 1 {
+			return scriptValue{}, fmt.Errorf("ref.i31 expects no operands in script assertion")
+		}
+		return scriptValue{kind: valueRefI31, literal: "ref.i31"}, nil
+	case "ref.struct":
+		elems := sx.Children()
+		if len(elems) != 1 {
+			return scriptValue{}, fmt.Errorf("ref.struct expects no operands in script assertion")
+		}
+		return scriptValue{kind: valueRefStruct, literal: "ref.struct"}, nil
+	case "ref.extern":
+		elems := sx.Children()
+		if len(elems) != 1 && len(elems) != 2 {
+			return scriptValue{}, fmt.Errorf("ref.extern expects zero or one literal")
+		}
+		if len(elems) == 1 {
+			return scriptValue{kind: valueRefExtern, literal: ""}, nil
 		}
 		litKind, litValue, ok := elems[1].Token()
 		if !ok || litKind != "INT" {
@@ -922,15 +954,25 @@ type runOptions struct {
 
 const currentModuleRuntimeName = "__watgo_current__"
 
+const (
+	encodedRefExternTag uint64 = 1 << 63
+	encodedRefHostTag   uint64 = 1 << 62
+	encodedRefI31       uint64 = 1
+	encodedRefStruct    uint64 = 2
+	encodedRefArray     uint64 = 3
+	encodedRefEq        uint64 = 4
+)
+
 type moduleMetadata struct {
 	funcExports   map[string]wasmir.FuncType
 	globalExports map[string]wasmir.ValueType
 }
 
 type nodeValue struct {
-	Type string `json:"type"`
-	Bits string `json:"bits,omitempty"`
-	Null bool   `json:"null,omitempty"`
+	Type    string `json:"type"`
+	Bits    string `json:"bits,omitempty"`
+	Null    bool   `json:"null,omitempty"`
+	RefKind string `json:"refKind,omitempty"`
 }
 
 type nodeResponse struct {
@@ -1379,14 +1421,49 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
-		case valueRefFunc, valueRefEq, valueRefArray:
+		case valueRefFunc:
 			if results[i] == 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
+		case valueRefEq:
+			if results[i] == 0 || results[i]&encodedRefExternTag != 0 {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
+		case valueRefHost:
+			if results[i] != encodedRefHostTag|want.bits {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
+		case valueRefI31:
+			if results[i] != encodedRefI31 {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
+		case valueRefStruct:
+			if results[i] != encodedRefStruct {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
+		case valueRefArray:
+			if results[i] != encodedRefArray {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
 		case valueRefExtern:
-			if results[i] != want.bits {
+			if results[i]&encodedRefExternTag == 0 {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
+			if want.literal != "" && results[i] != encodedRefExternTag|want.bits {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
@@ -1427,9 +1504,18 @@ func formatExpectedValue(v scriptValue) string {
 		return "(ref.func)"
 	case valueRefEq:
 		return "(ref.eq)"
+	case valueRefHost:
+		return fmt.Sprintf("(ref.host %s)", v.literal)
+	case valueRefI31:
+		return "(ref.i31)"
+	case valueRefStruct:
+		return "(ref.struct)"
 	case valueRefArray:
 		return "(ref.array)"
 	case valueRefExtern:
+		if v.literal == "" {
+			return "(ref.extern)"
+		}
 		return fmt.Sprintf("(ref.extern %s)", v.literal)
 	default:
 		return fmt.Sprintf("<%s>", v.kind)
@@ -1461,19 +1547,38 @@ func formatGotValueLikeExpected(got uint64, want scriptValue) string {
 		}
 		return "(ref.func)"
 	case valueRefEq:
-		if got == 0 {
-			return "(ref.null)"
-		}
-		return "(ref.eq)"
+		return formatEncodedRef(got)
+	case valueRefHost:
+		return formatEncodedRef(got)
+	case valueRefI31:
+		return formatEncodedRef(got)
+	case valueRefStruct:
+		return formatEncodedRef(got)
 	case valueRefArray:
-		if got == 0 {
-			return "(ref.null)"
-		}
-		return "(ref.array)"
+		return formatEncodedRef(got)
 	case valueRefExtern:
-		return fmt.Sprintf("(ref.extern %d)", got)
+		return formatEncodedRef(got)
 	default:
 		return fmt.Sprintf("0x%x", got)
+	}
+}
+
+func formatEncodedRef(bits uint64) string {
+	switch {
+	case bits == 0:
+		return "(ref.null)"
+	case bits&encodedRefExternTag != 0:
+		return fmt.Sprintf("(ref.extern %d)", bits&^encodedRefExternTag)
+	case bits&encodedRefHostTag != 0:
+		return fmt.Sprintf("(ref.host %d)", bits&^encodedRefHostTag)
+	case bits == encodedRefI31:
+		return "(ref.i31)"
+	case bits == encodedRefStruct:
+		return "(ref.struct)"
+	case bits == encodedRefArray:
+		return "(ref.array)"
+	default:
+		return "(ref.eq)"
 	}
 }
 
@@ -2034,15 +2139,44 @@ func decodeModuleMetadata(wasmBytes []byte) (*moduleMetadata, error) {
 			if err != nil {
 				return nil, fmt.Errorf("function export %q: %w", exp.Name, err)
 			}
+			sig.Params = normalizeHarnessValueTypes(m, sig.Params)
+			sig.Results = normalizeHarnessValueTypes(m, sig.Results)
 			meta.funcExports[exp.Name] = sig
 		case wasmir.ExternalKindGlobal:
 			if int(exp.Index) >= len(m.Globals) {
 				return nil, fmt.Errorf("global export %q index %d out of range", exp.Name, exp.Index)
 			}
-			meta.globalExports[exp.Name] = m.Globals[exp.Index].Type
+			meta.globalExports[exp.Name] = normalizeHarnessValueType(m, m.Globals[exp.Index].Type)
 		}
 	}
 	return meta, nil
+}
+
+func normalizeHarnessValueTypes(m *wasmir.Module, types []wasmir.ValueType) []wasmir.ValueType {
+	if len(types) == 0 {
+		return nil
+	}
+	out := make([]wasmir.ValueType, len(types))
+	for i, vt := range types {
+		out[i] = normalizeHarnessValueType(m, vt)
+	}
+	return out
+}
+
+func normalizeHarnessValueType(m *wasmir.Module, vt wasmir.ValueType) wasmir.ValueType {
+	if !vt.IsRef() || !vt.UsesTypeIndex() || m == nil || int(vt.HeapType.TypeIndex) >= len(m.Types) {
+		return vt
+	}
+	switch m.Types[vt.HeapType.TypeIndex].Kind {
+	case wasmir.TypeDefKindFunc:
+		return wasmir.RefTypeFunc(vt.Nullable)
+	case wasmir.TypeDefKindStruct:
+		return wasmir.RefTypeStruct(vt.Nullable)
+	case wasmir.TypeDefKindArray:
+		return wasmir.RefTypeArray(vt.Nullable)
+	default:
+		return vt
+	}
 }
 
 func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.FuncType, error) {
@@ -2090,6 +2224,8 @@ func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, e
 		return nodeValue{Type: valueType, Bits: strconv.FormatUint(0x7ff8000000000000, 10)}, nil
 	case valueRefNull:
 		return nodeValue{Type: valueType, Null: true}, nil
+	case valueRefHost:
+		return nodeValue{Type: valueType, RefKind: "host", Bits: strconv.FormatUint(arg.bits, 10)}, nil
 	case valueRefExtern:
 		return nodeValue{Type: valueType, Bits: strconv.FormatUint(arg.bits, 10)}, nil
 	default:
@@ -2113,6 +2249,16 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 			return "funcref", nil
 		case wasmir.HeapKindExtern:
 			return "externref", nil
+		case wasmir.HeapKindAny:
+			return "anyref", nil
+		case wasmir.HeapKindEq:
+			return "eqref", nil
+		case wasmir.HeapKindI31:
+			return "i31ref", nil
+		case wasmir.HeapKindArray:
+			return "arrayref", nil
+		case wasmir.HeapKindStruct:
+			return "structref", nil
 		}
 	}
 	return "", fmt.Errorf("unsupported value type %s", vt)
@@ -2121,6 +2267,34 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 func decodeNodeValue(v nodeValue) (uint64, error) {
 	if v.Null {
 		return 0, nil
+	}
+	switch v.RefKind {
+	case "extern":
+		if v.Bits == "" {
+			return 0, fmt.Errorf("missing externref bits")
+		}
+		bits, err := strconv.ParseUint(v.Bits, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+		}
+		return encodedRefExternTag | bits, nil
+	case "host":
+		if v.Bits == "" {
+			return 0, fmt.Errorf("missing host ref bits")
+		}
+		bits, err := strconv.ParseUint(v.Bits, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+		}
+		return encodedRefHostTag | bits, nil
+	case "i31":
+		return encodedRefI31, nil
+	case "struct":
+		return encodedRefStruct, nil
+	case "array":
+		return encodedRefArray, nil
+	case "eq":
+		return encodedRefEq, nil
 	}
 	if v.Bits == "" {
 		return 0, fmt.Errorf("missing value bits for type %q", v.Type)

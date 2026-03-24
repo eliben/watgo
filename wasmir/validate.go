@@ -3090,6 +3090,18 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 				return ValueType{}, false
 			}
 			push(RefTypeI31(false))
+		case InstrExternConvertAny:
+			valueType, ok := pop()
+			if !ok || !valueType.IsRef() || valueType.HeapType.Kind != HeapKindAny {
+				return ValueType{}, false
+			}
+			push(RefTypeExtern(valueType.Nullable))
+		case InstrAnyConvertExtern:
+			valueType, ok := pop()
+			if !ok || !valueType.IsRef() || valueType.HeapType.Kind != HeapKindExtern {
+				return ValueType{}, false
+			}
+			push(RefTypeAny(valueType.Nullable))
 		default:
 			return ValueType{}, false
 		}

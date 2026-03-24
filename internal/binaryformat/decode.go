@@ -2182,6 +2182,10 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 				return wasmir.Instruction{}, err
 			}
 			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIndex, FixedCount: fixedCount}
+		case subopExternConvertAnyCode:
+			ins = wasmir.Instruction{Kind: wasmir.InstrExternConvertAny}
+		case subopAnyConvertExternCode:
+			ins = wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern}
 		case subopRefI31Code:
 			ins = wasmir.Instruction{Kind: wasmir.InstrRefI31}
 		default:
