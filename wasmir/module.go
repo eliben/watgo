@@ -555,13 +555,9 @@ type Table struct {
 	// RefType is the table element reference type.
 	RefType ValueType
 
-	// HasInit reports whether this table carries an inline initializer
-	// expression in the table section.
-	HasInit bool
-
-	// Init is the repeated initializer const expression used when HasInit is
-	// true. The instruction slice is expected to leave exactly one reference
-	// value on the const-expression stack.
+	// Init is the repeated inline initializer const expression, when present.
+	// The instruction slice is expected to leave exactly one reference value on
+	// the const-expression stack.
 	Init []Instruction
 
 	// Imported reports whether this table is imported.

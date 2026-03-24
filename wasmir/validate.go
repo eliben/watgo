@@ -419,7 +419,7 @@ func ValidateModule(m *Module) error {
 		if addrType == ValueTypeI32 && table.HasMax && table.Max > maxTableElems32 {
 			diags.Addf("table[%d]: table size", i)
 		}
-		if table.HasInit {
+		if len(table.Init) > 0 {
 			initType, ok := globalInitType(m, table.Init)
 			if !ok {
 				diags.Addf("table[%d]: invalid initializer", i)

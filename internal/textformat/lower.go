@@ -516,7 +516,6 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
-			l.out.Tables[tableIdx].HasInit = true
 			l.out.Tables[tableIdx].Init = append([]wasmir.Instruction(nil), ci.Instrs...)
 		} else if !nullable {
 			l.diags.Addf("table[%d]: type mismatch", i)

@@ -601,7 +601,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 		if tb.Imported {
 			continue
 		}
-		if tb.HasInit {
+		if len(tb.Init) > 0 {
 			payload.WriteByte(tableFlagHasInit)
 			payload.WriteByte(0x00)
 			if !encodeValueType(&payload, tb.RefType) {

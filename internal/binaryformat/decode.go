@@ -534,7 +534,7 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid init expr: %v", i, err)
 				break
 			}
-			out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType, HasInit: true, Init: init})
+			out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType, Init: init})
 			continue
 		}
 		refType, err := decodeValueTypeFromLeadingByte(r, first)
