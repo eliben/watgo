@@ -1880,10 +1880,12 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.eq":              {operandCount: 0},
 	"i32.ctz":             {operandCount: 0},
 	"f32.gt":              {operandCount: 0},
+	"i8x16.swizzle":       {operandCount: 0},
 	"i32.const":           {operandCount: 1, decode: decodeI32ConstOperands},
 	"i64.const":           {operandCount: 1, decode: decodeI64ConstOperands},
 	"f32.const":           {operandCount: 1, decode: decodeF32ConstOperands},
 	"f64.const":           {operandCount: 1, decode: decodeF64ConstOperands},
+	"v128.const":          {operandCount: 17, decode: decodeV128ConstOperands},
 	"ref.null":            {operandCount: 1, decode: decodeRefNullOperands},
 	"ref.eq":              {operandCount: 0},
 	"ref.is_null":         {operandCount: 0},
@@ -2630,6 +2632,31 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 	return true
 }
 
+// decodeV128ConstOperands decodes the currently supported SIMD constant form:
+// `v128.const i8x16 lane0 ... lane15`.
+func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	switch shape := operands[0].(type) {
+	case *KeywordOperand:
+		if shape.Value != "i8x16" {
+			return false
+		}
+	case *IdOperand:
+		if shape.Value != "i8x16" {
+			return false
+		}
+	default:
+		return false
+	}
+	for i := 0; i < 16; i++ {
+		lane, ok := lowerI8ConstOperand(operands[i+1])
+		if !ok {
+			return false
+		}
+		ins.V128Const[i] = lane
+	}
+	return true
+}
+
 // emitInstr appends one lowered instruction to the current function body.
 func (fl *functionLowerer) emitInstr(instr wasmir.Instruction) {
 	fl.body = append(fl.body, instr)
@@ -2711,6 +2738,26 @@ func lowerF64ConstOperand(op Operand) (uint64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// lowerI8ConstOperand resolves op as one signed i8 literal and returns the raw
+// lane byte encoded with that literal's two's-complement bits.
+func lowerI8ConstOperand(op Operand) (byte, bool) {
+	o, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+	clean := strings.ReplaceAll(o.Value, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+	if n, err := strconv.ParseInt(clean, 0, 8); err == nil {
+		return byte(int8(n)), true
+	}
+	if n, err := strconv.ParseUint(clean, 0, 8); err == nil {
+		return byte(n), true
+	}
+	return 0, false
 }
 
 // loweredConstInstr is one lowered constant expression plus its resulting type.
@@ -3665,6 +3712,8 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 			return wasmir.ValueTypeF32, true
 		case "f64":
 			return wasmir.ValueTypeF64, true
+		case "v128":
+			return wasmir.ValueTypeV128, true
 		case "funcref":
 			return wasmir.RefTypeFunc(true), true
 		case "nullref":

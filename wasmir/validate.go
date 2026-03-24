@@ -169,7 +169,7 @@ func isDefaultableValueType(vt ValueType) bool {
 		return vt.Nullable
 	}
 	switch vt.Kind {
-	case ValueKindI32, ValueKindI64, ValueKindF32, ValueKindF64:
+	case ValueKindI32, ValueKindI64, ValueKindF32, ValueKindF64, ValueKindV128:
 		return true
 	default:
 		return false
@@ -207,6 +207,8 @@ func fieldByteWidth(ft FieldType) (uint32, bool) {
 		return 4, true
 	case ValueTypeI64, ValueTypeF64:
 		return 8, true
+	case ValueTypeV128:
+		return 16, true
 	default:
 		return 0, false
 	}
@@ -692,6 +694,8 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 		return 2, true
 	case InstrI64Load, InstrF64Load, InstrI64Store, InstrF64Store:
 		return 3, true
+	case InstrV128Load, InstrV128Store:
+		return 4, true
 	default:
 		return 0, false
 	}
@@ -2300,6 +2304,9 @@ instrLoop:
 		case InstrF64Const:
 			appendStackType(ValueTypeF64)
 
+		case InstrV128Const:
+			appendStackType(ValueTypeV128)
+
 		case InstrDrop:
 			if len(stack) < 1 {
 				diags.Addf("%s: drop needs 1 operand", insCtx)
@@ -2399,6 +2406,25 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF64))
+		case InstrV128Load:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: v128.load requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: v128.load memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
+			if len(stack) < 1 {
+				diags.Addf("%s: v128.load needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != addrType {
+				diags.Addf("%s: v128.load expects %s address operand", insCtx, addrType)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeV128))
 		case InstrI32Load8S, InstrI32Load8U, InstrI32Load16S, InstrI32Load16U:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
@@ -2548,6 +2574,25 @@ instrLoop:
 			}
 			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != addrType {
 				diags.Addf("%s: f64.store expects f64 value and %s address operands", insCtx, addrType)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+		case InstrV128Store:
+			if len(m.Memories) == 0 {
+				diags.Addf("%s: v128.store requires memory", insCtx)
+				continue
+			}
+			if int(ins.MemoryIndex) >= len(m.Memories) {
+				diags.Addf("%s: v128.store memory index %d out of range", insCtx, ins.MemoryIndex)
+				continue
+			}
+			addrType := memoryAddressType(m, ins.MemoryIndex)
+			if len(stack) < 2 {
+				diags.Addf("%s: v128.store needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != addrType {
+				diags.Addf("%s: v128.store expects v128 value and %s address operands", insCtx, addrType)
 				continue
 			}
 			truncateStack(len(stack) - 2)
@@ -3175,6 +3220,17 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
+		case InstrI8x16Swizzle:
+			if len(stack) < 2 {
+				diags.Addf("%s: i8x16.swizzle needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: i8x16.swizzle expects v128 operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
 		case InstrI32ReinterpretF32:
 			if len(stack) < 1 {
 				diags.Addf("%s: i32.reinterpret_f32 needs 1 operand", insCtx)
@@ -3645,6 +3701,8 @@ func instrName(kind InstrKind) string {
 		return "i31.get_s"
 	case InstrI31GetU:
 		return "i31.get_u"
+	case InstrI8x16Swizzle:
+		return "i8x16.swizzle"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:
@@ -3679,6 +3737,8 @@ func instrName(kind InstrKind) string {
 		return "f32.const"
 	case InstrF64Const:
 		return "f64.const"
+	case InstrV128Const:
+		return "v128.const"
 	case InstrDrop:
 		return "drop"
 	case InstrSelect:
@@ -3711,6 +3771,8 @@ func instrName(kind InstrKind) string {
 		return "f32.load"
 	case InstrF64Load:
 		return "f64.load"
+	case InstrV128Load:
+		return "v128.load"
 	case InstrI32Load8S:
 		return "i32.load8_s"
 	case InstrI32Load8U:
@@ -3749,6 +3811,8 @@ func instrName(kind InstrKind) string {
 		return "f32.store"
 	case InstrF64Store:
 		return "f64.store"
+	case InstrV128Store:
+		return "v128.store"
 	case InstrMemorySize:
 		return "memory.size"
 	case InstrMemoryGrow:

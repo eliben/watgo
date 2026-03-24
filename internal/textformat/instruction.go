@@ -214,6 +214,7 @@ func init() {
 		"i64.load":     wasmir.InstrI64Load,
 		"f32.load":     wasmir.InstrF32Load,
 		"f64.load":     wasmir.InstrF64Load,
+		"v128.load":    wasmir.InstrV128Load,
 		"i32.load8_s":  wasmir.InstrI32Load8S,
 		"i32.load8_u":  wasmir.InstrI32Load8U,
 		"i32.load16_s": wasmir.InstrI32Load16S,
@@ -233,6 +234,7 @@ func init() {
 		"i64.store32":  wasmir.InstrI64Store32,
 		"f32.store":    wasmir.InstrF32Store,
 		"f64.store":    wasmir.InstrF64Store,
+		"v128.store":   wasmir.InstrV128Store,
 	})
 	registerInstructions(instrSyntaxSpecial, map[string]wasmir.InstrKind{
 		"any.convert_extern": wasmir.InstrAnyConvertExtern,
@@ -326,6 +328,7 @@ func init() {
 		"f64.trunc":           wasmir.InstrF64Trunc,
 		"global.get":          wasmir.InstrGlobalGet,
 		"global.set":          wasmir.InstrGlobalSet,
+		"i8x16.swizzle":       wasmir.InstrI8x16Swizzle,
 		"i32.add":             wasmir.InstrI32Add,
 		"i32.and":             wasmir.InstrI32And,
 		"i32.clz":             wasmir.InstrI32Clz,
@@ -411,6 +414,7 @@ func init() {
 		"return":              wasmir.InstrReturn,
 		"select":              wasmir.InstrSelect,
 		"unreachable":         wasmir.InstrUnreachable,
+		"v128.const":          wasmir.InstrV128Const,
 	})
 }
 

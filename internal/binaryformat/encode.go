@@ -40,6 +40,7 @@ const (
 	valueTypeI64Code       byte = 0x7e
 	valueTypeF32Code       byte = 0x7d
 	valueTypeF64Code       byte = 0x7c
+	valueTypeV128Code      byte = 0x7b
 	packedTypeI16Code      byte = 0x77
 	packedTypeI8Code       byte = 0x78
 	refTypeNoFuncCode      byte = 0x73
@@ -224,6 +225,7 @@ const (
 	opBrOnNonNullCode       byte = 0xd6
 	opPrefixFBCode          byte = 0xfb
 	opPrefixFCCode          byte = 0xfc
+	opPrefixFDCode          byte = 0xfd
 	opI32ReinterpretF32Code byte = 0xbc
 	opI64ReinterpretF64Code byte = 0xbd
 	opF32ReinterpretI32Code byte = 0xbe
@@ -277,6 +279,10 @@ const (
 	subopRefI31Code           uint32 = 0x1c
 	subopI31GetSCode          uint32 = 0x1d
 	subopI31GetUCode          uint32 = 0x1e
+	subopV128LoadCode         uint32 = 0x00
+	subopV128StoreCode        uint32 = 0x0b
+	subopV128ConstCode        uint32 = 0x0c
+	subopI8x16SwizzleCode     uint32 = 0x0e
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -1214,6 +1220,14 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrF64Store:
 		out.WriteByte(opF64StoreCode)
 		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128LoadCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Store:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128StoreCode)
+		encodeMemArg(out, instr)
 	case wasmir.InstrMemorySize:
 		out.WriteByte(opMemorySizeCode)
 		writeULEB128(out, instr.MemoryIndex)
@@ -1463,6 +1477,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.FuncIndex)
 	case wasmir.InstrRefEq:
 		out.WriteByte(opRefEqCode)
+	case wasmir.InstrV128Const:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128ConstCode)
+		out.Write(instr.V128Const[:])
+	case wasmir.InstrI8x16Swizzle:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16SwizzleCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:
@@ -1576,6 +1597,8 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return valueTypeF32Code, true
 	case wasmir.ValueKindF64:
 		return valueTypeF64Code, true
+	case wasmir.ValueKindV128:
+		return valueTypeV128Code, true
 	case wasmir.ValueKindRef:
 		if !vt.Nullable {
 			return 0, false

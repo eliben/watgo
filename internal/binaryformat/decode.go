@@ -1678,6 +1678,42 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, ins)
+		case opPrefixFDCode:
+			subop, err := readU32(r)
+			if err != nil {
+				diags.Addf("code[%d]: 0xfd prefixed op missing/invalid subopcode: %v", funcIdx, err)
+				return out
+			}
+			switch subop {
+			case subopV128LoadCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128StoreCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Store)
+				if err != nil {
+					diags.Addf("code[%d]: v128.store invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128ConstCode:
+				bytes, err := readN(r, 16)
+				if err != nil {
+					diags.Addf("code[%d]: v128.const missing/invalid immediate: %v", funcIdx, err)
+					return out
+				}
+				var lanes [16]byte
+				copy(lanes[:], bytes)
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Const, V128Const: lanes})
+			case subopI8x16SwizzleCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Swizzle})
+			default:
+				diags.Addf("code[%d]: unsupported 0xfd subopcode 0x%x", funcIdx, subop)
+				return out
+			}
 		case opI32Load8SCode:
 			ins, err := decodeMemInstr(r, wasmir.InstrI32Load8S)
 			if err != nil {
@@ -2267,6 +2303,8 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.ValueTypeF32, true
 	case valueTypeF64Code:
 		return wasmir.ValueTypeF64, true
+	case valueTypeV128Code:
+		return wasmir.ValueTypeV128, true
 	case refTypeArrayCode:
 		return wasmir.RefTypeArray(true), true
 	case refTypeStructCode:

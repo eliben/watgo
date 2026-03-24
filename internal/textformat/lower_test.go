@@ -123,7 +123,7 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 	ast := &Module{
 		Funcs: []*Function{{
 			TyUse: &TypeUse{
-				Params: []*ParamDecl{{Id: "$a", Ty: &BasicType{Name: "v128"}}},
+				Params: []*ParamDecl{{Id: "$a", Ty: &BasicType{Name: "no_such_type"}}},
 			},
 		}},
 	}
@@ -135,6 +135,52 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 	errs := asErrorList(t, err)
 	if !errorListContains(errs, "unsupported param type") {
 		t.Fatalf("got errors %q, want unsupported param type", errs.Error())
+	}
+}
+
+func TestLowerModule_SIMDEndianFlipSlice(t *testing.T) {
+	wat := `(module
+  (import "env" "buffer" (memory 1))
+  (func (param $offset i32)
+    (v128.store
+      (local.get $offset)
+      (i8x16.swizzle
+        (v128.load (local.get $offset))
+        (v128.const i8x16 3 2 1 0 7 6 5 4 11 10 9 8 15 14 13 12))))
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	if got := m.Types[0].Params[0]; got != wasmir.ValueTypeI32 {
+		t.Fatalf("param type = %v, want i32", got)
+	}
+	body := m.Funcs[0].Body
+	if len(body) != 7 {
+		t.Fatalf("got %d body instructions, want 7", len(body))
+	}
+	if body[2].Kind != wasmir.InstrV128Load {
+		t.Fatalf("body[2]=%#v, want v128.load", body[2])
+	}
+	if body[3].Kind != wasmir.InstrV128Const {
+		t.Fatalf("body[3]=%#v, want v128.const", body[3])
+	}
+	if body[4].Kind != wasmir.InstrI8x16Swizzle {
+		t.Fatalf("body[4]=%#v, want i8x16.swizzle", body[4])
+	}
+	if body[5].Kind != wasmir.InstrV128Store {
+		t.Fatalf("body[5]=%#v, want v128.store", body[5])
+	}
+	wantLanes := [16]byte{3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12}
+	if body[3].V128Const != wantLanes {
+		t.Fatalf("v128.const lanes = %v, want %v", body[3].V128Const, wantLanes)
 	}
 }
 

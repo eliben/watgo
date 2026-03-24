@@ -251,6 +251,31 @@ func TestValidateModule_Memory64PageLimit(t *testing.T) {
 	}
 }
 
+func TestValidateModule_SIMDMemoryOps(t *testing.T) {
+	m := &Module{
+		Types:    []FuncType{{}},
+		Memories: []Memory{{AddressType: ValueTypeI32, Min: 1}},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI32Const, I32Const: 0},
+				{Kind: InstrV128Load},
+				{Kind: InstrV128Const, V128Const: [16]byte{3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12}},
+				{Kind: InstrI8x16Swizzle},
+				{Kind: InstrDrop},
+				{Kind: InstrI32Const, I32Const: 0},
+				{Kind: InstrV128Const},
+				{Kind: InstrV128Store},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+}
+
 func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
 	m := &Module{
 		Types: []FuncType{{}},

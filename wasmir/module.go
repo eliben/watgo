@@ -11,6 +11,7 @@ const (
 	ValueKindI64
 	ValueKindF32
 	ValueKindF64
+	ValueKindV128
 	ValueKindRef
 )
 
@@ -49,10 +50,11 @@ type ValueType struct {
 }
 
 var (
-	ValueTypeI32 = ValueType{Kind: ValueKindI32}
-	ValueTypeI64 = ValueType{Kind: ValueKindI64}
-	ValueTypeF32 = ValueType{Kind: ValueKindF32}
-	ValueTypeF64 = ValueType{Kind: ValueKindF64}
+	ValueTypeI32  = ValueType{Kind: ValueKindI32}
+	ValueTypeI64  = ValueType{Kind: ValueKindI64}
+	ValueTypeF32  = ValueType{Kind: ValueKindF32}
+	ValueTypeF64  = ValueType{Kind: ValueKindF64}
+	ValueTypeV128 = ValueType{Kind: ValueKindV128}
 )
 
 // RefTypeFunc returns a function-reference value type with the requested
@@ -127,6 +129,8 @@ func (vt ValueType) String() string {
 		return "f32"
 	case ValueKindF64:
 		return "f64"
+	case ValueKindV128:
+		return "v128"
 	case ValueKindRef:
 		switch vt.HeapType.Kind {
 		case HeapKindFunc:
@@ -220,6 +224,7 @@ const (
 	InstrI64Const
 	InstrF32Const
 	InstrF64Const
+	InstrV128Const
 	InstrDrop
 	InstrSelect
 	InstrGlobalGet
@@ -265,6 +270,7 @@ const (
 	InstrI64Load
 	InstrF32Load
 	InstrF64Load
+	InstrV128Load
 	InstrI32Load8S
 	InstrI32Load8U
 	InstrI32Load16S
@@ -283,6 +289,7 @@ const (
 	InstrI64Store32
 	InstrF32Store
 	InstrF64Store
+	InstrV128Store
 	InstrMemorySize
 	InstrMemoryGrow
 	InstrMemoryCopy
@@ -293,6 +300,7 @@ const (
 	InstrRefIsNull
 	InstrRefAsNonNull
 	InstrRefFunc
+	InstrI8x16Swizzle
 	InstrI32Add
 	InstrI32Sub
 	InstrI32Mul
@@ -825,6 +833,9 @@ type Instruction struct {
 
 	// F64Const is the raw IEEE-754 bits immediate for InstrF64Const.
 	F64Const uint64
+
+	// V128Const is the raw 16-byte immediate for InstrV128Const.
+	V128Const [16]byte
 
 	// SourceLoc is an optional source location string used in diagnostics.
 	SourceLoc string
