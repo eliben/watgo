@@ -1918,6 +1918,9 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "null array reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}
+	if wantLower == "null structure reference" {
+		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
 	if wantLower == "null reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}

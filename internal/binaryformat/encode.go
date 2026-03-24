@@ -250,6 +250,8 @@ const (
 	subopStructNewDefaultCode uint32 = 0x01
 	subopStructGetCode        uint32 = 0x02
 	subopStructGetSCode       uint32 = 0x03
+	subopStructGetUCode       uint32 = 0x04
+	subopStructSetCode        uint32 = 0x05
 	subopArrayNewCode         uint32 = 0x06
 	subopArrayLenCode         uint32 = 0x0f
 	subopArrayNewDefaultCode  uint32 = 0x07
@@ -1041,6 +1043,16 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, subopStructGetSCode)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.FieldIndex)
+	case wasmir.InstrStructGetU:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructGetUCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.FieldIndex)
+	case wasmir.InstrStructSet:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructSetCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.FieldIndex)
 	case wasmir.InstrArrayNew:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewCode)
@@ -1505,6 +1517,14 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 	case wasmir.InstrArrayNew:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewCode)
+		writeULEB128(out, init.TypeIndex)
+	case wasmir.InstrStructNew:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructNewCode)
+		writeULEB128(out, init.TypeIndex)
+	case wasmir.InstrStructNewDefault:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructNewDefaultCode)
 		writeULEB128(out, init.TypeIndex)
 	case wasmir.InstrArrayNewDefault:
 		out.WriteByte(opPrefixFBCode)

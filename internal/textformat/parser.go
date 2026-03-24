@@ -1043,8 +1043,7 @@ func (p *Parser) parseFieldDecls(sx *SExpr) []*FieldDecl {
 		p.emitError(sx.loc, "struct type expects (field ...)")
 		return nil
 	}
-	if len(sx.list) < 2 {
-		p.emitError(sx.loc, "field declaration expects one or more field types")
+	if len(sx.list) == 1 {
 		return nil
 	}
 	cursor := 1
@@ -1381,7 +1380,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 3
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{dstOp, srcOp}, loc: elem.loc}, cursor + 3
-	case "struct.get":
+	case "struct.get", "struct.get_s", "struct.get_u":
 		if cursor+2 >= len(elems) {
 			p.emitError(elem.loc, "%s expects two operands", name)
 			return nil, cursor + 1
@@ -1401,7 +1400,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 3
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{typeOp, fieldOp}, loc: elem.loc}, cursor + 3
-	case "struct.get_s":
+	case "struct.set":
 		if cursor+2 >= len(elems) {
 			p.emitError(elem.loc, "%s expects two operands", name)
 			return nil, cursor + 1

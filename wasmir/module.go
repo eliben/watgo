@@ -236,6 +236,8 @@ const (
 	InstrStructNewDefault
 	InstrStructGet
 	InstrStructGetS
+	InstrStructGetU
+	InstrStructSet
 	InstrArrayNew
 	InstrArrayLen
 	InstrArrayNewDefault

@@ -1412,6 +1412,69 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrStructGetU:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.get_u type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.get_u type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if int(ins.FieldIndex) >= len(td.Fields) {
+				diags.Addf("%s: struct.get_u field index %d out of range", insCtx, ins.FieldIndex)
+				continue
+			}
+			field := td.Fields[ins.FieldIndex]
+			if field.Packed == PackedTypeNone {
+				diags.Addf("%s: struct.get_u requires packed field type", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: struct.get_u needs 1 operand", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), wantRef) {
+				diags.Addf("%s: struct.get_u expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrStructSet:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.set type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.set type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if int(ins.FieldIndex) >= len(td.Fields) {
+				diags.Addf("%s: struct.set field index %d out of range", insCtx, ins.FieldIndex)
+				continue
+			}
+			field := td.Fields[ins.FieldIndex]
+			if !field.Mutable {
+				diags.Addf("%s: immutable field", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: struct.set needs 2 operands", insCtx)
+				continue
+			}
+			wantValue := validatedValueFromType(fieldValueType(field))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), wantValue) {
+				diags.Addf("%s: struct.set expects value operand of type %s", insCtx, validatedValueName(wantValue))
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-2), wantRef) {
+				diags.Addf("%s: struct.set expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			truncateStack(len(stack) - 2)
 		case InstrArrayLen:
 			if len(stack) < 1 {
 				diags.Addf("%s: array.len needs 1 operand", insCtx)
@@ -3083,6 +3146,33 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 				return ValueType{}, false
 			}
 			push(RefTypeIndexed(ins.TypeIndex, false))
+		case InstrStructNew:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok || td.Kind != TypeDefKindStruct {
+				return ValueType{}, false
+			}
+			if len(stack) < len(td.Fields) {
+				return ValueType{}, false
+			}
+			base := len(stack) - len(td.Fields)
+			for j, field := range td.Fields {
+				if !matchesExpectedValueInModule(m, validatedValueFromType(stack[base+j]), validatedValueFromType(fieldValueType(field))) {
+					return ValueType{}, false
+				}
+			}
+			stack = stack[:base]
+			push(RefTypeIndexed(ins.TypeIndex, false))
+		case InstrStructNewDefault:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok || td.Kind != TypeDefKindStruct {
+				return ValueType{}, false
+			}
+			for _, field := range td.Fields {
+				if !isDefaultableFieldType(field) {
+					return ValueType{}, false
+				}
+			}
+			push(RefTypeIndexed(ins.TypeIndex, false))
 		case InstrArrayNewDefault:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok || td.Kind != TypeDefKindArray {
@@ -3121,13 +3211,13 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 			push(RefTypeI31(false))
 		case InstrExternConvertAny:
 			valueType, ok := pop()
-			if !ok || !valueType.IsRef() || valueType.HeapType.Kind != HeapKindAny {
+			if !ok || !matchesGCExpectedValue(m, valueType, RefTypeAny(true)) {
 				return ValueType{}, false
 			}
 			push(RefTypeExtern(valueType.Nullable))
 		case InstrAnyConvertExtern:
 			valueType, ok := pop()
-			if !ok || !valueType.IsRef() || valueType.HeapType.Kind != HeapKindExtern {
+			if !ok || !matchesGCExpectedValue(m, valueType, RefTypeExtern(true)) {
 				return ValueType{}, false
 			}
 			push(RefTypeAny(valueType.Nullable))
@@ -3166,6 +3256,10 @@ func instrName(kind InstrKind) string {
 		return "struct.get"
 	case InstrStructGetS:
 		return "struct.get_s"
+	case InstrStructGetU:
+		return "struct.get_u"
+	case InstrStructSet:
+		return "struct.set"
 	case InstrArrayLen:
 		return "array.len"
 	case InstrArrayNew:

@@ -1407,6 +1407,30 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGetS, TypeIndex: typeIndex, FieldIndex: fieldIndex})
+			case subopStructGetUCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get_u missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				fieldIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get_u missing/invalid field immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGetU, TypeIndex: typeIndex, FieldIndex: fieldIndex})
+			case subopStructSetCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.set missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				fieldIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.set missing/invalid field immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructSet, TypeIndex: typeIndex, FieldIndex: fieldIndex})
 			case subopArrayNewCode:
 				typeIndex, err := readU32(r)
 				if err != nil {
@@ -2157,6 +2181,18 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 			return wasmir.Instruction{}, err
 		}
 		switch subop {
+		case subopStructNewCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins = wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIndex}
+		case subopStructNewDefaultCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins = wasmir.Instruction{Kind: wasmir.InstrStructNewDefault, TypeIndex: typeIndex}
 		case subopArrayNewCode:
 			typeIndex, err := readU32(r)
 			if err != nil {

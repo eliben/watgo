@@ -2043,7 +2043,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrArrayLen, SourceLoc: instrLoc})
 		return
-	case "struct.get", "struct.get_s":
+	case "struct.get", "struct.get_s", "struct.get_u", "struct.set":
 		if len(pi.Operands) != 2 {
 			fl.diagf(instrLoc, "%s expects 2 operands", pi.Name)
 			return
@@ -2970,6 +2970,15 @@ func (l *moduleLowerer) lowerPlainConstInstr(name string, operands []Operand) (*
 			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIdx}},
 			Type:   l.out.Globals[globalIdx].Type,
 		}, true
+	case "struct.new_default":
+		typeIdx, ok := l.lowerConstTypeIndexOperand(op)
+		if !ok {
+			return nil, false
+		}
+		return &loweredConstInstr{
+			Instrs: []wasmir.Instruction{{Kind: wasmir.InstrStructNewDefault, TypeIndex: typeIdx}},
+			Type:   wasmir.RefTypeIndexed(typeIdx, false),
+		}, true
 	default:
 		return nil, false
 	}
@@ -2977,6 +2986,34 @@ func (l *moduleLowerer) lowerPlainConstInstr(name string, operands []Operand) (*
 
 func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstInstr, bool) {
 	switch fi.Name {
+	case "struct.new":
+		if len(fi.Args) < 1 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil {
+			return nil, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(fi.Args[0].Operand)
+		if !ok {
+			return nil, false
+		}
+		if int(typeIdx) >= len(l.out.Types) {
+			return nil, false
+		}
+		td := l.out.Types[typeIdx]
+		if td.Kind != wasmir.TypeDefKindStruct || len(td.Fields) != len(fi.Args)-1 {
+			return nil, false
+		}
+		instrs := make([]wasmir.Instruction, 0, len(fi.Args))
+		for _, arg := range fi.Args[1:] {
+			if arg.Instr == nil || arg.Operand != nil {
+				return nil, false
+			}
+			valueExpr, ok := l.lowerConstInstr(arg.Instr)
+			if !ok {
+				return nil, false
+			}
+			instrs = append(instrs, valueExpr.Instrs...)
+		}
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIdx})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
 	case "array.new":
 		if len(fi.Args) != 3 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil ||
 			fi.Args[1].Instr == nil || fi.Args[1].Operand != nil ||
