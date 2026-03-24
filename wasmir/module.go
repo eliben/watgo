@@ -560,13 +560,10 @@ type Table struct {
 	// the const-expression stack.
 	Init []Instruction
 
-	// Imported reports whether this table is imported.
-	Imported bool
-
-	// ImportModule is set when Imported is true.
+	// ImportModule is set when this table is imported.
 	ImportModule string
 
-	// ImportName is set when Imported is true.
+	// ImportName is set when this table is imported.
 	ImportName string
 }
 
@@ -584,13 +581,10 @@ type Memory struct {
 	// Max is the maximum memory size in 64KiB pages when HasMax is true.
 	Max uint64
 
-	// Imported reports whether this memory is imported.
-	Imported bool
-
-	// ImportModule is set when Imported is true.
+	// ImportModule is set when this memory is imported.
 	ImportModule string
 
-	// ImportName is set when Imported is true.
+	// ImportName is set when this memory is imported.
 	ImportName string
 }
 
@@ -633,13 +627,10 @@ type Global struct {
 	// Mutable reports whether this global can be written by global.set.
 	Mutable bool
 
-	// Imported reports whether this global is imported.
-	Imported bool
-
-	// ImportModule is set when Imported is true.
+	// ImportModule is set when this global is imported.
 	ImportModule string
 
-	// ImportName is set when Imported is true.
+	// ImportName is set when this global is imported.
 	ImportName string
 
 	// Init is the initializer constant expression for this global.

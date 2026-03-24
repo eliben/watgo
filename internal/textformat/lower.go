@@ -419,7 +419,6 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			RefType:     refType,
 		}
 		if td.ImportModule != "" {
-			tb.Imported = true
 			tb.ImportModule = td.ImportModule
 			tb.ImportName = td.ImportName
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
@@ -541,7 +540,6 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 			Min:          md.Min,
 			HasMax:       md.HasMax,
 			Max:          md.Max,
-			Imported:     md.ImportModule != "",
 			ImportModule: md.ImportModule,
 			ImportName:   md.ImportName,
 		}
@@ -681,7 +679,6 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 			Mutable: gd.Mutable,
 		}
 		if gd.ImportModule != "" {
-			g.Imported = true
 			g.ImportModule = gd.ImportModule
 			g.ImportName = gd.ImportName
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
@@ -2871,7 +2868,7 @@ func (l *moduleLowerer) evalImportedI32Global(globalIdx uint32) (int32, bool) {
 	if g.Type != wasmir.ValueTypeI32 || g.Mutable {
 		return 0, false
 	}
-	if !g.Imported {
+	if g.ImportModule == "" {
 		if len(g.Init) == 1 && g.Init[0].Kind == wasmir.InstrI32Const {
 			return g.Init[0].I32Const, true
 		}

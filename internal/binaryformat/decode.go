@@ -90,7 +90,6 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 					out.Globals = append(out.Globals, wasmir.Global{
 						Type:         imp.GlobalType,
 						Mutable:      imp.GlobalMutable,
-						Imported:     true,
 						ImportModule: imp.Module,
 						ImportName:   imp.Name,
 					})
@@ -430,7 +429,6 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				HasMax:       hasMax,
 				Max:          max,
 				RefType:      refType,
-				Imported:     true,
 				ImportModule: moduleName,
 				ImportName:   name,
 			}
@@ -446,7 +444,6 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				Min:          min,
 				HasMax:       hasMax,
 				Max:          max,
-				Imported:     true,
 				ImportModule: moduleName,
 				ImportName:   name,
 			}

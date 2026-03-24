@@ -395,7 +395,7 @@ func ValidateModule(m *Module) error {
 	}
 
 	for i, g := range m.Globals {
-		if g.Imported {
+		if g.ImportModule != "" {
 			continue
 		}
 		initType, ok := globalInitType(m, g.Init)
