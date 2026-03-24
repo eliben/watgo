@@ -3061,7 +3061,7 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 			return nil, false
 		}
 		valueExpr, ok := l.lowerConstInstr(fi.Args[0].Instr)
-		if !ok || !valueExpr.Type.IsRef() || valueExpr.Type.HeapType.Kind != wasmir.HeapKindAny {
+		if !ok || !matchesExpectedValueType(valueExpr.Type, wasmir.RefTypeAny(true)) {
 			return nil, false
 		}
 		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
@@ -3072,7 +3072,7 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 			return nil, false
 		}
 		valueExpr, ok := l.lowerConstInstr(fi.Args[0].Instr)
-		if !ok || !valueExpr.Type.IsRef() || valueExpr.Type.HeapType.Kind != wasmir.HeapKindExtern {
+		if !ok || !matchesExpectedValueType(valueExpr.Type, wasmir.RefTypeExtern(true)) {
 			return nil, false
 		}
 		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
@@ -3252,6 +3252,10 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 			return wasmir.RefTypeExtern(true), true
 		case "none":
 			return wasmir.RefTypeNone(true), true
+		case "noextern":
+			return wasmir.RefTypeNoExtern(true), true
+		case "nofunc":
+			return wasmir.RefTypeNoFunc(true), true
 		case "any":
 			return wasmir.RefTypeAny(true), true
 		case "eq":
@@ -3369,6 +3373,8 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 			}
 		} else if got.HeapType.Kind == wasmir.HeapKindNone {
 			return want.Nullable
+		} else if got.HeapType.Kind == wasmir.HeapKindNoFunc {
+			return want.Nullable
 		} else if got.HeapType.Kind != wasmir.HeapKindFunc {
 			return false
 		}
@@ -3403,11 +3409,17 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 				return false
 			}
 		case wasmir.HeapKindFunc:
-			if got.HeapType.Kind != wasmir.HeapKindFunc && got.HeapType.Kind != wasmir.HeapKindTypeIndex {
+			if got.HeapType.Kind != wasmir.HeapKindFunc &&
+				got.HeapType.Kind != wasmir.HeapKindNoFunc &&
+				got.HeapType.Kind != wasmir.HeapKindTypeIndex {
 				return false
 			}
 		case wasmir.HeapKindExtern:
-			if got.HeapType.Kind != wasmir.HeapKindExtern {
+			if got.HeapType.Kind != wasmir.HeapKindExtern && got.HeapType.Kind != wasmir.HeapKindNoExtern {
+				return false
+			}
+		case wasmir.HeapKindNoExtern:
+			if got.HeapType.Kind != wasmir.HeapKindNoExtern {
 				return false
 			}
 		default:
@@ -3687,6 +3699,10 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 		return wasmir.RefTypeExtern(nullable), true
 	case "none":
 		return wasmir.RefTypeNone(nullable), true
+	case "noextern":
+		return wasmir.RefTypeNoExtern(nullable), true
+	case "nofunc":
+		return wasmir.RefTypeNoFunc(nullable), true
 	case "any":
 		return wasmir.RefTypeAny(nullable), true
 	case "eq":

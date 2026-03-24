@@ -65,7 +65,7 @@ func matchesExpectedValue(got, want validatedValue) bool {
 	}
 	if want.Type.UsesTypeIndex() {
 		if !got.Type.UsesTypeIndex() {
-			return false
+			return got.Type.HeapType.Kind == HeapKindNoFunc && want.Type.Nullable
 		}
 		if got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
 			return false
@@ -73,11 +73,21 @@ func matchesExpectedValue(got, want validatedValue) bool {
 	} else {
 		switch want.Type.HeapType.Kind {
 		case HeapKindFunc:
-			if got.Type.HeapType.Kind != HeapKindFunc && got.Type.HeapType.Kind != HeapKindTypeIndex {
+			if got.Type.HeapType.Kind != HeapKindFunc &&
+				got.Type.HeapType.Kind != HeapKindTypeIndex &&
+				got.Type.HeapType.Kind != HeapKindNoFunc {
 				return false
 			}
 		case HeapKindExtern:
-			if got.Type.HeapType.Kind != HeapKindExtern {
+			if got.Type.HeapType.Kind != HeapKindExtern && got.Type.HeapType.Kind != HeapKindNoExtern {
+				return false
+			}
+		case HeapKindNoFunc:
+			if got.Type.HeapType.Kind != HeapKindNoFunc {
+				return false
+			}
+		case HeapKindNoExtern:
+			if got.Type.HeapType.Kind != HeapKindNoExtern {
 				return false
 			}
 		default:
@@ -287,16 +297,23 @@ func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct))
 	case HeapKindFunc:
 		return got.HeapType.Kind == HeapKindFunc ||
+			got.HeapType.Kind == HeapKindNoFunc ||
 			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindFunc))
 	case HeapKindExtern:
-		return got.HeapType.Kind == HeapKindExtern
+		return got.HeapType.Kind == HeapKindExtern || got.HeapType.Kind == HeapKindNoExtern
+	case HeapKindNoExtern:
+		return got.HeapType.Kind == HeapKindNoExtern
+	case HeapKindNoFunc:
+		return got.HeapType.Kind == HeapKindNoFunc
 	case HeapKindTypeIndex:
 		if got.HeapType.Kind == HeapKindTypeIndex {
 			return isTypeIndexSubtype(m, got.HeapType.TypeIndex, want.HeapType.TypeIndex)
 		}
-		return got.HeapType.Kind == HeapKindNone && want.Nullable &&
+		return (got.HeapType.Kind == HeapKindNone && want.Nullable &&
 			(typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindStruct) ||
-				typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindArray))
+				typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindArray))) ||
+			(got.HeapType.Kind == HeapKindNoFunc && want.Nullable &&
+				typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindFunc))
 	default:
 		return false
 	}
@@ -1830,7 +1847,7 @@ instrLoop:
 				continue
 			}
 			got := stackValue(len(stack) - 1)
-			if !got.Type.IsRef() || got.Type.HeapType.Kind != HeapKindAny {
+			if !matchesGCExpectedValue(m, got.Type, RefTypeAny(true)) {
 				diags.Addf("%s: extern.convert_any expects any reference operand", insCtx)
 				continue
 			}
@@ -1841,7 +1858,7 @@ instrLoop:
 				continue
 			}
 			got := stackValue(len(stack) - 1)
-			if !got.Type.IsRef() || got.Type.HeapType.Kind != HeapKindExtern {
+			if !matchesGCExpectedValue(m, got.Type, RefTypeExtern(true)) {
 				diags.Addf("%s: any.convert_extern expects extern reference operand", insCtx)
 				continue
 			}

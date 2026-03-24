@@ -22,6 +22,8 @@ const (
 	HeapKindFunc
 	HeapKindExtern
 	HeapKindNone
+	HeapKindNoExtern
+	HeapKindNoFunc
 	HeapKindAny
 	HeapKindEq
 	HeapKindI31
@@ -67,6 +69,14 @@ func RefTypeExtern(nullable bool) ValueType {
 
 func RefTypeNone(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNone}}
+}
+
+func RefTypeNoExtern(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoExtern}}
+}
+
+func RefTypeNoFunc(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoFunc}}
 }
 
 func RefTypeAny(nullable bool) ValueType {
@@ -134,6 +144,16 @@ func (vt ValueType) String() string {
 				return "nullref"
 			}
 			return "(ref none)"
+		case HeapKindNoExtern:
+			if vt.Nullable {
+				return "(ref null noextern)"
+			}
+			return "(ref noextern)"
+		case HeapKindNoFunc:
+			if vt.Nullable {
+				return "(ref null nofunc)"
+			}
+			return "(ref nofunc)"
 		case HeapKindAny:
 			if vt.Nullable {
 				return "anyref"
