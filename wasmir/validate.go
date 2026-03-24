@@ -420,7 +420,7 @@ func ValidateModule(m *Module) error {
 			diags.Addf("table[%d]: table size", i)
 		}
 		if table.HasInit {
-			initType, ok := globalInitType(m, []Instruction{table.Init})
+			initType, ok := globalInitType(m, table.Init)
 			if !ok {
 				diags.Addf("table[%d]: invalid initializer", i)
 				continue

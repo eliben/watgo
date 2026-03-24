@@ -512,16 +512,12 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
-			if len(ci.Instrs) != 1 {
-				l.diags.Addf("table[%d]: inline initializer must be a single constant instruction", i)
-				continue
-			}
-			if !nullable && ci.Instrs[0].Kind == wasmir.InstrRefNull {
+			if !nullable && len(ci.Instrs) == 1 && ci.Instrs[0].Kind == wasmir.InstrRefNull {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
 			}
 			l.out.Tables[tableIdx].HasInit = true
-			l.out.Tables[tableIdx].Init = ci.Instrs[0]
+			l.out.Tables[tableIdx].Init = append([]wasmir.Instruction(nil), ci.Instrs...)
 		} else if !nullable {
 			l.diags.Addf("table[%d]: type mismatch", i)
 		}
@@ -1221,15 +1217,28 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 //
 //	(ref.test (ref i31) (local.get $x))
 //	(ref.cast (ref i31) (local.get $x))
+//	(ref.cast i31ref (global.get $g))
 //
-// The first nested "(ref ...)" argument is a type immediate, while the other
-// nested expressions are normal operands evaluated before the instruction.
+// The first argument is the reference type immediate. It may be written either
+// as a folded "(ref ...)" form or as a plain shorthand token like `i31ref`.
+// Any remaining nested expressions are normal operands evaluated before the
+// instruction.
 func (fl *functionLowerer) lowerFoldedRefTypeTestCast(fi *FoldedInstr) {
 	var refType wasmir.ValueType
 	haveRefType := false
 	for _, arg := range fi.Args {
 		if arg.Operand != nil {
-			fl.diagf(arg.Operand.Loc(), "%s expects folded reference type and value expression", fi.Name)
+			if !haveRefType {
+				vt, ok := lowerCastTypeOperand(arg.Operand, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(arg.Operand.Loc(), "invalid %s reference type", fi.Name)
+					continue
+				}
+				refType = vt
+				haveRefType = true
+				continue
+			}
+			fl.diagf(arg.Operand.Loc(), "%s expects reference type and value expression", fi.Name)
 			continue
 		}
 		nested, ok := arg.Instr.(*FoldedInstr)

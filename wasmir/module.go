@@ -559,8 +559,10 @@ type Table struct {
 	// expression in the table section.
 	HasInit bool
 
-	// Init is the repeated initializer value used when HasInit is true.
-	Init Instruction
+	// Init is the repeated initializer const expression used when HasInit is
+	// true. The instruction slice is expected to leave exactly one reference
+	// value on the const-expression stack.
+	Init []Instruction
 
 	// Imported reports whether this table is imported.
 	Imported bool

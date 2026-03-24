@@ -609,7 +609,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 				payload.WriteByte(refTypeFuncRefCode)
 			}
 			writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
-			encodeConstExpr(&payload, fmt.Sprintf("table[%d]", i), tb.Init, diags)
+			encodeConstExprInstrs(&payload, fmt.Sprintf("table[%d]", i), tb.Init, diags)
 			continue
 		}
 		if !encodeValueType(&payload, tb.RefType) {

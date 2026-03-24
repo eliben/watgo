@@ -1918,6 +1918,9 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "null array reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}
+	if wantLower == "null i31 reference" {
+		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
 	if wantLower == "out of bounds array access" {
 		return strings.Contains(gotLower, "array element access out of bounds") ||
 			strings.Contains(gotLower, "element segment out of bounds")

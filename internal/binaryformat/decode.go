@@ -529,7 +529,7 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid limits: %v", i, err)
 				break
 			}
-			init, err := decodeConstExpr(r)
+			init, err := decodeConstExprInstrs(r)
 			if err != nil {
 				diags.Addf("table[%d]: invalid init expr: %v", i, err)
 				break
