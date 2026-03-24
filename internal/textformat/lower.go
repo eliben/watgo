@@ -3250,6 +3250,8 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 			return wasmir.RefTypeFunc(true), true
 		case "extern":
 			return wasmir.RefTypeExtern(true), true
+		case "none":
+			return wasmir.RefTypeNone(true), true
 		case "any":
 			return wasmir.RefTypeAny(true), true
 		case "eq":
@@ -3365,6 +3367,8 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 			if got.HeapType.TypeIndex != want.HeapType.TypeIndex {
 				return false
 			}
+		} else if got.HeapType.Kind == wasmir.HeapKindNone {
+			return want.Nullable
 		} else if got.HeapType.Kind != wasmir.HeapKindFunc {
 			return false
 		}
@@ -3372,13 +3376,17 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 		switch want.HeapType.Kind {
 		case wasmir.HeapKindAny:
 			switch got.HeapType.Kind {
-			case wasmir.HeapKindAny, wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindArray, wasmir.HeapKindStruct, wasmir.HeapKindTypeIndex:
+			case wasmir.HeapKindNone, wasmir.HeapKindAny, wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindArray, wasmir.HeapKindStruct, wasmir.HeapKindTypeIndex:
 			default:
+				return false
+			}
+		case wasmir.HeapKindNone:
+			if got.HeapType.Kind != wasmir.HeapKindNone {
 				return false
 			}
 		case wasmir.HeapKindEq:
 			switch got.HeapType.Kind {
-			case wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindStruct, wasmir.HeapKindArray, wasmir.HeapKindTypeIndex:
+			case wasmir.HeapKindNone, wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindStruct, wasmir.HeapKindArray, wasmir.HeapKindTypeIndex:
 			default:
 				return false
 			}
@@ -3610,6 +3618,8 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 			return wasmir.ValueTypeF64, true
 		case "funcref":
 			return wasmir.RefTypeFunc(true), true
+		case "nullref":
+			return wasmir.RefTypeNone(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
 		case "anyref":
@@ -3642,6 +3652,8 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 		switch t.Name {
 		case "funcref":
 			return wasmir.RefTypeFunc(true), true
+		case "nullref":
+			return wasmir.RefTypeNone(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
 		case "anyref":
@@ -3673,6 +3685,8 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 		return wasmir.RefTypeFunc(nullable), true
 	case "extern":
 		return wasmir.RefTypeExtern(nullable), true
+	case "none":
+		return wasmir.RefTypeNone(nullable), true
 	case "any":
 		return wasmir.RefTypeAny(nullable), true
 	case "eq":

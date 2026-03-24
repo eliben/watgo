@@ -53,16 +53,21 @@ func matchesExpectedValue(got, want validatedValue) bool {
 	switch want.Type.HeapType.Kind {
 	case HeapKindAny:
 		switch got.Type.HeapType.Kind {
-		case HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
+		case HeapKindNone, HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
 			return true
 		case HeapKindTypeIndex:
 			return true
 		default:
 			return false
 		}
+	case HeapKindNone:
+		return got.Type.HeapType.Kind == HeapKindNone
 	}
 	if want.Type.UsesTypeIndex() {
-		if !got.Type.UsesTypeIndex() || got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
+		if !got.Type.UsesTypeIndex() {
+			return false
+		}
+		if got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
 			return false
 		}
 	} else {
@@ -253,16 +258,18 @@ func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 	switch want.HeapType.Kind {
 	case HeapKindAny:
 		switch got.HeapType.Kind {
-		case HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
+		case HeapKindNone, HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
 			return true
 		case HeapKindTypeIndex:
 			return true
 		default:
 			return false
 		}
+	case HeapKindNone:
+		return got.HeapType.Kind == HeapKindNone
 	case HeapKindEq:
 		switch got.HeapType.Kind {
-		case HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
+		case HeapKindNone, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
 			return true
 		case HeapKindTypeIndex:
 			return typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct) ||
@@ -284,7 +291,12 @@ func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 	case HeapKindExtern:
 		return got.HeapType.Kind == HeapKindExtern
 	case HeapKindTypeIndex:
-		return got.HeapType.Kind == HeapKindTypeIndex && isTypeIndexSubtype(m, got.HeapType.TypeIndex, want.HeapType.TypeIndex)
+		if got.HeapType.Kind == HeapKindTypeIndex {
+			return isTypeIndexSubtype(m, got.HeapType.TypeIndex, want.HeapType.TypeIndex)
+		}
+		return got.HeapType.Kind == HeapKindNone && want.Nullable &&
+			(typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindStruct) ||
+				typeIndexHasKind(m, want.HeapType.TypeIndex, TypeDefKindArray))
 	default:
 		return false
 	}

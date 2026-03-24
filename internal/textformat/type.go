@@ -11,6 +11,7 @@ var basicTypes = map[string]bool{
 	"f32":       true,
 	"f64":       true,
 	"funcref":   true,
+	"nullref":   true,
 	"externref": true,
 	"anyref":    true,
 	"eqref":     true,

@@ -2241,6 +2241,8 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.RefTypeEq(true), true
 	case refTypeAnyCode:
 		return wasmir.RefTypeAny(true), true
+	case refTypeNoneCode:
+		return wasmir.RefTypeNone(true), true
 	case refTypeFuncRefCode:
 		return wasmir.RefTypeFunc(true), true
 	case valueTypeExternRefCode:
@@ -2350,6 +2352,8 @@ func decodeHeapTypeImmediate(typeIndex int64, nullable bool) (wasmir.ValueType, 
 			return wasmir.RefTypeEq(nullable), nil
 		case -18:
 			return wasmir.RefTypeAny(nullable), nil
+		case -15:
+			return wasmir.RefTypeNone(nullable), nil
 		case -16:
 			return wasmir.RefTypeFunc(nullable), nil
 		case -17:

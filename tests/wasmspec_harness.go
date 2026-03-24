@@ -1918,8 +1918,15 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "null array reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}
+	if wantLower == "null reference" {
+		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
 	if wantLower == "null i31 reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
+	if wantLower == "cast failure" {
+		return strings.Contains(gotLower, "cast error") ||
+			strings.Contains(gotLower, "illegal cast")
 	}
 	if wantLower == "out of bounds array access" {
 		return strings.Contains(gotLower, "array element access out of bounds") ||
@@ -2254,6 +2261,8 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 			return "externref", nil
 		case wasmir.HeapKindAny:
 			return "anyref", nil
+		case wasmir.HeapKindNone:
+			return "nullref", nil
 		case wasmir.HeapKindEq:
 			return "eqref", nil
 		case wasmir.HeapKindI31:

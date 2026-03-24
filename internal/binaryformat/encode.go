@@ -42,6 +42,7 @@ const (
 	valueTypeF64Code       byte = 0x7c
 	packedTypeI16Code      byte = 0x77
 	packedTypeI8Code       byte = 0x78
+	refTypeNoneCode        byte = 0x71
 	refTypeArrayCode       byte = 0x6a
 	refTypeStructCode      byte = 0x6b
 	refTypeI31Code         byte = 0x6c
@@ -1638,6 +1639,8 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return 0, false
 	}
 	switch vt.HeapType.Kind {
+	case wasmir.HeapKindNone:
+		return refTypeNoneCode, true
 	case wasmir.HeapKindArray:
 		return refTypeArrayCode, true
 	case wasmir.HeapKindStruct:

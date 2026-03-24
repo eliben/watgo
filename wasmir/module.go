@@ -21,6 +21,7 @@ const (
 	HeapKindInvalid HeapKind = iota
 	HeapKindFunc
 	HeapKindExtern
+	HeapKindNone
 	HeapKindAny
 	HeapKindEq
 	HeapKindI31
@@ -62,6 +63,10 @@ func RefTypeFunc(nullable bool) ValueType {
 // nullability.
 func RefTypeExtern(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExtern}}
+}
+
+func RefTypeNone(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNone}}
 }
 
 func RefTypeAny(nullable bool) ValueType {
@@ -124,6 +129,11 @@ func (vt ValueType) String() string {
 				return "externref"
 			}
 			return "(ref extern)"
+		case HeapKindNone:
+			if vt.Nullable {
+				return "nullref"
+			}
+			return "(ref none)"
 		case HeapKindAny:
 			if vt.Nullable {
 				return "anyref"

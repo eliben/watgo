@@ -140,6 +140,8 @@ function valueTypeCode(type) {
       return 0x6b;
     case 'arrayref':
       return 0x6a;
+    case 'nullref':
+      return 0x69;
     default:
       throw new Error(`unsupported wrapper value type ${type}`);
   }
@@ -466,6 +468,7 @@ function decodeValue(arg) {
     case 'i31ref':
     case 'structref':
     case 'arrayref':
+    case 'nullref':
       if (arg.null) {
         return null;
       }
@@ -522,6 +525,11 @@ function encodeValue(valueType, value) {
         return { type: valueType, null: true };
       }
       return { type: valueType, refKind: 'eq' };
+    case 'nullref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      throw new Error('non-null nullref result');
     case 'i31ref':
       if (value === null) {
         return { type: valueType, null: true };
