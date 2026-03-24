@@ -1249,7 +1249,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
-	case "array.new_data", "array.init_data", "array.init_elem":
+	case "array.new_data", "array.new_elem", "array.init_data", "array.init_elem":
 		if cursor+2 >= len(elems) {
 			p.emitError(elem.loc, "%s expects two operands", name)
 			return nil, cursor + 1

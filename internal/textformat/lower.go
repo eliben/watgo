@@ -1839,7 +1839,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		kind, _ := instructionKind(pi.Name)
 		fl.emitInstr(wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc})
 		return
-	case "array.new_data", "array.init_data", "array.init_elem":
+	case "array.new_data", "array.new_elem", "array.init_data", "array.init_elem":
 		if len(pi.Operands) != 2 {
 			fl.diagf(instrLoc, "%s expects 2 operands", pi.Name)
 			return
@@ -1859,10 +1859,10 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 				return
 			}
 			ins.DataIndex = dataIndex
-		case "array.init_elem":
+		case "array.new_elem", "array.init_elem":
 			elemIndex, ok := lowerElemIndexOperand(pi.Operands[1], fl.mod.elemIndicesByName)
 			if !ok {
-				fl.diagf(pi.Operands[1].Loc(), "invalid array.init_elem element operand")
+				fl.diagf(pi.Operands[1].Loc(), "invalid %s element operand", pi.Name)
 				return
 			}
 			ins.ElemIndex = elemIndex
@@ -2875,6 +2875,17 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 		instrs := append([]wasmir.Instruction{}, lenExpr.Instrs...)
 		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIdx})
 		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
+	case "ref.i31":
+		if len(fi.Args) != 1 || fi.Args[0].Instr == nil || fi.Args[0].Operand != nil {
+			return nil, false
+		}
+		valueExpr, ok := l.lowerConstInstr(fi.Args[0].Instr)
+		if !ok || valueExpr.Type != wasmir.ValueTypeI32 {
+			return nil, false
+		}
+		instrs := append([]wasmir.Instruction{}, valueExpr.Instrs...)
+		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrRefI31})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeI31(false)}, true
 	default:
 		operands := make([]Operand, 0, len(fi.Args))
 		for _, arg := range fi.Args {

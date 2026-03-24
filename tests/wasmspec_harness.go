@@ -67,6 +67,7 @@ const (
 	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
+	valueRefArray         valueKind = "ref.array"
 	valueRefExtern        valueKind = "ref.extern"
 )
 
@@ -777,6 +778,12 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("ref.func expects no operands in script assertion")
 		}
 		return scriptValue{kind: valueRefFunc, literal: "ref.func"}, nil
+	case "ref.array":
+		elems := sx.Children()
+		if len(elems) != 1 {
+			return scriptValue{}, fmt.Errorf("ref.array expects no operands in script assertion")
+		}
+		return scriptValue{kind: valueRefArray, literal: "ref.array"}, nil
 	case "ref.extern":
 		elems := sx.Children()
 		if len(elems) != 2 {
@@ -1365,7 +1372,7 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
-		case valueRefFunc:
+		case valueRefFunc, valueRefArray:
 			if results[i] == 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
@@ -1411,6 +1418,8 @@ func formatExpectedValue(v scriptValue) string {
 		return "(ref.null)"
 	case valueRefFunc:
 		return "(ref.func)"
+	case valueRefArray:
+		return "(ref.array)"
 	case valueRefExtern:
 		return fmt.Sprintf("(ref.extern %s)", v.literal)
 	default:
@@ -1432,11 +1441,21 @@ func formatGotValueLikeExpected(got uint64, want scriptValue) string {
 		return fmt.Sprintf("(f32.const %s)", formatF32NaNOrValue(uint32(got), want.literal))
 	case valueF64NaNCanonical, valueF64NaNArithmetic:
 		return fmt.Sprintf("(f64.const %s)", formatF64NaNOrValue(got, want.literal))
-	case valueRefNull, valueRefFunc:
+	case valueRefNull:
 		if got == 0 {
 			return "(ref.null)"
 		}
 		return "(ref.func)"
+	case valueRefFunc:
+		if got == 0 {
+			return "(ref.null)"
+		}
+		return "(ref.func)"
+	case valueRefArray:
+		if got == 0 {
+			return "(ref.null)"
+		}
+		return "(ref.array)"
 	case valueRefExtern:
 		return fmt.Sprintf("(ref.extern %d)", got)
 	default:

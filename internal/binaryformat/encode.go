@@ -248,6 +248,7 @@ const (
 	subopArrayNewDefaultCode uint32 = 0x07
 	subopArrayNewFixedCode   uint32 = 0x08
 	subopArrayNewDataCode    uint32 = 0x09
+	subopArrayNewElemCode    uint32 = 0x0a
 	subopArrayGetCode        uint32 = 0x0b
 	subopArrayGetSCode       uint32 = 0x0c
 	subopArrayGetUCode       uint32 = 0x0d
@@ -975,6 +976,11 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, subopArrayNewDataCode)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.DataIndex)
+	case wasmir.InstrArrayNewElem:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewElemCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.ElemIndex)
 	case wasmir.InstrArrayInitData:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayInitDataCode)
@@ -1417,6 +1423,9 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewDefaultCode)
 		writeULEB128(out, init.TypeIndex)
+	case wasmir.InstrRefI31:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopRefI31Code)
 	default:
 		diags.Addf("%s: unsupported initializer instruction kind %d", where, init.Kind)
 		out.WriteByte(opI32ConstCode)

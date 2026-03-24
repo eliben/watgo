@@ -241,6 +241,7 @@ func init() {
 		"array.len":         wasmir.InstrArrayLen,
 		"array.new":         wasmir.InstrArrayNew,
 		"array.new_data":    wasmir.InstrArrayNewData,
+		"array.new_elem":    wasmir.InstrArrayNewElem,
 		"array.new_default": wasmir.InstrArrayNewDefault,
 		"array.new_fixed":   wasmir.InstrArrayNewFixed,
 		"array.init_data":   wasmir.InstrArrayInitData,

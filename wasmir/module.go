@@ -206,6 +206,7 @@ const (
 	InstrArrayLen
 	InstrArrayNewDefault
 	InstrArrayNewData
+	InstrArrayNewElem
 	InstrArrayNewFixed
 	InstrArrayInitData
 	InstrArrayInitElem

@@ -1287,6 +1287,35 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrArrayNewElem:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.new_elem type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.new_elem type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if int(ins.ElemIndex) >= len(m.Elements) {
+				diags.Addf("%s: array.new_elem element index %d out of range", insCtx, ins.ElemIndex)
+				continue
+			}
+			elemType := elementSegmentType(m, m.Elements[ins.ElemIndex])
+			if !matchesExpectedValueInModule(m, validatedValueFromType(elemType), validatedValueFromType(fieldValueType(td.ElemField))) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: array.new_elem needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.new_elem expects i32 offset and i32 length operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
 		case InstrArrayInitData:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -2698,6 +2727,12 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 				return ValueType{}, false
 			}
 			push(RefTypeIndexed(ins.TypeIndex, false))
+		case InstrRefI31:
+			valueType, ok := pop()
+			if !ok || valueType != ValueTypeI32 {
+				return ValueType{}, false
+			}
+			push(RefTypeI31(false))
 		default:
 			return ValueType{}, false
 		}
@@ -2737,6 +2772,8 @@ func instrName(kind InstrKind) string {
 		return "array.new_default"
 	case InstrArrayNewData:
 		return "array.new_data"
+	case InstrArrayNewElem:
+		return "array.new_elem"
 	case InstrArrayNewFixed:
 		return "array.new_fixed"
 	case InstrArrayInitData:
