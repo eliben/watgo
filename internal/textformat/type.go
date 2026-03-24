@@ -13,6 +13,10 @@ var basicTypes = map[string]bool{
 	"funcref":   true,
 	"externref": true,
 	"anyref":    true,
+	"eqref":     true,
+	"i31ref":    true,
+	"structref": true,
+	"arrayref":  true,
 }
 
 // BasicType is a type that can be described by a single keyword, e.g.

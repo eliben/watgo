@@ -207,12 +207,15 @@ const (
 	InstrArrayNewDefault
 	InstrArrayNewData
 	InstrArrayNewFixed
+	InstrArrayInitData
+	InstrArrayInitElem
 	InstrArrayGet
 	InstrArrayGetS
 	InstrArrayGetU
 	InstrArraySet
 	InstrArrayFill
 	InstrArrayCopy
+	InstrRefEq
 	InstrRefTest
 	InstrRefCast
 	InstrRefI31
@@ -645,8 +648,25 @@ type ElementSegment struct {
 	FuncIndices []uint32
 
 	// Exprs is the expression form payload for reference-type element segments.
+	// Each entry is one constant-expression instruction sequence, not just a
+	// single instruction. This is needed because an elem item in WAT may be
+	// written as a folded instruction, but wasmir stores instructions only in
+	// linear form.
+	//
+	// For example, tests/wasmspec-scripts/gc/array_init_elem.wast contains:
+	//   (elem $e1 arrayref
+	//     (item (array.new_default $arrref_mut (i32.const 1)))
+	//     (item (array.new_default $arrref_mut (i32.const 2))))
+	// Each folded `item` lowers to a separate const-expr entry like:
+	//   i32.const 1
+	//   array.new_default $arrref_mut
+	//
+	// This matches the spec's element-segment expression encoding, where each
+	// elem item is a full const expr terminated by `end`.
+	// See: https://webassembly.github.io/gc/core/binary/modules.html#binary-elem
+	//
 	// When non-empty, FuncIndices should be empty.
-	Exprs []Instruction
+	Exprs [][]Instruction
 
 	// RefType is the reference type for Exprs.
 	RefType ValueType

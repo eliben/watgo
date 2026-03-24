@@ -213,6 +213,7 @@ const (
 	opRefNullCode           byte = 0xd0
 	opRefIsNullCode         byte = 0xd1
 	opRefFuncCode           byte = 0xd2
+	opRefEqCode             byte = 0xd3
 	opRefAsNonNullCode      byte = 0xd4
 	opBrOnNullCode          byte = 0xd5
 	opBrOnNonNullCode       byte = 0xd6
@@ -253,6 +254,8 @@ const (
 	subopArraySetCode        uint32 = 0x0e
 	subopArrayFillCode       uint32 = 0x10
 	subopArrayCopyCode       uint32 = 0x11
+	subopArrayInitDataCode   uint32 = 0x12
+	subopArrayInitElemCode   uint32 = 0x13
 	subopRefTestCode         uint32 = 0x14
 	subopRefTestNullCode     uint32 = 0x15
 	subopRefCastCode         uint32 = 0x16
@@ -642,7 +645,7 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 
 			writeULEB128(&payload, uint32(len(elem.Exprs)))
 			for j, expr := range elem.Exprs {
-				encodeConstExpr(&payload, fmt.Sprintf("element[%d] expr[%d]", i, j), expr, diags)
+				encodeConstExprInstrs(&payload, fmt.Sprintf("element[%d] expr[%d]", i, j), expr, diags)
 			}
 			continue
 		}
@@ -795,7 +798,7 @@ func moduleUsesDataIndexInstructions(m *wasmir.Module) bool {
 	for _, fn := range m.Funcs {
 		for _, instr := range fn.Body {
 			switch instr.Kind {
-			case wasmir.InstrMemoryInit, wasmir.InstrDataDrop, wasmir.InstrArrayNewData:
+			case wasmir.InstrMemoryInit, wasmir.InstrDataDrop, wasmir.InstrArrayNewData, wasmir.InstrArrayInitData:
 				return true
 			}
 		}
@@ -972,6 +975,16 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, subopArrayNewDataCode)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.DataIndex)
+	case wasmir.InstrArrayInitData:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayInitDataCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.DataIndex)
+	case wasmir.InstrArrayInitElem:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayInitElemCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.ElemIndex)
 	case wasmir.InstrArrayNewFixed:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewFixedCode)
@@ -1343,6 +1356,8 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrRefFunc:
 		out.WriteByte(opRefFuncCode)
 		writeULEB128(out, instr.FuncIndex)
+	case wasmir.InstrRefEq:
+		out.WriteByte(opRefEqCode)
 	case wasmir.InstrEnd:
 		out.WriteByte(opEndCode)
 	default:

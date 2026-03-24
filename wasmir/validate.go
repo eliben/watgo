@@ -163,6 +163,33 @@ func sameFieldStorage(a, b FieldType) bool {
 	return a.Type == b.Type
 }
 
+func fieldByteWidth(ft FieldType) (uint32, bool) {
+	switch ft.Packed {
+	case PackedTypeI8:
+		return 1, true
+	case PackedTypeI16:
+		return 2, true
+	}
+	switch ft.Type {
+	case ValueTypeI32, ValueTypeF32:
+		return 4, true
+	case ValueTypeI64, ValueTypeF64:
+		return 8, true
+	default:
+		return 0, false
+	}
+}
+
+func elementSegmentType(_ *Module, seg ElementSegment) ValueType {
+	if seg.RefType.IsRef() {
+		return seg.RefType
+	}
+	if len(seg.FuncIndices) > 0 {
+		return RefTypeFunc(true)
+	}
+	return ValueType{}
+}
+
 func typeIndexHasKind(m *Module, typeIndex uint32, kind TypeDefKind) bool {
 	if m == nil || int(typeIndex) >= len(m.Types) {
 		return false
@@ -183,7 +210,7 @@ func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
 	switch want.HeapType.Kind {
 	case HeapKindEq:
 		switch got.HeapType.Kind {
-		case HeapKindEq, HeapKindI31:
+		case HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
 			return true
 		case HeapKindTypeIndex:
 			return typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct) ||
@@ -351,11 +378,12 @@ func ValidateModule(m *Module) error {
 			}
 		}
 		if len(elem.Exprs) > 0 {
-			if !matchesExpectedValueInModule(m, validatedValue{Type: elem.RefType}, validatedValue{Type: tableTy}) {
+			if elem.Mode == ElemSegmentModeActive &&
+				!matchesExpectedValueInModule(m, validatedValue{Type: elem.RefType}, validatedValue{Type: tableTy}) {
 				diags.Addf("element[%d]: type mismatch", i)
 			}
 			for j, expr := range elem.Exprs {
-				ty, ok := globalInitType(m, []Instruction{expr})
+				ty, ok := globalInitType(m, expr)
 				if !ok {
 					diags.Addf("element[%d] expr[%d]: constant expression required", i, j)
 					continue
@@ -1259,6 +1287,79 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrArrayInitData:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.init_data type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.init_data type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if !td.ElemField.Mutable {
+				diags.Addf("%s: immutable array", insCtx)
+				continue
+			}
+			if _, ok := fieldByteWidth(td.ElemField); !ok {
+				diags.Addf("%s: array type is not numeric or vector", insCtx)
+				continue
+			}
+			if int(ins.DataIndex) >= len(m.Data) {
+				diags.Addf("%s: array.init_data data index %d out of range", insCtx, ins.DataIndex)
+				continue
+			}
+			if len(stack) < 4 {
+				diags.Addf("%s: array.init_data needs 4 operands", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-4), wantRef) {
+				diags.Addf("%s: array.init_data expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.init_data expects i32 destination, source, and length operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 4)
+		case InstrArrayInitElem:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: array.init_elem type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindArray {
+				diags.Addf("%s: array.init_elem type index %d is not an array type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if !td.ElemField.Mutable {
+				diags.Addf("%s: immutable array", insCtx)
+				continue
+			}
+			if int(ins.ElemIndex) >= len(m.Elements) {
+				diags.Addf("%s: array.init_elem element index %d out of range", insCtx, ins.ElemIndex)
+				continue
+			}
+			elemType := elementSegmentType(m, m.Elements[ins.ElemIndex])
+			if !matchesExpectedValueInModule(m, validatedValueFromType(elemType), validatedValueFromType(fieldValueType(td.ElemField))) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			if len(stack) < 4 {
+				diags.Addf("%s: array.init_elem needs 4 operands", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-4), wantRef) {
+				diags.Addf("%s: array.init_elem expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: array.init_elem expects i32 destination, source, and length operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 4)
 		case InstrArrayGet:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -1433,6 +1534,18 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 5)
+		case InstrRefEq:
+			if len(stack) < 2 {
+				diags.Addf("%s: ref.eq needs 2 operands", insCtx)
+				continue
+			}
+			if !matchesGCExpectedValue(m, stackValue(len(stack)-2).Type, RefTypeEq(true)) ||
+				!matchesGCExpectedValue(m, stackValue(len(stack)-1).Type, RefTypeEq(true)) {
+				diags.Addf("%s: ref.eq expects eqref operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackValue(validatedValueFromType(ValueTypeI32))
 		case InstrRefTest:
 			if len(stack) < 1 {
 				diags.Addf("%s: ref.test needs 1 operand", insCtx)
@@ -2626,6 +2739,10 @@ func instrName(kind InstrKind) string {
 		return "array.new_data"
 	case InstrArrayNewFixed:
 		return "array.new_fixed"
+	case InstrArrayInitData:
+		return "array.init_data"
+	case InstrArrayInitElem:
+		return "array.init_elem"
 	case InstrArrayGet:
 		return "array.get"
 	case InstrArrayGetS:
@@ -2638,6 +2755,8 @@ func instrName(kind InstrKind) string {
 		return "array.fill"
 	case InstrArrayCopy:
 		return "array.copy"
+	case InstrRefEq:
+		return "ref.eq"
 	case InstrRefTest:
 		return "ref.test"
 	case InstrRefCast:

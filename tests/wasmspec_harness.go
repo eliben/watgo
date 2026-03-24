@@ -1774,13 +1774,15 @@ func matchesExpectedFailureText(got, want string) bool {
 		return strings.Contains(gotLower, "divide result unrepresentable")
 	}
 	if wantLower == "out of bounds memory access" {
-		return strings.Contains(gotLower, "memory access out of bounds")
+		return strings.Contains(gotLower, "memory access out of bounds") ||
+			strings.Contains(gotLower, "data segment out of bounds")
 	}
 	if wantLower == "null array reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}
 	if wantLower == "out of bounds array access" {
-		return strings.Contains(gotLower, "array element access out of bounds")
+		return strings.Contains(gotLower, "array element access out of bounds") ||
+			strings.Contains(gotLower, "element segment out of bounds")
 	}
 	return false
 }

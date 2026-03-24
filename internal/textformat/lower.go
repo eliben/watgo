@@ -252,11 +252,7 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 					l.diags.Addf("elem[%d] expr[%d]: type mismatch", i, j)
 					continue
 				}
-				if len(ce.Instrs) != 1 {
-					l.diags.Addf("elem[%d] expr[%d]: constant expression must be a single instruction", i, j)
-					continue
-				}
-				seg.Exprs = append(seg.Exprs, ce.Instrs[0])
+				seg.Exprs = append(seg.Exprs, append([]wasmir.Instruction(nil), ce.Instrs...))
 			}
 		} else {
 			if ed.RefTy != nil {
@@ -273,14 +269,14 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 			}
 			if seg.Mode == wasmir.ElemSegmentModeActive && usesExprElementSegment(tableRefType) {
 				seg.RefType = tableRefType
-				seg.Exprs = make([]wasmir.Instruction, 0, len(ed.FuncRefs))
+				seg.Exprs = make([][]wasmir.Instruction, 0, len(ed.FuncRefs))
 				for j, ref := range ed.FuncRefs {
 					funcIdx, ok := l.resolveFunctionRef(ref)
 					if !ok {
 						l.diags.Addf("elem[%d] func[%d]: unknown function reference %q", i, j, ref)
 						continue
 					}
-					seg.Exprs = append(seg.Exprs, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx})
+					seg.Exprs = append(seg.Exprs, []wasmir.Instruction{{Kind: wasmir.InstrRefFunc, FuncIndex: funcIdx}})
 				}
 			} else {
 				seg.FuncIndices = make([]uint32, 0, len(ed.FuncRefs))
@@ -448,14 +444,14 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				// must lower to ref-expression payloads like `(ref.func $tf)`
 				// so the element segment carries the table's precise ref type.
 				seg.RefType = refType
-				seg.Exprs = make([]wasmir.Instruction, 0, len(td.ElemRefs))
+				seg.Exprs = make([][]wasmir.Instruction, 0, len(td.ElemRefs))
 				for _, ref := range td.ElemRefs {
 					idx, ok := l.resolveFunctionRef(ref)
 					if !ok {
 						l.diags.Addf("table[%d]: unknown elem function ref %q", i, ref)
 						continue
 					}
-					seg.Exprs = append(seg.Exprs, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: idx})
+					seg.Exprs = append(seg.Exprs, []wasmir.Instruction{{Kind: wasmir.InstrRefFunc, FuncIndex: idx}})
 				}
 			} else {
 				seg.FuncIndices = make([]uint32, 0, len(td.ElemRefs))
@@ -476,7 +472,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				OffsetType: addressType,
 				OffsetI64:  0,
 				RefType:    refType,
-				Exprs:      make([]wasmir.Instruction, 0, len(td.ElemExprs)),
+				Exprs:      make([][]wasmir.Instruction, 0, len(td.ElemExprs)),
 			}
 			for j, expr := range td.ElemExprs {
 				ci, ok := l.lowerConstInstr(expr)
@@ -488,11 +484,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 					l.diags.Addf("table[%d] elem expr[%d]: type mismatch", i, j)
 					continue
 				}
-				if len(ci.Instrs) != 1 {
-					l.diags.Addf("table[%d] elem expr[%d]: constant expression must be a single instruction", i, j)
-					continue
-				}
-				seg.Exprs = append(seg.Exprs, ci.Instrs[0])
+				seg.Exprs = append(seg.Exprs, append([]wasmir.Instruction(nil), ci.Instrs...))
 			}
 			l.out.Elements = append(l.out.Elements, seg)
 		}
@@ -1118,6 +1110,8 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 	var typeRef string
 	tableIndex := uint32(0)
 	seenTableOperand := false
+	var params []wasmir.ValueType
+	var results []wasmir.ValueType
 	for _, arg := range fi.Args {
 		if arg.Operand != nil {
 			if seenTableOperand {
@@ -1151,10 +1145,34 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 			typeRef = ref
 			continue
 		}
+		if nested.Name == "param" {
+			for _, paramArg := range nested.Args {
+				vt, ok := lowerFoldedBlockTypeArg(paramArg, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid call_indirect param clause")
+					params = nil
+					break
+				}
+				params = append(params, vt)
+			}
+			continue
+		}
+		if nested.Name == "result" {
+			for _, resultArg := range nested.Args {
+				vt, ok := lowerFoldedBlockTypeArg(resultArg, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid call_indirect result clause")
+					results = nil
+					break
+				}
+				results = append(results, vt)
+			}
+			continue
+		}
 		fl.lowerInstruction(nested)
 	}
 	if typeRef == "" {
-		typeIdx := fl.mod.internFuncType(nil, nil, "")
+		typeIdx := fl.mod.internFuncType(params, results, "")
 		fl.emitInstr(wasmir.Instruction{
 			Kind:          wasmir.InstrCallIndirect,
 			CallTypeIndex: typeIdx,
@@ -1163,10 +1181,16 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 		})
 		return
 	}
-	typeIdx, _, ok := fl.resolveTypeRef(typeRef)
+	typeIdx, refType, ok := fl.resolveTypeRef(typeRef)
 	if !ok {
 		fl.diagf(fi.Loc(), "unknown call_indirect type use %q", typeRef)
 		return
+	}
+	if len(params) > 0 || len(results) > 0 {
+		if !equalValueTypeSlices(params, refType.Params) || !equalValueTypeSlices(results, refType.Results) {
+			fl.diagf(fi.Loc(), "call_indirect type clause mismatch referenced type")
+			return
+		}
 	}
 	fl.emitInstr(wasmir.Instruction{
 		Kind:          wasmir.InstrCallIndirect,
@@ -1738,6 +1762,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"f32.const":           {operandCount: 1, decode: decodeF32ConstOperands},
 	"f64.const":           {operandCount: 1, decode: decodeF64ConstOperands},
 	"ref.null":            {operandCount: 1, decode: decodeRefNullOperands},
+	"ref.eq":              {operandCount: 0},
 	"ref.is_null":         {operandCount: 0},
 	"ref.as_non_null":     {operandCount: 0},
 	"ref.func":            {operandCount: 1, decode: decodeRefFuncOperands},
@@ -1814,27 +1839,35 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		kind, _ := instructionKind(pi.Name)
 		fl.emitInstr(wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc})
 		return
-	case "array.new_data":
+	case "array.new_data", "array.init_data", "array.init_elem":
 		if len(pi.Operands) != 2 {
-			fl.diagf(instrLoc, "array.new_data expects 2 operands")
+			fl.diagf(instrLoc, "%s expects 2 operands", pi.Name)
 			return
 		}
 		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
 		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid array.new_data type operand")
+			fl.diagf(pi.Operands[0].Loc(), "invalid %s type operand", pi.Name)
 			return
 		}
-		dataIndex, ok := lowerDataIndexOperand(pi.Operands[1], fl.mod.dataIndicesByName)
-		if !ok {
-			fl.diagf(pi.Operands[1].Loc(), "invalid array.new_data data operand")
-			return
+		kind, _ := instructionKind(pi.Name)
+		ins := wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc}
+		switch pi.Name {
+		case "array.new_data", "array.init_data":
+			dataIndex, ok := lowerDataIndexOperand(pi.Operands[1], fl.mod.dataIndicesByName)
+			if !ok {
+				fl.diagf(pi.Operands[1].Loc(), "invalid %s data operand", pi.Name)
+				return
+			}
+			ins.DataIndex = dataIndex
+		case "array.init_elem":
+			elemIndex, ok := lowerElemIndexOperand(pi.Operands[1], fl.mod.elemIndicesByName)
+			if !ok {
+				fl.diagf(pi.Operands[1].Loc(), "invalid array.init_elem element operand")
+				return
+			}
+			ins.ElemIndex = elemIndex
 		}
-		fl.emitInstr(wasmir.Instruction{
-			Kind:      wasmir.InstrArrayNewData,
-			TypeIndex: typeIndex,
-			DataIndex: dataIndex,
-			SourceLoc: instrLoc,
-		})
+		fl.emitInstr(ins)
 		return
 	case "array.copy":
 		if len(pi.Operands) != 2 {
@@ -2398,8 +2431,8 @@ func decodeRefFuncOperands(fl *functionLowerer, ins *wasmir.Instruction, operand
 
 // decodeDataIndexOperands decodes operands into ins.DataIndex for memory.init
 // and data.drop.
-func decodeDataIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
-	dataIndex, ok := lowerDataIndexOperand(operands[0], nil)
+func decodeDataIndexOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	dataIndex, ok := lowerDataIndexOperand(operands[0], fl.mod.dataIndicesByName)
 	if !ok {
 		return false
 	}
@@ -3127,6 +3160,30 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 		}
 	} else {
 		switch want.HeapType.Kind {
+		case wasmir.HeapKindAny:
+			switch got.HeapType.Kind {
+			case wasmir.HeapKindAny, wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindArray, wasmir.HeapKindStruct, wasmir.HeapKindTypeIndex:
+			default:
+				return false
+			}
+		case wasmir.HeapKindEq:
+			switch got.HeapType.Kind {
+			case wasmir.HeapKindEq, wasmir.HeapKindI31, wasmir.HeapKindStruct, wasmir.HeapKindArray, wasmir.HeapKindTypeIndex:
+			default:
+				return false
+			}
+		case wasmir.HeapKindI31:
+			if got.HeapType.Kind != wasmir.HeapKindI31 {
+				return false
+			}
+		case wasmir.HeapKindArray:
+			if got.HeapType.Kind != wasmir.HeapKindArray && got.HeapType.Kind != wasmir.HeapKindTypeIndex {
+				return false
+			}
+		case wasmir.HeapKindStruct:
+			if got.HeapType.Kind != wasmir.HeapKindStruct && got.HeapType.Kind != wasmir.HeapKindTypeIndex {
+				return false
+			}
 		case wasmir.HeapKindFunc:
 			if got.HeapType.Kind != wasmir.HeapKindFunc && got.HeapType.Kind != wasmir.HeapKindTypeIndex {
 				return false
@@ -3332,6 +3389,14 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 			return wasmir.RefTypeExtern(true), true
 		case "anyref":
 			return wasmir.RefTypeAny(true), true
+		case "eqref":
+			return wasmir.RefTypeEq(true), true
+		case "i31ref":
+			return wasmir.RefTypeI31(true), true
+		case "structref":
+			return wasmir.RefTypeStruct(true), true
+		case "arrayref":
+			return wasmir.RefTypeArray(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}
@@ -3356,6 +3421,14 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 			return wasmir.RefTypeExtern(true), true
 		case "anyref":
 			return wasmir.RefTypeAny(true), true
+		case "eqref":
+			return wasmir.RefTypeEq(true), true
+		case "i31ref":
+			return wasmir.RefTypeI31(true), true
+		case "structref":
+			return wasmir.RefTypeStruct(true), true
+		case "arrayref":
+			return wasmir.RefTypeArray(true), true
 		default:
 			return wasmir.ValueType{}, false
 		}

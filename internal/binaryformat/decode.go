@@ -660,9 +660,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid expr vector length: %v", i, err)
 				break
 			}
-			exprs := make([]wasmir.Instruction, 0, exprCount)
+			exprs := make([][]wasmir.Instruction, 0, exprCount)
 			for j := uint32(0); j < exprCount; j++ {
-				expr, err := decodeConstExpr(r)
+				expr, err := decodeConstExprInstrs(r)
 				if err != nil {
 					diags.Addf("element[%d] expr[%d]: invalid const expr: %v", i, j, err)
 					break
@@ -688,9 +688,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid expr vector length: %v", i, err)
 				break
 			}
-			exprs := make([]wasmir.Instruction, 0, exprCount)
+			exprs := make([][]wasmir.Instruction, 0, exprCount)
 			for j := uint32(0); j < exprCount; j++ {
-				expr, err := decodeConstExpr(r)
+				expr, err := decodeConstExprInstrs(r)
 				if err != nil {
 					diags.Addf("element[%d] expr[%d]: invalid const expr: %v", i, j, err)
 					break
@@ -1327,6 +1327,39 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewData, TypeIndex: typeIndex, DataIndex: dataIndex})
+			case subopArrayInitDataCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.init_data missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				dataIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.init_data missing/invalid data immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayInitData, TypeIndex: typeIndex, DataIndex: dataIndex})
+			case subopArrayInitElemCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.init_elem missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				elemIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.init_elem missing/invalid element immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayInitElem, TypeIndex: typeIndex, ElemIndex: elemIndex})
+			case subopArrayLenCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayLen})
+			case subopArrayGetCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.get missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGet, TypeIndex: typeIndex})
 			case subopArrayGetUCode:
 				typeIndex, err := readU32(r)
 				if err != nil {
@@ -1341,6 +1374,13 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetS, TypeIndex: typeIndex})
+			case subopArraySetCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.set missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArraySet, TypeIndex: typeIndex})
 			case subopArrayFillCode:
 				typeIndex, err := readU32(r)
 				if err != nil {
@@ -1798,6 +1838,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIndex})
+		case opRefEqCode:
+			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefEq})
 		case opEndCode:
 			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
 			if depth == 0 {
