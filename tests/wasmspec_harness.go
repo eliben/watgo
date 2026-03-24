@@ -67,6 +67,7 @@ const (
 	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
+	valueRefEq            valueKind = "ref.eq"
 	valueRefArray         valueKind = "ref.array"
 	valueRefExtern        valueKind = "ref.extern"
 )
@@ -784,6 +785,12 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("ref.array expects no operands in script assertion")
 		}
 		return scriptValue{kind: valueRefArray, literal: "ref.array"}, nil
+	case "ref.eq":
+		elems := sx.Children()
+		if len(elems) != 1 {
+			return scriptValue{}, fmt.Errorf("ref.eq expects no operands in script assertion")
+		}
+		return scriptValue{kind: valueRefEq, literal: "ref.eq"}, nil
 	case "ref.extern":
 		elems := sx.Children()
 		if len(elems) != 2 {
@@ -1372,7 +1379,7 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
-		case valueRefFunc, valueRefArray:
+		case valueRefFunc, valueRefEq, valueRefArray:
 			if results[i] == 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
@@ -1418,6 +1425,8 @@ func formatExpectedValue(v scriptValue) string {
 		return "(ref.null)"
 	case valueRefFunc:
 		return "(ref.func)"
+	case valueRefEq:
+		return "(ref.eq)"
 	case valueRefArray:
 		return "(ref.array)"
 	case valueRefExtern:
@@ -1451,6 +1460,11 @@ func formatGotValueLikeExpected(got uint64, want scriptValue) string {
 			return "(ref.null)"
 		}
 		return "(ref.func)"
+	case valueRefEq:
+		if got == 0 {
+			return "(ref.null)"
+		}
+		return "(ref.eq)"
 	case valueRefArray:
 		if got == 0 {
 			return "(ref.null)"

@@ -264,6 +264,11 @@ type TypeDecl struct {
 	// Id is the optional type identifier (for example "$sig").
 	Id string
 
+	// RecGroupSize is the number of types in the enclosing "(rec ...)" group
+	// for the first declaration in that group. It is zero for declarations not
+	// starting a recursive group.
+	RecGroupSize int
+
 	// TyUse carries the declared function signature for function types.
 	TyUse *TypeUse
 

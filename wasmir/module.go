@@ -410,6 +410,10 @@ type FuncType struct {
 	// Name is the optional source-level type identifier (for example "$t").
 	Name string
 
+	// RecGroupSize is the number of entries in the recursive type group for the
+	// first type in that group. It is zero for types not starting a rec group.
+	RecGroupSize uint32
+
 	// Kind classifies this type table entry.
 	Kind TypeDefKind
 

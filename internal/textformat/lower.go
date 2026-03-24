@@ -338,6 +338,9 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 		}
 
 		outType := wasmir.FuncType{Name: td.Id}
+		if td.RecGroupSize > 0 {
+			outType.RecGroupSize = uint32(td.RecGroupSize)
+		}
 		switch {
 		case td.TyUse != nil:
 			outType.Kind = wasmir.TypeDefKindFunc
@@ -2875,6 +2878,36 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 		instrs := append([]wasmir.Instruction{}, lenExpr.Instrs...)
 		instrs = append(instrs, wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIdx})
 		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
+	case "array.new_fixed":
+		if len(fi.Args) < 2 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil ||
+			fi.Args[1].Operand == nil || fi.Args[1].Instr != nil {
+			return nil, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(fi.Args[0].Operand)
+		if !ok {
+			return nil, false
+		}
+		fixedCount, ok := lowerFieldIndexOperand(fi.Args[1].Operand)
+		if !ok || int(fixedCount) != len(fi.Args)-2 {
+			return nil, false
+		}
+		instrs := make([]wasmir.Instruction, 0, len(fi.Args)-1)
+		for _, arg := range fi.Args[2:] {
+			if arg.Instr == nil || arg.Operand != nil {
+				return nil, false
+			}
+			valueExpr, ok := l.lowerConstInstr(arg.Instr)
+			if !ok {
+				return nil, false
+			}
+			instrs = append(instrs, valueExpr.Instrs...)
+		}
+		instrs = append(instrs, wasmir.Instruction{
+			Kind:       wasmir.InstrArrayNewFixed,
+			TypeIndex:  typeIdx,
+			FixedCount: fixedCount,
+		})
+		return &loweredConstInstr{Instrs: instrs, Type: wasmir.RefTypeIndexed(typeIdx, false)}, true
 	case "ref.i31":
 		if len(fi.Args) != 1 || fi.Args[0].Instr == nil || fi.Args[0].Operand != nil {
 			return nil, false
@@ -3476,6 +3509,9 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 				return wasmir.ValueType{}, false
 			}
 			return wasmir.RefTypeIndexed(typeIndex, nullable), true
+		}
+		if typeIndex, err := strconv.ParseUint(name, 10, 32); err == nil {
+			return wasmir.RefTypeIndexed(uint32(typeIndex), nullable), true
 		}
 		return wasmir.ValueType{}, false
 	}

@@ -268,6 +268,9 @@ const (
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
 
+	// typeCodeRec starts a recursive type group in the GC type section.
+	typeCodeRec byte = 0x4e
+
 	// globalMutabilityConstCode marks an immutable global type.
 	globalMutabilityConstCode byte = 0x00
 	// globalMutabilityVarCode marks a mutable global type.
@@ -407,62 +410,95 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	}
 
 	var payload bytes.Buffer
-	writeULEB128(&payload, uint32(len(types)))
 
-	for i, ft := range types {
-		switch ft.Kind {
-		case wasmir.TypeDefKindFunc:
-			payload.WriteByte(typeCodeFunc)
+	// Module.Types is flattened even when the source had "(rec ...)" groups.
+	// The binary type section counts logical entries, so one rec group counts
+	// as a single entry regardless of how many type defs it contains.
+	entryCount := uint32(0)
+	for i := 0; i < len(types); {
+		if types[i].RecGroupSize > 0 {
+			entryCount++
+			i += int(types[i].RecGroupSize)
+			continue
+		}
+		entryCount++
+		i++
+	}
+	writeULEB128(&payload, entryCount)
 
-			writeULEB128(&payload, uint32(len(ft.Params)))
-			for j, p := range ft.Params {
-				if !encodeValueType(&payload, p) {
-					diags.Addf("type[%d] param[%d]: unsupported value type %s", i, j, p)
-					payload.WriteByte(0)
-				}
+	// Reassemble the flattened type list into the binary section layout. A type
+	// whose RecGroupSize is non-zero starts a recursive group and emits that
+	// many consecutive type defs under one rec wrapper. All other entries are
+	// encoded as standalone type definitions.
+	for i := 0; i < len(types); {
+		ft := types[i]
+		if ft.RecGroupSize > 0 {
+			payload.WriteByte(typeCodeRec)
+			writeULEB128(&payload, ft.RecGroupSize)
+			for j := uint32(0); j < ft.RecGroupSize && i+int(j) < len(types); j++ {
+				encodeOneTypeDef(&payload, i+int(j), types[i+int(j)], diags)
 			}
+			i += int(ft.RecGroupSize)
+			continue
+		}
+		encodeOneTypeDef(&payload, i, ft, diags)
+		i++
+	}
 
-			writeULEB128(&payload, uint32(len(ft.Results)))
-			for j, r := range ft.Results {
-				if !encodeValueType(&payload, r) {
-					diags.Addf("type[%d] result[%d]: unsupported value type %s", i, j, r)
-					payload.WriteByte(0)
-				}
-			}
-		case wasmir.TypeDefKindStruct:
-			payload.WriteByte(typeCodeStruct)
-			writeULEB128(&payload, uint32(len(ft.Fields)))
-			for j, field := range ft.Fields {
-				if !encodeFieldStorageType(&payload, field) {
-					diags.Addf("type[%d] field[%d]: unsupported storage type", i, j)
-					payload.WriteByte(0)
-				}
-				if field.Mutable {
-					payload.WriteByte(fieldMutableCode)
-				} else {
-					payload.WriteByte(fieldImmutableCode)
-				}
-			}
-		case wasmir.TypeDefKindArray:
-			payload.WriteByte(typeCodeArray)
-			if !encodeFieldStorageType(&payload, ft.ElemField) {
-				diags.Addf("type[%d] element: unsupported storage type", i)
+	return payload.Bytes()
+}
+
+func encodeOneTypeDef(payload *bytes.Buffer, i int, ft wasmir.FuncType, diags *diag.ErrorList) {
+	switch ft.Kind {
+	case wasmir.TypeDefKindFunc:
+		payload.WriteByte(typeCodeFunc)
+
+		writeULEB128(payload, uint32(len(ft.Params)))
+		for j, p := range ft.Params {
+			if !encodeValueType(payload, p) {
+				diags.Addf("type[%d] param[%d]: unsupported value type %s", i, j, p)
 				payload.WriteByte(0)
 			}
-			if ft.ElemField.Mutable {
+		}
+
+		writeULEB128(payload, uint32(len(ft.Results)))
+		for j, r := range ft.Results {
+			if !encodeValueType(payload, r) {
+				diags.Addf("type[%d] result[%d]: unsupported value type %s", i, j, r)
+				payload.WriteByte(0)
+			}
+		}
+	case wasmir.TypeDefKindStruct:
+		payload.WriteByte(typeCodeStruct)
+		writeULEB128(payload, uint32(len(ft.Fields)))
+		for j, field := range ft.Fields {
+			if !encodeFieldStorageType(payload, field) {
+				diags.Addf("type[%d] field[%d]: unsupported storage type", i, j)
+				payload.WriteByte(0)
+			}
+			if field.Mutable {
 				payload.WriteByte(fieldMutableCode)
 			} else {
 				payload.WriteByte(fieldImmutableCode)
 			}
-		default:
-			diags.Addf("type[%d]: unsupported type kind %d", i, ft.Kind)
-			payload.WriteByte(typeCodeFunc)
-			writeULEB128(&payload, 0)
-			writeULEB128(&payload, 0)
 		}
+	case wasmir.TypeDefKindArray:
+		payload.WriteByte(typeCodeArray)
+		if !encodeFieldStorageType(payload, ft.ElemField) {
+			diags.Addf("type[%d] element: unsupported storage type", i)
+			payload.WriteByte(0)
+		}
+		if ft.ElemField.Mutable {
+			payload.WriteByte(fieldMutableCode)
+		} else {
+			payload.WriteByte(fieldImmutableCode)
+		}
+	default:
+		diags.Addf("type[%d]: unsupported type kind %d", i, ft.Kind)
+		payload.WriteByte(typeCodeFunc)
+		writeULEB128(payload, 0)
+		writeULEB128(payload, 0)
 	}
-
-	return payload.Bytes()
 }
 
 // encodeImportSection emits section 2 as a vector of imports.
@@ -1423,6 +1459,11 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopArrayNewDefaultCode)
 		writeULEB128(out, init.TypeIndex)
+	case wasmir.InstrArrayNewFixed:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopArrayNewFixedCode)
+		writeULEB128(out, init.TypeIndex)
+		writeULEB128(out, init.FixedCount)
 	case wasmir.InstrRefI31:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopRefI31Code)

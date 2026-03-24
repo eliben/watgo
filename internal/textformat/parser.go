@@ -189,6 +189,21 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			}
 		case "type":
 			m.Types = append(m.Types, p.parseTypeDecl(sub))
+		case "rec":
+			// Parse the nested type declarations as ordinary module types, but
+			// remember the size of the group on its first entry so lowering can
+			// re-encode this contiguous range as one recursive type group.
+			groupStart := len(m.Types)
+			for _, nested := range sub.Children()[1:] {
+				if nested.HeadKeyword() != "type" {
+					p.emitError(nested.loc, "unsupported rec field %q", nested.HeadKeyword())
+					continue
+				}
+				m.Types = append(m.Types, p.parseTypeDecl(nested))
+			}
+			if groupSize := len(m.Types) - groupStart; groupSize > 0 && m.Types[groupStart] != nil {
+				m.Types[groupStart].RecGroupSize = groupSize
+			}
 		case "table":
 			td := p.parseTableDecl(sub)
 			m.Tables = append(m.Tables, td)
@@ -921,12 +936,12 @@ func (p *Parser) parseLocalDecl(sx *SExpr) []*LocalDecl {
 func (p *Parser) parseType(sx *SExpr) Type {
 	if sx.HeadKeyword() == "ref" {
 		elems := sx.Children()
-		if len(elems) == 2 && elems[1].IsTokenAny(KEYWORD, ID) {
+		if len(elems) == 2 && elems[1].IsTokenAny(KEYWORD, ID, INT) {
 			return &RefType{Nullable: false, HeapType: elems[1].tok.value}
 		}
 		if len(elems) == 3 &&
 			elems[1].IsKeywordToken("null") &&
-			elems[2].IsTokenAny(KEYWORD, ID) {
+			elems[2].IsTokenAny(KEYWORD, ID, INT) {
 			return &RefType{Nullable: true, HeapType: elems[2].tok.value}
 		}
 		p.emitError(sx.loc, "invalid ref type")

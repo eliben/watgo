@@ -239,39 +239,81 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 			break
 		}
 		switch form {
-		case typeCodeFunc:
-			params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", i), diags)
-			results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", i), diags)
-			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindFunc, Params: params, Results: results})
-		case typeCodeStruct:
-			fieldCount, err := readU32(r)
+		case typeCodeRec:
+			groupLen, err := readU32(r)
 			if err != nil {
-				diags.Addf("type[%d]: invalid struct field count: %v", i, err)
+				diags.Addf("type[%d]: invalid rec group length: %v", i, err)
 				break
 			}
-			fields := make([]wasmir.FieldType, 0, fieldCount)
-			for j := uint32(0); j < fieldCount; j++ {
-				field, err := decodeFieldType(r)
-				if err != nil {
-					diags.Addf("type[%d] field[%d]: %v", i, j, err)
+			groupStart := len(out)
+			for j := uint32(0); j < groupLen; j++ {
+				typeDef, ok := decodeOneTypeDef(r, groupStart+int(j), diags)
+				if !ok {
 					break
 				}
-				fields = append(fields, field)
+				out = append(out, typeDef)
 			}
-			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindStruct, Fields: fields})
-		case typeCodeArray:
-			field, err := decodeFieldType(r)
-			if err != nil {
-				diags.Addf("type[%d] element: %v", i, err)
+			if groupLen > 0 && groupStart < len(out) {
+				out[groupStart].RecGroupSize = groupLen
+			}
+		case typeCodeFunc:
+			fallthrough
+		case typeCodeStruct, typeCodeArray:
+			if err := r.UnreadByte(); err != nil {
+				diags.Addf("type[%d]: failed to unread form: %v", i, err)
 				break
 			}
-			out = append(out, wasmir.FuncType{Kind: wasmir.TypeDefKindArray, ElemField: field})
+			typeDef, ok := decodeOneTypeDef(r, len(out), diags)
+			if !ok {
+				break
+			}
+			out = append(out, typeDef)
 		default:
 			diags.Addf("type[%d]: unsupported type form 0x%x", i, form)
 			break
 		}
 	}
 	return out
+}
+
+func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir.FuncType, bool) {
+	form, err := readByte(r)
+	if err != nil {
+		diags.Addf("type[%d]: failed to read form: %v", index, err)
+		return wasmir.FuncType{}, false
+	}
+	switch form {
+	case typeCodeFunc:
+		params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", index), diags)
+		results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", index), diags)
+		return wasmir.FuncType{Kind: wasmir.TypeDefKindFunc, Params: params, Results: results}, true
+	case typeCodeStruct:
+		fieldCount, err := readU32(r)
+		if err != nil {
+			diags.Addf("type[%d]: invalid struct field count: %v", index, err)
+			return wasmir.FuncType{}, false
+		}
+		fields := make([]wasmir.FieldType, 0, fieldCount)
+		for j := uint32(0); j < fieldCount; j++ {
+			field, err := decodeFieldType(r)
+			if err != nil {
+				diags.Addf("type[%d] field[%d]: %v", index, j, err)
+				return wasmir.FuncType{}, false
+			}
+			fields = append(fields, field)
+		}
+		return wasmir.FuncType{Kind: wasmir.TypeDefKindStruct, Fields: fields}, true
+	case typeCodeArray:
+		field, err := decodeFieldType(r)
+		if err != nil {
+			diags.Addf("type[%d] element: %v", index, err)
+			return wasmir.FuncType{}, false
+		}
+		return wasmir.FuncType{Kind: wasmir.TypeDefKindArray, ElemField: field}, true
+	default:
+		diags.Addf("type[%d]: unsupported type form 0x%x", index, form)
+		return wasmir.FuncType{}, false
+	}
 }
 
 func decodeFieldType(r *bytes.Reader) (wasmir.FieldType, error) {
@@ -1327,6 +1369,18 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewData, TypeIndex: typeIndex, DataIndex: dataIndex})
+			case subopArrayNewFixedCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new_fixed missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				fixedCount, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: array.new_fixed missing/invalid length immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIndex, FixedCount: fixedCount})
 			case subopArrayNewElemCode:
 				typeIndex, err := readU32(r)
 				if err != nil {
@@ -2002,6 +2056,16 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 				return wasmir.Instruction{}, err
 			}
 			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIndex}
+		case subopArrayNewFixedCode:
+			typeIndex, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			fixedCount, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIndex, FixedCount: fixedCount}
 		case subopRefI31Code:
 			ins = wasmir.Instruction{Kind: wasmir.InstrRefI31}
 		default:

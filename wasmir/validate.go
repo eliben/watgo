@@ -111,6 +111,16 @@ func tableAddressType(m *Module, tableIndex uint32) ValueType {
 	return ValueTypeI32
 }
 
+func validModuleValueType(m *Module, vt ValueType) bool {
+	if !vt.IsRef() {
+		return vt.Kind != ValueKindInvalid
+	}
+	if vt.HeapType.Kind != HeapKindTypeIndex {
+		return vt.HeapType.Kind != HeapKindInvalid
+	}
+	return int(vt.HeapType.TypeIndex) < len(m.Types)
+}
+
 func elementRefType(m *Module, elemIndex uint32) (ValueType, bool) {
 	if m == nil || int(elemIndex) >= len(m.Elements) {
 		return ValueType{}, false
@@ -263,6 +273,31 @@ func ValidateModule(m *Module) error {
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
+	for i, td := range m.Types {
+		switch td.Kind {
+		case TypeDefKindFunc:
+			for j, param := range td.Params {
+				if !validModuleValueType(m, param) {
+					diags.Addf("type[%d] param[%d]: unknown type", i, j)
+				}
+			}
+			for j, result := range td.Results {
+				if !validModuleValueType(m, result) {
+					diags.Addf("type[%d] result[%d]: unknown type", i, j)
+				}
+			}
+		case TypeDefKindStruct:
+			for j, field := range td.Fields {
+				if field.Packed == PackedTypeNone && !validModuleValueType(m, field.Type) {
+					diags.Addf("type[%d] field[%d]: unknown type", i, j)
+				}
+			}
+		case TypeDefKindArray:
+			if td.ElemField.Packed == PackedTypeNone && !validModuleValueType(m, td.ElemField.Type) {
+				diags.Addf("type[%d] element: unknown type", i)
+			}
+		}
+	}
 	for i, f := range m.Funcs {
 		fnCtx := functionContext(m, funcImportCount+uint32(i), funcImportCount)
 		if int(f.TypeIdx) >= len(m.Types) {
@@ -2726,6 +2761,23 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 			if !ok || lenType != ValueTypeI32 {
 				return ValueType{}, false
 			}
+			push(RefTypeIndexed(ins.TypeIndex, false))
+		case InstrArrayNewFixed:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok || td.Kind != TypeDefKindArray {
+				return ValueType{}, false
+			}
+			if len(stack) < int(ins.FixedCount) {
+				return ValueType{}, false
+			}
+			base := len(stack) - int(ins.FixedCount)
+			elemType := fieldValueType(td.ElemField)
+			for j := 0; j < int(ins.FixedCount); j++ {
+				if !matchesGCExpectedValue(m, stack[base+j], elemType) {
+					return ValueType{}, false
+				}
+			}
+			stack = stack[:base]
 			push(RefTypeIndexed(ins.TypeIndex, false))
 		case InstrRefI31:
 			valueType, ok := pop()
