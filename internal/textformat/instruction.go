@@ -329,6 +329,14 @@ func init() {
 		"global.get":          wasmir.InstrGlobalGet,
 		"global.set":          wasmir.InstrGlobalSet,
 		"i8x16.swizzle":       wasmir.InstrI8x16Swizzle,
+		"i32x4.splat":         wasmir.InstrI32x4Splat,
+		"i32x4.extract_lane":  wasmir.InstrI32x4ExtractLane,
+		"i32x4.eq":            wasmir.InstrI32x4Eq,
+		"i32x4.lt_s":          wasmir.InstrI32x4LtS,
+		"i32x4.add":           wasmir.InstrI32x4Add,
+		"i32x4.neg":           wasmir.InstrI32x4Neg,
+		"i32x4.min_s":         wasmir.InstrI32x4MinS,
+		"f32x4.add":           wasmir.InstrF32x4Add,
 		"i32.add":             wasmir.InstrI32Add,
 		"i32.and":             wasmir.InstrI32And,
 		"i32.clz":             wasmir.InstrI32Clz,
@@ -415,6 +423,7 @@ func init() {
 		"select":              wasmir.InstrSelect,
 		"unreachable":         wasmir.InstrUnreachable,
 		"v128.const":          wasmir.InstrV128Const,
+		"v128.bitselect":      wasmir.InstrV128Bitselect,
 	})
 }
 

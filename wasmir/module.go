@@ -301,6 +301,15 @@ const (
 	InstrRefAsNonNull
 	InstrRefFunc
 	InstrI8x16Swizzle
+	InstrI32x4Splat
+	InstrI32x4ExtractLane
+	InstrI32x4Eq
+	InstrI32x4LtS
+	InstrI32x4Add
+	InstrI32x4Neg
+	InstrI32x4MinS
+	InstrF32x4Add
+	InstrV128Bitselect
 	InstrI32Add
 	InstrI32Sub
 	InstrI32Mul
@@ -764,6 +773,9 @@ type Instruction struct {
 
 	// FieldIndex is the field index immediate used by struct.get and struct.set.
 	FieldIndex uint32
+
+	// LaneIndex is the lane immediate used by lane-extract SIMD instructions.
+	LaneIndex uint32
 
 	// FixedCount is the fixed element count immediate used by array.new_fixed.
 	FixedCount uint32

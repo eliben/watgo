@@ -3231,6 +3231,62 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
+		case InstrI32x4Splat:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32x4.splat needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 {
+				diags.Addf("%s: i32x4.splat expects i32 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeV128))
+		case InstrI32x4ExtractLane:
+			if ins.LaneIndex >= 4 {
+				diags.Addf("%s: i32x4.extract_lane lane %d out of range", insCtx, ins.LaneIndex)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: i32x4.extract_lane needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 {
+				diags.Addf("%s: i32x4.extract_lane expects v128 operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+		case InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4MinS, InstrF32x4Add:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: %s expects v128 operands", insCtx, name)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
+		case InstrI32x4Neg:
+			if len(stack) < 1 {
+				diags.Addf("%s: i32x4.neg needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 {
+				diags.Addf("%s: i32x4.neg expects v128 operand", insCtx)
+				continue
+			}
+		case InstrV128Bitselect:
+			if len(stack) < 3 {
+				diags.Addf("%s: v128.bitselect needs 3 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 || stack[len(stack)-3] != ValueTypeV128 {
+				diags.Addf("%s: v128.bitselect expects v128 operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 3)
+			appendStackType(ValueTypeV128)
 		case InstrI32ReinterpretF32:
 			if len(stack) < 1 {
 				diags.Addf("%s: i32.reinterpret_f32 needs 1 operand", insCtx)
@@ -3703,6 +3759,24 @@ func instrName(kind InstrKind) string {
 		return "i31.get_u"
 	case InstrI8x16Swizzle:
 		return "i8x16.swizzle"
+	case InstrI32x4Splat:
+		return "i32x4.splat"
+	case InstrI32x4ExtractLane:
+		return "i32x4.extract_lane"
+	case InstrI32x4Eq:
+		return "i32x4.eq"
+	case InstrI32x4LtS:
+		return "i32x4.lt_s"
+	case InstrI32x4Add:
+		return "i32x4.add"
+	case InstrI32x4Neg:
+		return "i32x4.neg"
+	case InstrI32x4MinS:
+		return "i32x4.min_s"
+	case InstrF32x4Add:
+		return "f32x4.add"
+	case InstrV128Bitselect:
+		return "v128.bitselect"
 	case InstrBlock:
 		return "block"
 	case InstrLoop:

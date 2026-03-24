@@ -1297,7 +1297,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 	}
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "memory.init", "data.drop":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "memory.init", "data.drop", "i32x4.extract_lane":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1
@@ -1313,6 +1313,22 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "v128.const":
+		operands := make([]Operand, 0, 17)
+		next := cursor + 1
+		for next < len(elems) {
+			op := p.parseOperand(elems[next])
+			if op == nil {
+				break
+			}
+			operands = append(operands, op)
+			next++
+		}
+		if len(operands) == 0 {
+			p.emitError(elem.loc, "v128.const expects operands")
+			return nil, cursor + 1
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
 	case "table.get", "table.set", "table.grow", "table.size":
 		// Table ops accept an optional immediate table index; when omitted,
 		// table index 0 is implied.

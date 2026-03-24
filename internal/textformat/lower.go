@@ -1881,11 +1881,20 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.ctz":             {operandCount: 0},
 	"f32.gt":              {operandCount: 0},
 	"i8x16.swizzle":       {operandCount: 0},
+	"i32x4.eq":            {operandCount: 0},
+	"i32x4.lt_s":          {operandCount: 0},
+	"i32x4.add":           {operandCount: 0},
+	"i32x4.neg":           {operandCount: 0},
+	"i32x4.min_s":         {operandCount: 0},
+	"f32x4.add":           {operandCount: 0},
+	"v128.bitselect":      {operandCount: 0},
 	"i32.const":           {operandCount: 1, decode: decodeI32ConstOperands},
 	"i64.const":           {operandCount: 1, decode: decodeI64ConstOperands},
 	"f32.const":           {operandCount: 1, decode: decodeF32ConstOperands},
 	"f64.const":           {operandCount: 1, decode: decodeF64ConstOperands},
-	"v128.const":          {operandCount: 17, decode: decodeV128ConstOperands},
+	"v128.const":          {operandCount: -1, decode: decodeV128ConstOperands},
+	"i32x4.splat":         {operandCount: 0},
+	"i32x4.extract_lane":  {operandCount: 1, decode: decodeLaneIndexOperands},
 	"ref.null":            {operandCount: 1, decode: decodeRefNullOperands},
 	"ref.eq":              {operandCount: 0},
 	"ref.is_null":         {operandCount: 0},
@@ -1907,7 +1916,7 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 	if !ok {
 		return false
 	}
-	if len(pi.Operands) != spec.operandCount {
+	if spec.operandCount >= 0 && len(pi.Operands) != spec.operandCount {
 		fl.diagf(instrLoc, "%s expects %s", pi.Name, operandCountText(spec.operandCount))
 		return true
 	}
@@ -2635,25 +2644,68 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 // decodeV128ConstOperands decodes the currently supported SIMD constant form:
 // `v128.const i8x16 lane0 ... lane15`.
 func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
-	switch shape := operands[0].(type) {
-	case *KeywordOperand:
-		if shape.Value != "i8x16" {
+	if len(operands) < 2 {
+		return false
+	}
+	shape := operandText(operands[0])
+	switch shape {
+	case "i8x16":
+		if len(operands) != 17 {
 			return false
 		}
-	case *IdOperand:
-		if shape.Value != "i8x16" {
+		for i := 0; i < 16; i++ {
+			lane, ok := lowerI8ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			ins.V128Const[i] = lane
+		}
+		return true
+	case "i32x4":
+		if len(operands) != 5 {
 			return false
 		}
+		for i := 0; i < 4; i++ {
+			lane, ok := lowerI32ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			base := i * 4
+			ins.V128Const[base] = byte(lane)
+			ins.V128Const[base+1] = byte(lane >> 8)
+			ins.V128Const[base+2] = byte(lane >> 16)
+			ins.V128Const[base+3] = byte(lane >> 24)
+		}
+		return true
+	case "f32x4":
+		if len(operands) != 5 {
+			return false
+		}
+		for i := 0; i < 4; i++ {
+			lane, ok := lowerF32ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			base := i * 4
+			ins.V128Const[base] = byte(lane)
+			ins.V128Const[base+1] = byte(lane >> 8)
+			ins.V128Const[base+2] = byte(lane >> 16)
+			ins.V128Const[base+3] = byte(lane >> 24)
+		}
+		return true
 	default:
 		return false
 	}
-	for i := 0; i < 16; i++ {
-		lane, ok := lowerI8ConstOperand(operands[i+1])
-		if !ok {
-			return false
-		}
-		ins.V128Const[i] = lane
+}
+
+// decodeLaneIndexOperands decodes a SIMD lane immediate such as
+// `i32x4.extract_lane 3`.
+func decodeLaneIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	lane, ok := lowerFieldIndexOperand(operands[0])
+	if !ok {
+		return false
 	}
+	ins.LaneIndex = lane
 	return true
 }
 

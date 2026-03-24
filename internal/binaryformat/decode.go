@@ -1710,6 +1710,29 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Const, V128Const: lanes})
 			case subopI8x16SwizzleCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Swizzle})
+			case subopI32x4SplatCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Splat})
+			case subopI32x4ExtractLaneCode:
+				lane, err := readByte(r)
+				if err != nil {
+					diags.Addf("code[%d]: i32x4.extract_lane missing/invalid lane immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtractLane, LaneIndex: uint32(lane)})
+			case subopI32x4EqCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Eq})
+			case subopI32x4LtSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4LtS})
+			case subopI32x4AddCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Add})
+			case subopI32x4NegCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Neg})
+			case subopI32x4MinSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4MinS})
+			case subopF32x4AddCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
+			case subopV128BitselectCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Bitselect})
 			default:
 				diags.Addf("code[%d]: unsupported 0xfd subopcode 0x%x", funcIdx, subop)
 				return out
