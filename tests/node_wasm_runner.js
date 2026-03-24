@@ -652,10 +652,15 @@ function handleMessage(msg) {
       const resultTypes = msg.resultTypes || [];
       if (resultTypes.length === 1 && (resultTypes[0] === 'f32' || resultTypes[0] === 'f64')) {
         const argTypes = rawArgs.map((arg) => arg.type);
-        return {
-          ok: true,
-          results: [encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultTypes[0])],
-        };
+        try {
+          return {
+            ok: true,
+            results: [encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultTypes[0])],
+          };
+        } catch (_err) {
+          const raw = fn(...args);
+          return { ok: true, results: encodeResults(raw, resultTypes) };
+        }
       }
       if (resultTypes.length === 1 && resultTypes[0] === 'anyref') {
         const argTypes = rawArgs.map((arg) => arg.type);

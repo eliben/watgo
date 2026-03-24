@@ -1904,6 +1904,9 @@ func matchesExpectedFailureText(got, want string) bool {
 		return strings.Contains(gotLower, "invalid table access") ||
 			strings.Contains(gotLower, "null function or function signature mismatch")
 	}
+	if wantLower == "indirect call type mismatch" {
+		return strings.Contains(gotLower, "null function or function signature mismatch")
+	}
 	if wantLower == "integer divide by zero" {
 		return strings.Contains(gotLower, "divide by zero") ||
 			strings.Contains(gotLower, "remainder by zero")

@@ -233,6 +233,9 @@ func isTypeIndexSubtype(m *Module, got, want uint32) bool {
 	if got == want {
 		return true
 	}
+	if typeIndicesEquivalent(m, got, want) {
+		return true
+	}
 	if m == nil || int(got) >= len(m.Types) || int(want) >= len(m.Types) {
 		return false
 	}
@@ -246,13 +249,347 @@ func isTypeIndexSubtype(m *Module, got, want uint32) bool {
 		}
 		seen[idx] = true
 		for _, super := range m.Types[idx].SuperTypes {
-			if super == want {
+			if super == want || typeIndicesEquivalent(m, super, want) {
 				return true
 			}
 			stack = append(stack, super)
 		}
 	}
 	return false
+}
+
+type typePair struct {
+	a uint32
+	b uint32
+}
+
+func typeIndicesEquivalent(m *Module, a, b uint32) bool {
+	groupVisiting := make(map[typePair]bool)
+	groupMemo := make(map[typePair]bool)
+	typeVisiting := make(map[typePair]bool)
+	typeMemo := make(map[typePair]bool)
+	return typeIndicesEquivalentRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+}
+
+func typeIndicesEquivalentRec(m *Module, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	startA, sizeA, posA := recGroupInfo(m, a)
+	startB, sizeB, posB := recGroupInfo(m, b)
+	if posA != posB || sizeA != sizeB {
+		return false
+	}
+	if sizeA > 1 {
+		groupKey := typePair{a: startA, b: startB}
+		if eq, ok := groupMemo[groupKey]; ok {
+			return eq
+		}
+		if groupVisiting[groupKey] {
+			return true
+		}
+		groupVisiting[groupKey] = true
+		defer delete(groupVisiting, groupKey)
+		for i := uint32(0); i < sizeA; i++ {
+			if !typeIndicesEquivalentInGroupRec(m, startA, startB, sizeA, startA+i, startB+i, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				groupMemo[groupKey] = false
+				return false
+			}
+		}
+		groupMemo[groupKey] = true
+		return true
+	}
+	return typeIndicesEquivalentBodyRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+}
+
+func typeIndicesEquivalentInGroupRec(m *Module, groupA, groupB, groupSize, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a == b && groupA == groupB {
+		return true
+	}
+	if m == nil || int(a) >= len(m.Types) || int(b) >= len(m.Types) {
+		return false
+	}
+	key := typePair{a: a, b: b}
+	if eq, ok := typeMemo[key]; ok {
+		return eq
+	}
+	if typeVisiting[key] {
+		return true
+	}
+	typeVisiting[key] = true
+	defer delete(typeVisiting, key)
+
+	ta := m.Types[a]
+	tb := m.Types[b]
+	if ta.SubType != tb.SubType || ta.Final != tb.Final || ta.Kind != tb.Kind || len(ta.SuperTypes) != len(tb.SuperTypes) {
+		typeMemo[key] = false
+		return false
+	}
+	for i := range ta.SuperTypes {
+		if !typeIndexRefsEquivalentInGroup(m, groupA, groupB, groupSize, ta.SuperTypes[i], tb.SuperTypes[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+			typeMemo[key] = false
+			return false
+		}
+	}
+
+	var eq bool
+	switch ta.Kind {
+	case TypeDefKindFunc:
+		eq = len(ta.Params) == len(tb.Params) && len(ta.Results) == len(tb.Results)
+		if eq {
+			for i := range ta.Params {
+				if !valueTypesEquivalentInRecGroup(m, ta.Params[i], tb.Params[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+		if eq {
+			for i := range ta.Results {
+				if !valueTypesEquivalentInRecGroup(m, ta.Results[i], tb.Results[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+	case TypeDefKindStruct:
+		eq = len(ta.Fields) == len(tb.Fields)
+		if eq {
+			for i := range ta.Fields {
+				if !fieldTypesEquivalentInRecGroup(m, ta.Fields[i], tb.Fields[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+	case TypeDefKindArray:
+		eq = fieldTypesEquivalentInRecGroup(m, ta.ElemField, tb.ElemField, groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	default:
+		eq = false
+	}
+	typeMemo[key] = eq
+	return eq
+}
+
+func typeIndexRefsEquivalentInGroup(m *Module, groupA, groupB, groupSize, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	inA := a >= groupA && a < groupA+groupSize
+	inB := b >= groupB && b < groupB+groupSize
+	if inA || inB {
+		if !inA || !inB {
+			return false
+		}
+		if a-groupA != b-groupB {
+			return false
+		}
+		return typeIndicesEquivalentInGroupRec(m, groupA, groupB, groupSize, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	}
+	return typeIndicesEquivalentRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+}
+
+func valueTypesEquivalentInRecGroup(m *Module, a, b ValueType, groupA, groupB, groupSize uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	if a.Kind != ValueKindRef {
+		return a == b
+	}
+	if a.Nullable != b.Nullable {
+		return false
+	}
+	if a.UsesTypeIndex() && b.UsesTypeIndex() {
+		return typeIndexRefsEquivalentInGroup(m, groupA, groupB, groupSize, a.HeapType.TypeIndex, b.HeapType.TypeIndex, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	}
+	return a.HeapType.Kind == b.HeapType.Kind
+}
+
+func fieldTypesEquivalentInRecGroup(m *Module, a, b FieldType, groupA, groupB, groupSize uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a.Mutable != b.Mutable || a.Packed != b.Packed {
+		return false
+	}
+	if a.Packed != PackedTypeNone {
+		return true
+	}
+	return valueTypesEquivalentInRecGroup(m, a.Type, b.Type, groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo)
+}
+
+func recGroupInfo(m *Module, idx uint32) (start uint32, size uint32, pos uint32) {
+	if m == nil || int(idx) >= len(m.Types) {
+		return idx, 1, 0
+	}
+	for s := idx; ; {
+		if groupSize := m.Types[s].RecGroupSize; groupSize > 0 && idx < s+groupSize {
+			return s, groupSize, idx - s
+		}
+		if s == 0 {
+			break
+		}
+		s--
+	}
+	return idx, 1, 0
+}
+
+func typeIndicesEquivalentBodyRec(m *Module, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a == b {
+		return true
+	}
+	if m == nil || int(a) >= len(m.Types) || int(b) >= len(m.Types) {
+		return false
+	}
+	key := typePair{a: a, b: b}
+	if eq, ok := typeMemo[key]; ok {
+		return eq
+	}
+	if typeVisiting[key] {
+		return true
+	}
+	typeVisiting[key] = true
+	defer delete(typeVisiting, key)
+
+	ta := m.Types[a]
+	tb := m.Types[b]
+	if ta.SubType != tb.SubType || ta.Final != tb.Final || ta.Kind != tb.Kind || len(ta.SuperTypes) != len(tb.SuperTypes) {
+		typeMemo[key] = false
+		return false
+	}
+	for i := range ta.SuperTypes {
+		if !typeIndicesEquivalentRec(m, ta.SuperTypes[i], tb.SuperTypes[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+			typeMemo[key] = false
+			return false
+		}
+	}
+
+	var eq bool
+	switch ta.Kind {
+	case TypeDefKindFunc:
+		eq = len(ta.Params) == len(tb.Params) && len(ta.Results) == len(tb.Results)
+		if eq {
+			for i := range ta.Params {
+				if !valueTypesEquivalentInModule(m, ta.Params[i], tb.Params[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+		if eq {
+			for i := range ta.Results {
+				if !valueTypesEquivalentInModule(m, ta.Results[i], tb.Results[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+	case TypeDefKindStruct:
+		eq = len(ta.Fields) == len(tb.Fields)
+		if eq {
+			for i := range ta.Fields {
+				if !fieldTypesEquivalentInModule(m, ta.Fields[i], tb.Fields[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+					eq = false
+					break
+				}
+			}
+		}
+	case TypeDefKindArray:
+		eq = fieldTypesEquivalentInModule(m, ta.ElemField, tb.ElemField, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	default:
+		eq = false
+	}
+	typeMemo[key] = eq
+	return eq
+}
+
+func valueTypesEquivalentInModule(m *Module, a, b ValueType, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	if a.Kind != ValueKindRef {
+		return a == b
+	}
+	if a.Nullable != b.Nullable {
+		return false
+	}
+	if a.UsesTypeIndex() && b.UsesTypeIndex() {
+		return typeIndicesEquivalentRec(m, a.HeapType.TypeIndex, b.HeapType.TypeIndex, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	}
+	return a.HeapType.Kind == b.HeapType.Kind
+}
+
+func fieldTypesEquivalentInModule(m *Module, a, b FieldType, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+	if a.Mutable != b.Mutable || a.Packed != b.Packed {
+		return false
+	}
+	if a.Packed != PackedTypeNone {
+		return true
+	}
+	return valueTypesEquivalentInModule(m, a.Type, b.Type, groupVisiting, groupMemo, typeVisiting, typeMemo)
+}
+
+func isModuleValueSubtype(m *Module, got, want ValueType) bool {
+	if got == want {
+		return true
+	}
+	if got.IsRef() && want.IsRef() {
+		return matchesRefTypeInModule(m, got, want)
+	}
+	return false
+}
+
+func isTypeFinal(td FuncType) bool {
+	return !td.SubType || td.Final
+}
+
+func isValidDeclaredSubtype(m *Module, sub, super FuncType) bool {
+	if sub.Kind != super.Kind {
+		return false
+	}
+	switch sub.Kind {
+	case TypeDefKindFunc:
+		if len(sub.Params) != len(super.Params) || len(sub.Results) != len(super.Results) {
+			return false
+		}
+		for i := range sub.Params {
+			if !isModuleValueSubtype(m, super.Params[i], sub.Params[i]) {
+				return false
+			}
+		}
+		for i := range sub.Results {
+			if !isModuleValueSubtype(m, sub.Results[i], super.Results[i]) {
+				return false
+			}
+		}
+		return true
+	case TypeDefKindStruct:
+		if len(sub.Fields) < len(super.Fields) {
+			return false
+		}
+		for i := range super.Fields {
+			sf := sub.Fields[i]
+			gf := super.Fields[i]
+			if sf.Mutable != gf.Mutable || sf.Packed != gf.Packed {
+				return false
+			}
+			if sf.Packed != PackedTypeNone {
+				continue
+			}
+			if sf.Mutable {
+				if !fieldTypesEquivalentInModule(m, sf, gf, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}) {
+					return false
+				}
+			} else if !isModuleValueSubtype(m, sf.Type, gf.Type) {
+				return false
+			}
+		}
+		return true
+	case TypeDefKindArray:
+		if sub.ElemField.Mutable != super.ElemField.Mutable || sub.ElemField.Packed != super.ElemField.Packed {
+			return false
+		}
+		if sub.ElemField.Packed != PackedTypeNone {
+			return true
+		}
+		if sub.ElemField.Mutable {
+			return fieldTypesEquivalentInModule(m, sub.ElemField, super.ElemField, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{})
+		}
+		return isModuleValueSubtype(m, sub.ElemField.Type, super.ElemField.Type)
+	default:
+		return false
+	}
 }
 
 func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
@@ -381,6 +718,10 @@ func ValidateModule(m *Module) error {
 			}
 			if m.Types[super].Kind != td.Kind {
 				diags.Addf("type[%d] super[%d]: type mismatch", i, j)
+				continue
+			}
+			if isTypeFinal(m.Types[super]) || !isValidDeclaredSubtype(m, td, m.Types[super]) {
+				diags.Addf("type[%d] super[%d]: sub type", i, j)
 			}
 		}
 		switch td.Kind {
