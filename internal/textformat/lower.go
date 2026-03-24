@@ -341,6 +341,16 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 		if td.RecGroupSize > 0 {
 			outType.RecGroupSize = uint32(td.RecGroupSize)
 		}
+		outType.SubType = td.SubType
+		outType.Final = td.Final
+		for j, superRef := range td.SuperTypes {
+			superIndex, ok := resolveTypeRef(superRef, l.typesByName)
+			if !ok {
+				l.diags.Addf("type[%d] super[%d]: unknown type %q", i, j, superRef)
+				continue
+			}
+			outType.SuperTypes = append(outType.SuperTypes, superIndex)
+		}
 		switch {
 		case td.TyUse != nil:
 			outType.Kind = wasmir.TypeDefKindFunc
@@ -1086,6 +1096,10 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.lowerFoldedCallIndirect(fi)
 		return
 	}
+	if fi.Name == "br_on_cast" || fi.Name == "br_on_cast_fail" {
+		fl.lowerFoldedBrOnCast(fi)
+		return
+	}
 	if fi.Name == "ref.test" || fi.Name == "ref.cast" {
 		fl.lowerFoldedRefTypeTestCast(fi)
 		return
@@ -1237,6 +1251,105 @@ func (fl *functionLowerer) lowerFoldedRefTypeTestCast(fi *FoldedInstr) {
 	}
 	kind, _ := instructionKind(fi.Name)
 	fl.emitInstr(wasmir.Instruction{Kind: kind, RefType: refType, SourceLoc: fi.loc.String()})
+}
+
+// lowerFoldedBrOnCast lowers folded br_on_cast and br_on_cast_fail forms.
+//
+// It expects the folded instruction to provide:
+//   - a branch depth or label
+//   - a source reference type
+//   - a destination reference type
+//   - zero or more nested operand expressions
+//
+// For example:
+//   - (br_on_cast $l anyref (ref i31) (table.get (local.get $i)))
+//   - (br_on_cast_fail 0 structref (ref $t) (local.get 0))
+//
+// The type immediates may be written either as plain type operands like
+// `anyref` / `structref` or as folded ref-type forms like `(ref i31)` and
+// `(ref null $t)`. Any remaining nested instructions are lowered first so the
+// value operand is on the stack before the final br_on_cast* instruction.
+func (fl *functionLowerer) lowerFoldedBrOnCast(fi *FoldedInstr) {
+	var (
+		branchDepth uint32
+		haveDepth   bool
+		srcType     wasmir.ValueType
+		haveSrc     bool
+		dstType     wasmir.ValueType
+		haveDst     bool
+	)
+	for _, arg := range fi.Args {
+		if arg.Operand != nil {
+			if !haveDepth {
+				depth, ok := fl.lowerLabelOperand(arg.Operand)
+				if !ok {
+					fl.diagf(arg.Operand.Loc(), "invalid %s branch depth", fi.Name)
+					continue
+				}
+				branchDepth = depth
+				haveDepth = true
+				continue
+			}
+			if !haveSrc {
+				vt, ok := lowerCastTypeOperand(arg.Operand, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(arg.Operand.Loc(), "invalid %s source type", fi.Name)
+					continue
+				}
+				srcType = vt
+				haveSrc = true
+				continue
+			}
+			if !haveDst {
+				vt, ok := lowerCastTypeOperand(arg.Operand, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(arg.Operand.Loc(), "invalid %s destination type", fi.Name)
+					continue
+				}
+				dstType = vt
+				haveDst = true
+				continue
+			}
+			fl.diagf(arg.Operand.Loc(), "%s has too many operands", fi.Name)
+			continue
+		}
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if ok && nested.Name == "ref" {
+			if !haveSrc {
+				vt, ok := lowerFoldedRefTypeInstr(nested, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid %s source type", fi.Name)
+					continue
+				}
+				srcType = vt
+				haveSrc = true
+				continue
+			}
+			if !haveDst {
+				vt, ok := lowerFoldedRefTypeInstr(nested, fl.mod.typesByName)
+				if !ok {
+					fl.diagf(nested.Loc(), "invalid %s destination type", fi.Name)
+					continue
+				}
+				dstType = vt
+				haveDst = true
+				continue
+			}
+		}
+		fl.lowerInstruction(arg.Instr)
+	}
+	if !haveDepth || !haveSrc || !haveDst {
+		fl.diagf(fi.Loc(), "%s requires branch depth, source type, and destination type", fi.Name)
+		return
+	}
+	kind, _ := instructionKind(fi.Name)
+	fl.emitInstr(wasmir.Instruction{
+		Kind:          kind,
+		BranchDepth:   branchDepth,
+		SourceRefType: srcType,
+		RefType:       dstType,
+		SourceLoc:     fi.loc.String(),
+	})
 }
 
 // lowerFoldedIf lowers a folded if-expression preserving then/else blocks.
@@ -1640,6 +1753,8 @@ type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, o
 
 // loweringSpecs maps plain instruction names to table-driven lowering rules.
 var loweringSpecs = map[string]loweringSpec{
+	"any.convert_extern":  {operandCount: 0},
+	"extern.convert_any":  {operandCount: 0},
 	"nop":                 {operandCount: 0},
 	"else":                {operandCount: 0},
 	"end":                 {operandCount: 0},
@@ -1829,7 +1944,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
-	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill":
+	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill", "struct.new", "struct.new_default":
 		if len(pi.Operands) != 1 {
 			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
 			return
@@ -1923,9 +2038,9 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrArrayLen, SourceLoc: instrLoc})
 		return
-	case "struct.new":
-		if len(pi.Operands) != 1 {
-			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
+	case "struct.get", "struct.get_s":
+		if len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "%s expects 2 operands", pi.Name)
 			return
 		}
 		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
@@ -1933,29 +2048,46 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			fl.diagf(pi.Operands[0].Loc(), "invalid %s type operand", pi.Name)
 			return
 		}
-		kind, _ := instructionKind(pi.Name)
-		fl.emitInstr(wasmir.Instruction{Kind: kind, TypeIndex: typeIndex, SourceLoc: instrLoc})
-		return
-	case "struct.get":
-		if len(pi.Operands) != 2 {
-			fl.diagf(instrLoc, "struct.get expects 2 operands")
-			return
-		}
-		typeIndex, ok := lowerTypeIndexOperand(pi.Operands[0], fl.mod.typesByName)
-		if !ok {
-			fl.diagf(pi.Operands[0].Loc(), "invalid struct.get type operand")
-			return
-		}
 		fieldIndex, ok := fl.lowerStructFieldOperand(typeIndex, pi.Operands[1])
 		if !ok {
-			fl.diagf(pi.Operands[1].Loc(), "invalid struct.get field operand")
+			fl.diagf(pi.Operands[1].Loc(), "invalid %s field operand", pi.Name)
 			return
 		}
+		kind, _ := instructionKind(pi.Name)
 		fl.emitInstr(wasmir.Instruction{
-			Kind:       wasmir.InstrStructGet,
+			Kind:       kind,
 			TypeIndex:  typeIndex,
 			FieldIndex: fieldIndex,
 			SourceLoc:  instrLoc,
+		})
+		return
+	case "br_on_cast", "br_on_cast_fail":
+		if len(pi.Operands) != 3 {
+			fl.diagf(instrLoc, "%s expects 3 operands", pi.Name)
+			return
+		}
+		branchDepth, ok := fl.lowerLabelOperand(pi.Operands[0])
+		if !ok {
+			fl.diagf(pi.Operands[0].Loc(), "invalid %s branch depth", pi.Name)
+			return
+		}
+		srcType, ok := lowerCastTypeOperand(pi.Operands[1], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[1].Loc(), "invalid %s source type", pi.Name)
+			return
+		}
+		dstType, ok := lowerCastTypeOperand(pi.Operands[2], fl.mod.typesByName)
+		if !ok {
+			fl.diagf(pi.Operands[2].Loc(), "invalid %s destination type", pi.Name)
+			return
+		}
+		kind, _ := instructionKind(pi.Name)
+		fl.emitInstr(wasmir.Instruction{
+			Kind:          kind,
+			BranchDepth:   branchDepth,
+			SourceRefType: srcType,
+			RefType:       dstType,
+			SourceLoc:     instrLoc,
 		})
 		return
 	case "memory.size", "memory.grow", "memory.fill":
@@ -3033,13 +3165,20 @@ func lowerMemoryIndexOperand(op Operand, memoriesByName map[string]uint32) (uint
 func lowerTypeIndexOperand(op Operand, typesByName map[string]uint32) (uint32, bool) {
 	switch o := op.(type) {
 	case *IdOperand:
-		idx, ok := typesByName[o.Value]
-		return idx, ok
+		return resolveTypeRef(o.Value, typesByName)
 	case *IntOperand:
 		return parseU32Literal(o.Value)
 	default:
 		return 0, false
 	}
+}
+
+func resolveTypeRef(ref string, typesByName map[string]uint32) (uint32, bool) {
+	if strings.HasPrefix(ref, "$") {
+		idx, ok := typesByName[ref]
+		return idx, ok
+	}
+	return parseU32Literal(ref)
 }
 
 func lowerFieldIndexOperand(op Operand) (uint32, bool) {
@@ -3273,6 +3412,21 @@ func lowerBlockResultTypeOperand(op Operand, typesByName map[string]uint32) (was
 		return lowerValueType(&BasicType{Name: o.Value}, typesByName)
 	case *TypeOperand:
 		return lowerValueType(o.Ty, typesByName)
+	default:
+		return wasmir.ValueType{}, false
+	}
+}
+
+func lowerCastTypeOperand(op Operand, typesByName map[string]uint32) (wasmir.ValueType, bool) {
+	switch o := op.(type) {
+	case *KeywordOperand:
+		return lowerValueType(&BasicType{Name: o.Value}, typesByName)
+	case *TypeOperand:
+		return lowerValueType(o.Ty, typesByName)
+	case *IdOperand:
+		return lowerValueType(&RefType{Nullable: false, HeapType: o.Value}, typesByName)
+	case *IntOperand:
+		return lowerValueType(&RefType{Nullable: false, HeapType: o.Value}, typesByName)
 	default:
 		return wasmir.ValueType{}, false
 	}

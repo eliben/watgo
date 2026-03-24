@@ -180,6 +180,8 @@ const (
 	InstrBrIf
 	InstrBrOnNull
 	InstrBrOnNonNull
+	InstrBrOnCast
+	InstrBrOnCastFail
 	InstrBrTable
 	InstrNop
 	InstrUnreachable
@@ -201,7 +203,9 @@ const (
 	InstrTableGrow
 	InstrTableSize
 	InstrStructNew
+	InstrStructNewDefault
 	InstrStructGet
+	InstrStructGetS
 	InstrArrayNew
 	InstrArrayLen
 	InstrArrayNewDefault
@@ -222,6 +226,8 @@ const (
 	InstrRefI31
 	InstrI31GetS
 	InstrI31GetU
+	InstrExternConvertAny
+	InstrAnyConvertExtern
 	InstrI32Load
 	InstrI32Store
 	InstrI64Load
@@ -413,6 +419,16 @@ type FuncType struct {
 	// RecGroupSize is the number of entries in the recursive type group for the
 	// first type in that group. It is zero for types not starting a rec group.
 	RecGroupSize uint32
+
+	// SubType reports that this entry must be encoded as a GC subtype wrapper
+	// instead of the short composite-type form.
+	SubType bool
+
+	// Final reports that the subtype wrapper is final.
+	Final bool
+
+	// SuperTypes is the declared supertype index list for GC/function subtypes.
+	SuperTypes []uint32
 
 	// Kind classifies this type table entry.
 	Kind TypeDefKind
@@ -702,6 +718,10 @@ type Instruction struct {
 
 	// RefType is the reference value type immediate used by InstrRefNull.
 	RefType ValueType
+
+	// SourceRefType is the source reference type immediate used by br_on_cast
+	// and br_on_cast_fail.
+	SourceRefType ValueType
 
 	// CallTypeIndex is the type index immediate used by InstrCallIndirect.
 	CallTypeIndex uint32

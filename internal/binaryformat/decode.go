@@ -256,9 +256,7 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 			if groupLen > 0 && groupStart < len(out) {
 				out[groupStart].RecGroupSize = groupLen
 			}
-		case typeCodeFunc:
-			fallthrough
-		case typeCodeStruct, typeCodeArray:
+		case typeCodeFunc, typeCodeStruct, typeCodeArray, typeCodeSubFinal, typeCodeSub:
 			if err := r.UnreadByte(); err != nil {
 				diags.Addf("type[%d]: failed to unread form: %v", i, err)
 				break
@@ -282,11 +280,38 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 		diags.Addf("type[%d]: failed to read form: %v", index, err)
 		return wasmir.FuncType{}, false
 	}
+	typeDef := wasmir.FuncType{}
+	if form == typeCodeSub || form == typeCodeSubFinal {
+		typeDef.SubType = true
+		typeDef.Final = form == typeCodeSubFinal
+		superCount, err := readU32(r)
+		if err != nil {
+			diags.Addf("type[%d]: invalid supertype count: %v", index, err)
+			return wasmir.FuncType{}, false
+		}
+		typeDef.SuperTypes = make([]uint32, 0, superCount)
+		for j := uint32(0); j < superCount; j++ {
+			superIndex, err := readU32(r)
+			if err != nil {
+				diags.Addf("type[%d] super[%d]: invalid type index: %v", index, j, err)
+				return wasmir.FuncType{}, false
+			}
+			typeDef.SuperTypes = append(typeDef.SuperTypes, superIndex)
+		}
+		form, err = readByte(r)
+		if err != nil {
+			diags.Addf("type[%d]: failed to read subtype body: %v", index, err)
+			return wasmir.FuncType{}, false
+		}
+	}
 	switch form {
 	case typeCodeFunc:
 		params := decodeValueTypeVec(r, fmt.Sprintf("type[%d] params", index), diags)
 		results := decodeValueTypeVec(r, fmt.Sprintf("type[%d] results", index), diags)
-		return wasmir.FuncType{Kind: wasmir.TypeDefKindFunc, Params: params, Results: results}, true
+		typeDef.Kind = wasmir.TypeDefKindFunc
+		typeDef.Params = params
+		typeDef.Results = results
+		return typeDef, true
 	case typeCodeStruct:
 		fieldCount, err := readU32(r)
 		if err != nil {
@@ -302,14 +327,18 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 			}
 			fields = append(fields, field)
 		}
-		return wasmir.FuncType{Kind: wasmir.TypeDefKindStruct, Fields: fields}, true
+		typeDef.Kind = wasmir.TypeDefKindStruct
+		typeDef.Fields = fields
+		return typeDef, true
 	case typeCodeArray:
 		field, err := decodeFieldType(r)
 		if err != nil {
 			diags.Addf("type[%d] element: %v", index, err)
 			return wasmir.FuncType{}, false
 		}
-		return wasmir.FuncType{Kind: wasmir.TypeDefKindArray, ElemField: field}, true
+		typeDef.Kind = wasmir.TypeDefKindArray
+		typeDef.ElemField = field
+		return typeDef, true
 	default:
 		diags.Addf("type[%d]: unsupported type form 0x%x", index, form)
 		return wasmir.FuncType{}, false
@@ -1343,6 +1372,44 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				return out
 			}
 			switch subop {
+			case subopStructNewCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.new missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIndex})
+			case subopStructNewDefaultCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.new_default missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructNewDefault, TypeIndex: typeIndex})
+			case subopStructGetCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				fieldIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get missing/invalid field immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGet, TypeIndex: typeIndex, FieldIndex: fieldIndex})
+			case subopStructGetSCode:
+				typeIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get_s missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				fieldIndex, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: struct.get_s missing/invalid field immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGetS, TypeIndex: typeIndex, FieldIndex: fieldIndex})
 			case subopArrayNewCode:
 				typeIndex, err := readU32(r)
 				if err != nil {
@@ -1470,6 +1537,55 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					TypeIndex:       dstTypeIndex,
 					SourceTypeIndex: srcTypeIndex,
 				})
+			case subopRefTestCode, subopRefTestNullCode:
+				refType, err := decodeHeapTypeImmediateFromReader(r, subop == subopRefTestNullCode)
+				if err != nil {
+					diags.Addf("code[%d]: ref.test missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefTest, RefType: refType})
+			case subopRefCastCode, subopRefCastNullCode:
+				refType, err := decodeHeapTypeImmediateFromReader(r, subop == subopRefCastNullCode)
+				if err != nil {
+					diags.Addf("code[%d]: ref.cast missing/invalid type immediate: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefCast, RefType: refType})
+			case subopBrOnCastCode, subopBrOnCastFailCode:
+				flags, err := readByte(r)
+				if err != nil {
+					diags.Addf("code[%d]: br_on_cast missing/invalid cast flags: %v", funcIdx, err)
+					return out
+				}
+				depthImm, err := readU32(r)
+				if err != nil {
+					diags.Addf("code[%d]: br_on_cast missing/invalid label immediate: %v", funcIdx, err)
+					return out
+				}
+				srcType, err := decodeHeapTypeImmediateFromReader(r, flags&0x01 != 0)
+				if err != nil {
+					diags.Addf("code[%d]: br_on_cast missing/invalid source type: %v", funcIdx, err)
+					return out
+				}
+				dstType, err := decodeHeapTypeImmediateFromReader(r, flags&0x02 != 0)
+				if err != nil {
+					diags.Addf("code[%d]: br_on_cast missing/invalid destination type: %v", funcIdx, err)
+					return out
+				}
+				kind := wasmir.InstrBrOnCast
+				if subop == subopBrOnCastFailCode {
+					kind = wasmir.InstrBrOnCastFail
+				}
+				out = append(out, wasmir.Instruction{
+					Kind:          kind,
+					BranchDepth:   depthImm,
+					SourceRefType: srcType,
+					RefType:       dstType,
+				})
+			case subopAnyConvertExternCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern})
+			case subopExternConvertAnyCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrExternConvertAny})
 			case subopRefI31Code:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefI31})
 			case subopI31GetSCode:
@@ -2192,6 +2308,25 @@ func decodeRefTypeFromReader(r *bytes.Reader) (wasmir.ValueType, error) {
 		return wasmir.ValueType{}, fmt.Errorf("expected reference type, got %s", vt)
 	}
 	return vt, nil
+}
+
+func decodeHeapTypeImmediateFromReader(r *bytes.Reader, nullable bool) (wasmir.ValueType, error) {
+	b, err := readByte(r)
+	if err != nil {
+		return wasmir.ValueType{}, err
+	}
+	if refType, ok := decodeValueType(b); ok && refType.IsRef() {
+		refType.Nullable = nullable
+		return refType, nil
+	}
+	if err := r.UnreadByte(); err != nil {
+		return wasmir.ValueType{}, err
+	}
+	typeIndex, err := readS33(r)
+	if err != nil {
+		return wasmir.ValueType{}, err
+	}
+	return decodeHeapTypeImmediate(typeIndex, nullable)
 }
 
 func isValueTypeLeadByte(b byte) bool {

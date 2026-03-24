@@ -454,6 +454,7 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 //   - (type $name (func ...))
 //   - (type (struct (field ...)*))
 //   - (type (array <fieldtype>))
+//   - (type (sub <super>* (struct ...)))
 //
 // It returns a TypeDecl even on malformed input so parsing can continue; errors
 // are reported through parser diagnostics.
@@ -477,11 +478,61 @@ func (p *Parser) parseTypeDecl(sx *SExpr) *TypeDecl {
 		td.StructFields = p.parseStructTypeFields(body)
 	case "array":
 		td.ArrayField = p.parseArrayTypeField(body)
+	case "sub":
+		p.parseSubtypeDecl(body, td)
 	default:
-		p.emitError(body.loc, "type declaration expects (func ...), (struct ...), or (array ...)")
+		p.emitError(body.loc, "type declaration expects (func ...), (struct ...), (array ...), or (sub ...)")
 		td.TyUse = &TypeUse{}
 	}
 	return td
+}
+
+// parseSubtypeDecl parses the body of a "(sub ...)" type declaration.
+//
+// The parser expects `sx` to be the nested "(sub ...)" S-expression from a
+// module-level "(type ...)" declaration, not the outer "(type ...)" form.
+//
+// Supported shapes are:
+//   - (sub (struct))
+//   - (sub $super (struct (field i32)))
+//   - (sub final $super (func (param i32) (result i32)))
+//   - (sub $a $b (array (mut (ref null any))))
+//
+// Everything before the final composite-type body is treated as either the
+// optional `final` marker or a list of supertype references. The last element
+// must be one of "(func ...)", "(struct ...)", or "(array ...)".
+func (p *Parser) parseSubtypeDecl(sx *SExpr, td *TypeDecl) {
+	td.SubType = true
+	elems := sx.Children()
+	if len(elems) < 2 {
+		p.emitError(sx.loc, "sub type declaration missing body")
+		td.TyUse = &TypeUse{}
+		return
+	}
+	cursor := 1
+	if cursor < len(elems)-1 && elems[cursor].IsKeywordToken("final") {
+		td.Final = true
+		cursor++
+	}
+	body := elems[len(elems)-1]
+	for ; cursor < len(elems)-1; cursor++ {
+		if !elems[cursor].IsTokenAny(ID, INT) {
+			p.emitError(elems[cursor].loc, "invalid subtype supertype reference")
+			continue
+		}
+		td.SuperTypes = append(td.SuperTypes, elems[cursor].tok.value)
+	}
+	switch body.HeadKeyword() {
+	case "func":
+		td.TyUse = p.parseFuncTypeUse(body)
+	case "struct":
+		td.StructFields = p.parseStructTypeFields(body)
+	case "array":
+		td.ArrayField = p.parseArrayTypeField(body)
+	default:
+		p.emitError(body.loc, "sub type declaration expects (func ...), (struct ...), or (array ...)")
+		td.TyUse = &TypeUse{}
+	}
 }
 
 // parseTableDecl parses one module-level "(table ...)" declaration.
@@ -961,10 +1012,7 @@ func (p *Parser) parseType(sx *SExpr) Type {
 func (p *Parser) parseStructTypeFields(sx *SExpr) []*FieldDecl {
 	fields := make([]*FieldDecl, 0, len(sx.list)-1)
 	for i := 1; i < len(sx.list); i++ {
-		field := p.parseFieldDecl(sx.list[i])
-		if field != nil {
-			fields = append(fields, field)
-		}
+		fields = append(fields, p.parseFieldDecls(sx.list[i])...)
 	}
 	return fields
 }
@@ -977,30 +1025,59 @@ func (p *Parser) parseArrayTypeField(sx *SExpr) *FieldDecl {
 	return p.parseFieldType(sx.list[1])
 }
 
-func (p *Parser) parseFieldDecl(sx *SExpr) *FieldDecl {
+// parseFieldDecls parses one struct field clause "(field ...)".
+//
+// The parser expects `sx` to be the nested "(field ...)" S-expression from a
+// struct type body, not the enclosing "(struct ...)" form.
+//
+// Supported shapes are:
+//   - (field i32)
+//   - (field (mut i16))
+//   - (field i32 i32)
+//   - (field $name (ref null any))
+//
+// Unnamed field clauses may declare multiple field types, producing multiple
+// FieldDecl entries. A named field clause may declare exactly one field type.
+func (p *Parser) parseFieldDecls(sx *SExpr) []*FieldDecl {
 	if sx.HeadKeyword() != "field" {
 		p.emitError(sx.loc, "struct type expects (field ...)")
 		return nil
 	}
-	if len(sx.list) < 2 || len(sx.list) > 3 {
-		p.emitError(sx.loc, "field declaration expects optional id plus one field type")
+	if len(sx.list) < 2 {
+		p.emitError(sx.loc, "field declaration expects one or more field types")
 		return nil
 	}
 	cursor := 1
 	fieldID := ""
-	if len(sx.list) == 3 {
+	if sx.list[cursor].IsTokenKind(ID) {
 		if !sx.list[cursor].IsTokenKind(ID) {
 			p.emitError(sx.list[cursor].loc, "field id must be an identifier")
 			return nil
 		}
 		fieldID = sx.list[cursor].tok.value
 		cursor++
+		if cursor >= len(sx.list) {
+			p.emitError(sx.loc, "field declaration with id requires a field type")
+			return nil
+		}
 	}
-	field := p.parseFieldType(sx.list[cursor])
-	if field != nil {
-		field.Id = fieldID
+
+	fields := make([]*FieldDecl, 0, len(sx.list)-cursor)
+	for ; cursor < len(sx.list); cursor++ {
+		field := p.parseFieldType(sx.list[cursor])
+		if field == nil {
+			continue
+		}
+		if fieldID != "" {
+			if len(fields) > 0 {
+				p.emitError(sx.loc, "field declaration with id accepts exactly one field type")
+				return fields
+			}
+			field.Id = fieldID
+		}
+		fields = append(fields, field)
 	}
-	return field
+	return fields
 }
 
 func (p *Parser) parseFieldType(sx *SExpr) *FieldDecl {
@@ -1251,7 +1328,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			}
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
-	case "struct.new", "array.new", "array.new_default", "array.get_s", "array.get_u", "array.fill":
+	case "struct.new", "struct.new_default", "array.new", "array.new_default", "array.get_s", "array.get_u", "array.fill":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1
@@ -1324,6 +1401,26 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 3
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{typeOp, fieldOp}, loc: elem.loc}, cursor + 3
+	case "struct.get_s":
+		if cursor+2 >= len(elems) {
+			p.emitError(elem.loc, "%s expects two operands", name)
+			return nil, cursor + 1
+		}
+		typeOp := p.parseOperand(elems[cursor+1])
+		fieldOp := p.parseOperand(elems[cursor+2])
+		switch typeOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		switch fieldOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{typeOp, fieldOp}, loc: elem.loc}, cursor + 3
 	case "array.get", "array.set":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
@@ -1337,6 +1434,29 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "br_on_cast", "br_on_cast_fail":
+		if cursor+3 >= len(elems) {
+			p.emitError(elem.loc, "%s expects branch depth and two reference types", name)
+			return nil, cursor + 1
+		}
+		labelOp := p.parseOperand(elems[cursor+1])
+		switch labelOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid branch depth for %s", name)
+			return nil, cursor + 2
+		}
+		srcTy := p.parseTypeOperand(elems[cursor+2])
+		dstTy := p.parseTypeOperand(elems[cursor+3])
+		if srcTy == nil {
+			p.emitError(elems[cursor+2].loc, "invalid source type for %s", name)
+			return nil, cursor + 4
+		}
+		if dstTy == nil {
+			p.emitError(elems[cursor+3].loc, "invalid destination type for %s", name)
+			return nil, cursor + 4
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{labelOp, srcTy, dstTy}, loc: elem.loc}, cursor + 4
 	default:
 		if instructionHasSyntaxClass(name, instrSyntaxMemory) {
 			operands := make([]Operand, 0, 3)
@@ -1510,6 +1630,14 @@ func (p *Parser) parseOperand(sx *SExpr) Operand {
 	default:
 		return nil
 	}
+}
+
+func (p *Parser) parseTypeOperand(sx *SExpr) Operand {
+	ty := p.parseType(sx)
+	if ty == nil {
+		return nil
+	}
+	return &TypeOperand{Ty: ty, loc: sx.loc}
 }
 
 // isValidPlainOperand validates operand type constraints for plain (flat) WAT

@@ -30,9 +30,11 @@ const (
 	sectionDataCountID byte = 12
 
 	// Type section entry forms.
-	typeCodeFunc   byte = 0x60
-	typeCodeArray  byte = 0x5e
-	typeCodeStruct byte = 0x5f
+	typeCodeFunc     byte = 0x60
+	typeCodeArray    byte = 0x5e
+	typeCodeStruct   byte = 0x5f
+	typeCodeSubFinal byte = 0x4f
+	typeCodeSub      byte = 0x50
 
 	valueTypeI32Code       byte = 0x7f
 	valueTypeI64Code       byte = 0x7e
@@ -241,29 +243,35 @@ const (
 	subopTableSizeCode  uint32 = 0x10
 	subopTableFillCode  uint32 = 0x11
 
-	subopStructNewCode       uint32 = 0x00
-	subopStructGetCode       uint32 = 0x02
-	subopArrayNewCode        uint32 = 0x06
-	subopArrayLenCode        uint32 = 0x0f
-	subopArrayNewDefaultCode uint32 = 0x07
-	subopArrayNewFixedCode   uint32 = 0x08
-	subopArrayNewDataCode    uint32 = 0x09
-	subopArrayNewElemCode    uint32 = 0x0a
-	subopArrayGetCode        uint32 = 0x0b
-	subopArrayGetSCode       uint32 = 0x0c
-	subopArrayGetUCode       uint32 = 0x0d
-	subopArraySetCode        uint32 = 0x0e
-	subopArrayFillCode       uint32 = 0x10
-	subopArrayCopyCode       uint32 = 0x11
-	subopArrayInitDataCode   uint32 = 0x12
-	subopArrayInitElemCode   uint32 = 0x13
-	subopRefTestCode         uint32 = 0x14
-	subopRefTestNullCode     uint32 = 0x15
-	subopRefCastCode         uint32 = 0x16
-	subopRefCastNullCode     uint32 = 0x17
-	subopRefI31Code          uint32 = 0x1c
-	subopI31GetSCode         uint32 = 0x1d
-	subopI31GetUCode         uint32 = 0x1e
+	subopStructNewCode        uint32 = 0x00
+	subopStructNewDefaultCode uint32 = 0x01
+	subopStructGetCode        uint32 = 0x02
+	subopStructGetSCode       uint32 = 0x03
+	subopArrayNewCode         uint32 = 0x06
+	subopArrayLenCode         uint32 = 0x0f
+	subopArrayNewDefaultCode  uint32 = 0x07
+	subopArrayNewFixedCode    uint32 = 0x08
+	subopArrayNewDataCode     uint32 = 0x09
+	subopArrayNewElemCode     uint32 = 0x0a
+	subopArrayGetCode         uint32 = 0x0b
+	subopArrayGetSCode        uint32 = 0x0c
+	subopArrayGetUCode        uint32 = 0x0d
+	subopArraySetCode         uint32 = 0x0e
+	subopArrayFillCode        uint32 = 0x10
+	subopArrayCopyCode        uint32 = 0x11
+	subopArrayInitDataCode    uint32 = 0x12
+	subopArrayInitElemCode    uint32 = 0x13
+	subopRefTestCode          uint32 = 0x14
+	subopRefTestNullCode      uint32 = 0x15
+	subopRefCastCode          uint32 = 0x16
+	subopRefCastNullCode      uint32 = 0x17
+	subopBrOnCastCode         uint32 = 0x18
+	subopBrOnCastFailCode     uint32 = 0x19
+	subopAnyConvertExternCode uint32 = 0x1a
+	subopExternConvertAnyCode uint32 = 0x1b
+	subopRefI31Code           uint32 = 0x1c
+	subopI31GetSCode          uint32 = 0x1d
+	subopI31GetUCode          uint32 = 0x1e
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -449,6 +457,17 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 }
 
 func encodeOneTypeDef(payload *bytes.Buffer, i int, ft wasmir.FuncType, diags *diag.ErrorList) {
+	if ft.SubType {
+		if ft.Final {
+			payload.WriteByte(typeCodeSubFinal)
+		} else {
+			payload.WriteByte(typeCodeSub)
+		}
+		writeULEB128(payload, uint32(len(ft.SuperTypes)))
+		for _, super := range ft.SuperTypes {
+			writeULEB128(payload, super)
+		}
+	}
 	switch ft.Kind {
 	case wasmir.TypeDefKindFunc:
 		payload.WriteByte(typeCodeFunc)
@@ -903,6 +922,20 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBrOnNonNull:
 		out.WriteByte(opBrOnNonNullCode)
 		writeULEB128(out, instr.BranchDepth)
+	case wasmir.InstrBrOnCast:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopBrOnCastCode)
+		out.WriteByte(castFlags(instr.SourceRefType, instr.RefType))
+		writeULEB128(out, instr.BranchDepth)
+		writeHeapTypeImmediate(out, instr.SourceRefType)
+		writeHeapTypeImmediate(out, instr.RefType)
+	case wasmir.InstrBrOnCastFail:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopBrOnCastFailCode)
+		out.WriteByte(castFlags(instr.SourceRefType, instr.RefType))
+		writeULEB128(out, instr.BranchDepth)
+		writeHeapTypeImmediate(out, instr.SourceRefType)
+		writeHeapTypeImmediate(out, instr.RefType)
 	case wasmir.InstrBrTable:
 		out.WriteByte(opBrTableCode)
 		writeULEB128(out, uint32(len(instr.BranchTable)))
@@ -991,9 +1024,18 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopStructNewCode)
 		writeULEB128(out, instr.TypeIndex)
+	case wasmir.InstrStructNewDefault:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructNewDefaultCode)
+		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrStructGet:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopStructGetCode)
+		writeULEB128(out, instr.TypeIndex)
+		writeULEB128(out, instr.FieldIndex)
+	case wasmir.InstrStructGetS:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopStructGetSCode)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.FieldIndex)
 	case wasmir.InstrArrayNew:
@@ -1064,7 +1106,7 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		} else {
 			writeULEB128(out, subopRefTestCode)
 		}
-		writeRefTypeImmediate(out, instr.RefType)
+		writeHeapTypeImmediate(out, instr.RefType)
 	case wasmir.InstrRefCast:
 		out.WriteByte(opPrefixFBCode)
 		if instr.RefType.Nullable {
@@ -1072,7 +1114,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		} else {
 			writeULEB128(out, subopRefCastCode)
 		}
-		writeRefTypeImmediate(out, instr.RefType)
+		writeHeapTypeImmediate(out, instr.RefType)
+	case wasmir.InstrAnyConvertExtern:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopAnyConvertExternCode)
+	case wasmir.InstrExternConvertAny:
+		out.WriteByte(opPrefixFBCode)
+		writeULEB128(out, subopExternConvertAnyCode)
 	case wasmir.InstrRefI31:
 		out.WriteByte(opPrefixFBCode)
 		writeULEB128(out, subopRefI31Code)
@@ -1604,6 +1652,22 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 }
 
 func writeRefTypeImmediate(out *bytes.Buffer, vt wasmir.ValueType) {
+	if vt.Nullable {
+		if vt.UsesTypeIndex() {
+			out.WriteByte(refNullPrefixCode)
+			writeSLEB128(out, int64(vt.HeapType.TypeIndex))
+			return
+		}
+		if b, ok := refTypeCode(vt); ok {
+			out.WriteByte(b)
+			return
+		}
+	}
+	out.WriteByte(refPrefixCode)
+	writeHeapTypeImmediate(out, vt)
+}
+
+func writeHeapTypeImmediate(out *bytes.Buffer, vt wasmir.ValueType) {
 	if vt.UsesTypeIndex() {
 		writeSLEB128(out, int64(vt.HeapType.TypeIndex))
 		return
@@ -1614,6 +1678,17 @@ func writeRefTypeImmediate(out *bytes.Buffer, vt wasmir.ValueType) {
 		return
 	}
 	out.WriteByte(b)
+}
+
+func castFlags(src, dst wasmir.ValueType) byte {
+	var flags byte
+	if src.Nullable {
+		flags |= 0x01
+	}
+	if dst.Nullable {
+		flags |= 0x02
+	}
+	return flags
 }
 
 func writeLimits(out *bytes.Buffer, min uint64, hasMax bool, max uint64) {

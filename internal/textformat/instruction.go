@@ -235,6 +235,7 @@ func init() {
 		"f64.store":    wasmir.InstrF64Store,
 	})
 	registerInstructions(instrSyntaxSpecial, map[string]wasmir.InstrKind{
+		"any.convert_extern": wasmir.InstrAnyConvertExtern,
 		"array.get":         wasmir.InstrArrayGet,
 		"array.get_s":       wasmir.InstrArrayGetS,
 		"array.get_u":       wasmir.InstrArrayGetU,
@@ -248,6 +249,9 @@ func init() {
 		"array.init_elem":   wasmir.InstrArrayInitElem,
 		"array.fill":        wasmir.InstrArrayFill,
 		"array.copy":        wasmir.InstrArrayCopy,
+		"br_on_cast":        wasmir.InstrBrOnCast,
+		"br_on_cast_fail":   wasmir.InstrBrOnCastFail,
+		"extern.convert_any": wasmir.InstrExternConvertAny,
 		"ref.eq":            wasmir.InstrRefEq,
 		"array.set":         wasmir.InstrArraySet,
 		"br_table":          wasmir.InstrBrTable,
@@ -266,7 +270,9 @@ func init() {
 		"ref.cast":          wasmir.InstrRefCast,
 		"ref.test":          wasmir.InstrRefTest,
 		"struct.get":        wasmir.InstrStructGet,
+		"struct.get_s":      wasmir.InstrStructGetS,
 		"struct.new":        wasmir.InstrStructNew,
+		"struct.new_default": wasmir.InstrStructNewDefault,
 	})
 	registerInstructions(instrSyntaxPlain, map[string]wasmir.InstrKind{
 		"br":                  wasmir.InstrBr,

@@ -121,6 +121,13 @@ func validModuleValueType(m *Module, vt ValueType) bool {
 	return int(vt.HeapType.TypeIndex) < len(m.Types)
 }
 
+func isDefaultableFieldType(ft FieldType) bool {
+	if ft.Packed != PackedTypeNone {
+		return true
+	}
+	return isDefaultableValueType(ft.Type)
+}
+
 func elementRefType(m *Module, elemIndex uint32) (ValueType, bool) {
 	if m == nil || int(elemIndex) >= len(m.Elements) {
 		return ValueType{}, false
@@ -207,7 +214,33 @@ func typeIndexHasKind(m *Module, typeIndex uint32, kind TypeDefKind) bool {
 	return m.Types[typeIndex].Kind == kind
 }
 
-func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
+func isTypeIndexSubtype(m *Module, got, want uint32) bool {
+	if got == want {
+		return true
+	}
+	if m == nil || int(got) >= len(m.Types) || int(want) >= len(m.Types) {
+		return false
+	}
+	seen := map[uint32]bool{}
+	stack := []uint32{got}
+	for len(stack) > 0 {
+		idx := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[idx] {
+			continue
+		}
+		seen[idx] = true
+		for _, super := range m.Types[idx].SuperTypes {
+			if super == want {
+				return true
+			}
+			stack = append(stack, super)
+		}
+	}
+	return false
+}
+
+func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 	if got == want {
 		return true
 	}
@@ -218,6 +251,15 @@ func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
 		return false
 	}
 	switch want.HeapType.Kind {
+	case HeapKindAny:
+		switch got.HeapType.Kind {
+		case HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
+			return true
+		case HeapKindTypeIndex:
+			return true
+		default:
+			return false
+		}
 	case HeapKindEq:
 		switch got.HeapType.Kind {
 		case HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
@@ -236,9 +278,38 @@ func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
 	case HeapKindStruct:
 		return got.HeapType.Kind == HeapKindStruct ||
 			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindStruct))
+	case HeapKindFunc:
+		return got.HeapType.Kind == HeapKindFunc ||
+			(got.HeapType.Kind == HeapKindTypeIndex && typeIndexHasKind(m, got.HeapType.TypeIndex, TypeDefKindFunc))
+	case HeapKindExtern:
+		return got.HeapType.Kind == HeapKindExtern
+	case HeapKindTypeIndex:
+		return got.HeapType.Kind == HeapKindTypeIndex && isTypeIndexSubtype(m, got.HeapType.TypeIndex, want.HeapType.TypeIndex)
 	default:
-		return matchesExpectedValue(validatedValueFromType(got), validatedValueFromType(want))
+		return false
 	}
+}
+
+func diffRefType(src, target ValueType) ValueType {
+	if !src.IsRef() || !target.IsRef() {
+		return ValueType{}
+	}
+	if src == target && !src.Nullable {
+		return ValueType{}
+	}
+	if src.Nullable && target.Nullable {
+		out := src
+		out.Nullable = false
+		return out
+	}
+	return src
+}
+
+func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
+	if got.IsRef() || want.IsRef() {
+		return matchesRefTypeInModule(m, got, want)
+	}
+	return got == want
 }
 
 func matchesExpectedValueInModule(m *Module, got, want validatedValue) bool {
@@ -274,6 +345,15 @@ func ValidateModule(m *Module) error {
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 	for i, td := range m.Types {
+		for j, super := range td.SuperTypes {
+			if int(super) >= len(m.Types) {
+				diags.Addf("type[%d] super[%d]: unknown type", i, j)
+				continue
+			}
+			if m.Types[super].Kind != td.Kind {
+				diags.Addf("type[%d] super[%d]: type mismatch", i, j)
+			}
+		}
 		switch td.Kind {
 		case TypeDefKindFunc:
 			for j, param := range td.Params {
@@ -638,6 +718,41 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		return nil, nil, true
 	}
 
+	validateBrOnCastStatic := func(ins Instruction, insCtx, opname string, branchOnCast bool) bool {
+		if !ins.SourceRefType.IsRef() || !ins.RefType.IsRef() {
+			diags.Addf("%s: type mismatch", insCtx)
+			return false
+		}
+		if !matchesRefTypeInModule(m, ins.RefType, ins.SourceRefType) {
+			diags.Addf("%s: type mismatch", insCtx)
+			return false
+		}
+		if int(ins.BranchDepth) >= len(controlStack) {
+			diags.Addf("%s: %s depth %d out of range", insCtx, opname, ins.BranchDepth)
+			return false
+		}
+		target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
+		targetValues := branchTargetTypes(target)
+		if len(targetValues) == 0 {
+			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opname, ins.BranchDepth)
+			return false
+		}
+		wantRef := targetValues[len(targetValues)-1]
+		if !wantRef.Type.IsRef() {
+			diags.Addf("%s: type mismatch", insCtx)
+			return false
+		}
+		gotRef := validatedValueFromType(ins.RefType)
+		if !branchOnCast {
+			gotRef = validatedValueFromType(diffRefType(ins.SourceRefType, ins.RefType))
+		}
+		if !matchesExpectedValueInModule(m, gotRef, wantRef) {
+			diags.Addf("%s: type mismatch", insCtx)
+			return false
+		}
+		return true
+	}
+
 	returned := false
 instrLoop:
 	for i, ins := range f.Body {
@@ -647,6 +762,12 @@ instrLoop:
 		}
 
 		if len(controlStack) > 0 && controlStack[len(controlStack)-1].unreachable {
+			switch ins.Kind {
+			case InstrBrOnCast:
+				validateBrOnCastStatic(ins, insCtx, "br_on_cast", true)
+			case InstrBrOnCastFail:
+				validateBrOnCastStatic(ins, insCtx, "br_on_cast_fail", false)
+			}
 			switch ins.Kind {
 			case InstrBlock, InstrLoop, InstrIf:
 				opname := instrName(ins.Kind)
@@ -1175,7 +1296,7 @@ instrLoop:
 			base := len(stack) - len(td.Fields)
 			operandsOK := true
 			for j, field := range td.Fields {
-				want := validatedValueFromType(field.Type)
+				want := validatedValueFromType(fieldValueType(field))
 				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
 					diags.Addf("%s: struct.new field %d expects %s", insCtx, j, validatedValueName(want))
 					operandsOK = false
@@ -1186,6 +1307,28 @@ instrLoop:
 				continue
 			}
 			truncateStack(base)
+			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
+		case InstrStructNewDefault:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.new_default type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.new_default type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			defaultable := true
+			for _, field := range td.Fields {
+				if !isDefaultableFieldType(field) {
+					defaultable = false
+					break
+				}
+			}
+			if !defaultable {
+				diags.Addf("%s: struct.new_default requires defaultable field types", insCtx)
+				continue
+			}
 			appendStackValue(validatedValueFromType(RefTypeIndexed(ins.TypeIndex, false)))
 		case InstrStructGet:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
@@ -1211,6 +1354,35 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(td.Fields[ins.FieldIndex].Type))
+		case InstrStructGetS:
+			td, ok := typeDefAtIndex(m, ins.TypeIndex)
+			if !ok {
+				diags.Addf("%s: struct.get_s type index %d out of range", insCtx, ins.TypeIndex)
+				continue
+			}
+			if td.Kind != TypeDefKindStruct {
+				diags.Addf("%s: struct.get_s type index %d is not a struct type", insCtx, ins.TypeIndex)
+				continue
+			}
+			if int(ins.FieldIndex) >= len(td.Fields) {
+				diags.Addf("%s: struct.get_s field index %d out of range", insCtx, ins.FieldIndex)
+				continue
+			}
+			field := td.Fields[ins.FieldIndex]
+			if field.Packed == PackedTypeNone {
+				diags.Addf("%s: struct.get_s requires packed field type", insCtx)
+				continue
+			}
+			if len(stack) < 1 {
+				diags.Addf("%s: struct.get_s needs 1 operand", insCtx)
+				continue
+			}
+			wantRef := validatedValueFromType(RefTypeIndexed(ins.TypeIndex, true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), wantRef) {
+				diags.Addf("%s: struct.get_s expects operand of type %s", insCtx, validatedValueName(wantRef))
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrArrayLen:
 			if len(stack) < 1 {
 				diags.Addf("%s: array.len needs 1 operand", insCtx)
@@ -1640,6 +1812,28 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeI31(false)))
+		case InstrExternConvertAny:
+			if len(stack) < 1 {
+				diags.Addf("%s: extern.convert_any needs 1 operand", insCtx)
+				continue
+			}
+			got := stackValue(len(stack) - 1)
+			if !got.Type.IsRef() || got.Type.HeapType.Kind != HeapKindAny {
+				diags.Addf("%s: extern.convert_any expects any reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(RefTypeExtern(got.Type.Nullable)))
+		case InstrAnyConvertExtern:
+			if len(stack) < 1 {
+				diags.Addf("%s: any.convert_extern needs 1 operand", insCtx)
+				continue
+			}
+			got := stackValue(len(stack) - 1)
+			if !got.Type.IsRef() || got.Type.HeapType.Kind != HeapKindExtern {
+				diags.Addf("%s: any.convert_extern expects extern reference operand", insCtx)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(RefTypeAny(got.Type.Nullable)))
 		case InstrI31GetS:
 			if len(stack) < 1 {
 				diags.Addf("%s: i31.get_s needs 1 operand", insCtx)
@@ -2145,6 +2339,117 @@ instrLoop:
 				setStackValue(base+i, targetValues[i])
 			}
 			truncateStack(len(stack) - 1)
+		case InstrBrOnCast:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_on_cast needs 1 reference operand", insCtx)
+				continue
+			}
+			refVal := stackValue(len(stack) - 1)
+			if !matchesExpectedValueInModule(m, refVal, validatedValueFromType(ins.SourceRefType)) {
+				diags.Addf("%s: br_on_cast expects operand of type %s", insCtx, validatedValueName(validatedValueFromType(ins.SourceRefType)))
+				continue
+			}
+			if !matchesRefTypeInModule(m, ins.RefType, ins.SourceRefType) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			if int(ins.BranchDepth) >= len(controlStack) {
+				diags.Addf("%s: br_on_cast depth %d out of range", insCtx, ins.BranchDepth)
+				continue
+			}
+			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
+			targetValues := branchTargetTypes(target)
+			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+				diags.Addf("%s: br_on_cast depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			base := len(stack) - len(targetValues)
+			currentEntry := 0
+			if len(controlStack) > 0 {
+				currentEntry = controlStack[len(controlStack)-1].entryHeight
+			}
+			if base < currentEntry {
+				diags.Addf("%s: br_on_cast depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			matches := true
+			for i := 0; i < len(targetValues)-1; i++ {
+				got := stackValue(base + i)
+				want := targetValues[i]
+				if !matchesExpectedValueInModule(m, got, want) {
+					diags.Addf("%s: br_on_cast depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, validatedValueName(got), validatedValueName(want))
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			wantRef := targetValues[len(targetValues)-1]
+			if !matchesExpectedValueInModule(m, validatedValueFromType(ins.RefType), wantRef) {
+				diags.Addf("%s: br_on_cast depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, len(targetValues)-1, validatedValueName(validatedValueFromType(ins.RefType)), validatedValueName(wantRef))
+				continue
+			}
+			for i := 0; i < len(targetValues)-1; i++ {
+				setStackValue(base+i, targetValues[i])
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(diffRefType(ins.SourceRefType, ins.RefType)))
+		case InstrBrOnCastFail:
+			if len(stack) < 1 {
+				diags.Addf("%s: br_on_cast_fail needs 1 reference operand", insCtx)
+				continue
+			}
+			refVal := stackValue(len(stack) - 1)
+			if !matchesExpectedValueInModule(m, refVal, validatedValueFromType(ins.SourceRefType)) {
+				diags.Addf("%s: br_on_cast_fail expects operand of type %s", insCtx, validatedValueName(validatedValueFromType(ins.SourceRefType)))
+				continue
+			}
+			if !matchesRefTypeInModule(m, ins.RefType, ins.SourceRefType) {
+				diags.Addf("%s: type mismatch", insCtx)
+				continue
+			}
+			if int(ins.BranchDepth) >= len(controlStack) {
+				diags.Addf("%s: br_on_cast_fail depth %d out of range", insCtx, ins.BranchDepth)
+				continue
+			}
+			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
+			targetValues := branchTargetTypes(target)
+			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+				diags.Addf("%s: br_on_cast_fail depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			base := len(stack) - len(targetValues)
+			currentEntry := 0
+			if len(controlStack) > 0 {
+				currentEntry = controlStack[len(controlStack)-1].entryHeight
+			}
+			if base < currentEntry {
+				diags.Addf("%s: br_on_cast_fail depth %d has insufficient stack height", insCtx, ins.BranchDepth)
+				continue
+			}
+			matches := true
+			for i := 0; i < len(targetValues)-1; i++ {
+				got := stackValue(base + i)
+				want := targetValues[i]
+				if !matchesExpectedValueInModule(m, got, want) {
+					diags.Addf("%s: br_on_cast_fail depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, i, validatedValueName(got), validatedValueName(want))
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			wantRef := targetValues[len(targetValues)-1]
+			diffType := diffRefType(ins.SourceRefType, ins.RefType)
+			if !matchesExpectedValueInModule(m, validatedValueFromType(diffType), wantRef) {
+				diags.Addf("%s: br_on_cast_fail depth %d target type mismatch at %d: got %s want %s", insCtx, ins.BranchDepth, len(targetValues)-1, validatedValueName(validatedValueFromType(diffType)), validatedValueName(wantRef))
+				continue
+			}
+			for i := 0; i < len(targetValues)-1; i++ {
+				setStackValue(base+i, targetValues[i])
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
 		case InstrBrTable:
 			if len(stack) < 1 {
 				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
@@ -2814,8 +3119,12 @@ func instrName(kind InstrKind) string {
 		return "call_ref"
 	case InstrStructNew:
 		return "struct.new"
+	case InstrStructNewDefault:
+		return "struct.new_default"
 	case InstrStructGet:
 		return "struct.get"
+	case InstrStructGetS:
+		return "struct.get_s"
 	case InstrArrayLen:
 		return "array.len"
 	case InstrArrayNew:
@@ -2850,6 +3159,10 @@ func instrName(kind InstrKind) string {
 		return "ref.test"
 	case InstrRefCast:
 		return "ref.cast"
+	case InstrExternConvertAny:
+		return "extern.convert_any"
+	case InstrAnyConvertExtern:
+		return "any.convert_extern"
 	case InstrRefI31:
 		return "ref.i31"
 	case InstrI31GetS:
@@ -2872,6 +3185,10 @@ func instrName(kind InstrKind) string {
 		return "br_on_null"
 	case InstrBrOnNonNull:
 		return "br_on_non_null"
+	case InstrBrOnCast:
+		return "br_on_cast"
+	case InstrBrOnCastFail:
+		return "br_on_cast_fail"
 	case InstrBrTable:
 		return "br_table"
 	case InstrUnreachable:

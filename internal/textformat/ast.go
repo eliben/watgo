@@ -269,6 +269,17 @@ type TypeDecl struct {
 	// starting a recursive group.
 	RecGroupSize int
 
+	// SubType reports that this declaration was written as "(sub ...)".
+	SubType bool
+
+	// Final reports that the subtype declaration used "(sub final ...)".
+	Final bool
+
+	// SuperTypes is the ordered list of declared supertype references from a
+	// "(sub ...)" declaration. Each entry is the raw text form, such as "$t" or
+	// "0".
+	SuperTypes []string
+
 	// TyUse carries the declared function signature for function types.
 	TyUse *TypeUse
 
