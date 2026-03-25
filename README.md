@@ -1,5 +1,10 @@
 # watgo
 
+[![CI](https://github.com/eliben/watgo/actions/workflows/ci.yml/badge.svg)](https://github.com/eliben/watgo/actions/workflows/ci.yml)
+[![pkg.go.dev](https://pkg.go.dev/badge/github.com/eliben/watgo.svg)](https://pkg.go.dev/github.com/eliben/watgo)
+
+----
+
 **WA**SM **T**oolkit for **Go** (**watgo**) to parse WASM text or decode WASM binary into internal data
 structures, allowing conversions, etc.
 
