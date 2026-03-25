@@ -37,6 +37,11 @@ To run it straight from the module path without installing:
 go run github.com/eliben/watgo/cmd/watgo@latest help
 ```
 
+### Go API
+
+The public Go API is documented on [`pkg.go.dev`](https://pkg.go.dev/github.com/eliben/watgo),
+including runnable examples for the high-level functions in `package watgo`.
+
 ### CLI
 
 `watgo` currently provides basic `parse` and `validate` subcommands.

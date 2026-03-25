@@ -3,6 +3,7 @@ package watgo_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/eliben/watgo"
@@ -165,4 +166,77 @@ func TestDecodeWASM_DecodeError_PublicAPI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected DecodeWASM to fail")
 	}
+}
+
+func ExampleCompileWATToWASM() {
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(wasm) > 0)
+	// Output:
+	// true
+}
+
+func ExampleParseWAT() {
+	m, err := watgo.ParseWAT([]byte(`(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(m.Funcs), len(m.Exports))
+	// Output:
+	// 1 1
+}
+
+func ExampleDecodeWASM() {
+	m, err := watgo.DecodeWASM(canonicalAddModuleBytes())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(m.Types), len(m.Funcs))
+	// Output:
+	// 1 1
+}
+
+func ExampleValidateModule() {
+	m, err := watgo.ParseWAT([]byte(`(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(watgo.ValidateModule(m) == nil)
+	// Output:
+	// true
+}
+
+func ExampleEncodeWASM() {
+	m, err := watgo.ParseWAT([]byte(`(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	if err := watgo.ValidateModule(m); err != nil {
+		panic(err)
+	}
+	wasm, err := watgo.EncodeWASM(m)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(wasm) > 0)
+	// Output:
+	// true
 }
