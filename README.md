@@ -1,6 +1,6 @@
 # watgo
 
-Wasm Toolkit for Go (watgo) to parse WASM (text and binary) into internal data
+**WA**SM **T**oolkit for **Go** (**watgo**) to parse WASM text or decode WASM binary into internal data
 structures, allowing conversions, etc.
 
 ### WASM feature support and proposals
