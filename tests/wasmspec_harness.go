@@ -902,7 +902,7 @@ func headKeyword(sx *textformat.SExpr) (string, bool) {
 
 // sexprToWAT converts an S-expression tree back into WAT text.
 // sx is any parsed expression (module or nested form).
-// It returns reconstructed source suitable for CompileWAT.
+// It returns reconstructed source suitable for CompileWATToWASM.
 func sexprToWAT(sx *textformat.SExpr) (string, error) {
 	if sx == nil {
 		return "", fmt.Errorf("nil s-expression")
@@ -2007,7 +2007,7 @@ func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand,
 			_, err = binaryformat.DecodeModule(wasmBytes)
 		}
 	} else {
-		_, err = watgo.CompileWAT([]byte(cmd.quotedWAT))
+		_, err = watgo.CompileWATToWASM([]byte(cmd.quotedWAT))
 	}
 	if err == nil {
 		res.status = false
@@ -2365,7 +2365,7 @@ func isArithmeticNaN64(bits uint64) bool {
 // compileWAT compiles WAT source with watgo and applies the decoder/encoder
 // roundtrip fixed-point check used by integration tests.
 func (r *scriptRunner) compileWAT(watSrc string) ([]byte, error) {
-	wasmBytes, err := watgo.CompileWAT([]byte(watSrc))
+	wasmBytes, err := watgo.CompileWATToWASM([]byte(watSrc))
 	if err != nil {
 		return nil, err
 	}

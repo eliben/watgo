@@ -12,9 +12,9 @@ import (
 
 func TestRunParseStdinToStdout(t *testing.T) {
 	wat := []byte("(module (func (export \"f\") (result i32) (i32.const 7)))")
-	want, err := watgo.CompileWAT(wat)
+	want, err := watgo.CompileWATToWASM(wat)
 	if err != nil {
-		t.Fatalf("CompileWAT failed: %v", err)
+		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -38,9 +38,9 @@ func TestRunParseFileToOutputFile(t *testing.T) {
 	if err := os.WriteFile(input, wat, 0o644); err != nil {
 		t.Fatalf("WriteFile input failed: %v", err)
 	}
-	want, err := watgo.CompileWAT(wat)
+	want, err := watgo.CompileWATToWASM(wat)
 	if err != nil {
-		t.Fatalf("CompileWAT failed: %v", err)
+		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -96,9 +96,9 @@ func TestRunValidateInvalidWAT(t *testing.T) {
 }
 
 func TestRunValidateWASM(t *testing.T) {
-	wasm, err := watgo.CompileWAT([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
 	if err != nil {
-		t.Fatalf("CompileWAT failed: %v", err)
+		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"validate"}, bytes.NewReader(wasm), &stdout, &stderr)

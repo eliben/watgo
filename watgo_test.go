@@ -7,6 +7,7 @@ import (
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/wasmir"
 )
 
 func canonicalAddModuleBytes() []byte {
@@ -19,7 +20,7 @@ func canonicalAddModuleBytes() []byte {
 	}
 }
 
-func TestCompileWAT_PublicAPI(t *testing.T) {
+func TestCompileWATToWASM_PublicAPI(t *testing.T) {
 	wat := []byte(`(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
@@ -28,19 +29,19 @@ func TestCompileWAT_PublicAPI(t *testing.T) {
   )
 )`)
 
-	got, err := watgo.CompileWAT(wat)
+	got, err := watgo.CompileWATToWASM(wat)
 	if err != nil {
-		t.Fatalf("CompileWAT failed: %v", err)
+		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
 	want := canonicalAddModuleBytes()
 	if !bytes.Equal(got, want) {
-		t.Fatalf("CompileWAT bytes mismatch:\n got=%x\nwant=%x", got, want)
+		t.Fatalf("CompileWATToWASM bytes mismatch:\n got=%x\nwant=%x", got, want)
 	}
 }
 
-func TestCompileWAT_MultipleErrors_PublicAPI(t *testing.T) {
-	_, err := watgo.CompileWAT([]byte(`(module
+func TestCompileWATToWASM_MultipleErrors_PublicAPI(t *testing.T) {
+	_, err := watgo.CompileWATToWASM([]byte(`(module
   (func (export "bad_local_get_1") (param $a i32) (result i32)
     local.get $missing1
   )
@@ -49,7 +50,7 @@ func TestCompileWAT_MultipleErrors_PublicAPI(t *testing.T) {
   )
 )`))
 	if err == nil {
-		t.Fatal("expected CompileWAT to fail")
+		t.Fatal("expected CompileWATToWASM to fail")
 	}
 
 	errs, ok := errors.AsType[diag.ErrorList](err)
@@ -58,5 +59,110 @@ func TestCompileWAT_MultipleErrors_PublicAPI(t *testing.T) {
 	}
 	if len(errs) < 2 {
 		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
+	}
+}
+
+func TestParseWAT_PublicAPI(t *testing.T) {
+	wat := []byte(`(module
+  (func (export "add") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add
+  )
+)`)
+
+	m, err := watgo.ParseWAT(wat)
+	if err != nil {
+		t.Fatalf("ParseWAT failed: %v", err)
+	}
+	if len(m.Types) != 1 {
+		t.Fatalf("got %d types, want 1", len(m.Types))
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	if len(m.Exports) != 1 {
+		t.Fatalf("got %d exports, want 1", len(m.Exports))
+	}
+	if m.Types[0].Params[0] != wasmir.ValueTypeI32 || m.Types[0].Results[0] != wasmir.ValueTypeI32 {
+		t.Fatalf("unexpected signature: %#v", m.Types[0])
+	}
+}
+
+func TestParseWAT_ParseError_PublicAPI(t *testing.T) {
+	_, err := watgo.ParseWAT([]byte("(module"))
+	if err == nil {
+		t.Fatal("expected ParseWAT to fail")
+	}
+}
+
+func TestValidateModule_PublicAPI(t *testing.T) {
+	m := &wasmir.Module{
+		Types: []wasmir.FuncType{{
+			Results: []wasmir.ValueType{wasmir.ValueTypeI32},
+		}},
+		Funcs: []wasmir.Function{{
+			TypeIdx: 0,
+			Body: []wasmir.Instruction{
+				{Kind: wasmir.InstrEnd},
+			},
+		}},
+	}
+
+	err := watgo.ValidateModule(m)
+	if err == nil {
+		t.Fatal("expected ValidateModule to fail")
+	}
+}
+
+func TestEncodeWASM_PublicAPI(t *testing.T) {
+	m, err := watgo.ParseWAT([]byte(`(module
+  (func (export "add") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add
+  )
+)`))
+	if err != nil {
+		t.Fatalf("ParseWAT failed: %v", err)
+	}
+	if err := watgo.ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule failed: %v", err)
+	}
+
+	got, err := watgo.EncodeWASM(m)
+	if err != nil {
+		t.Fatalf("EncodeWASM failed: %v", err)
+	}
+
+	want := canonicalAddModuleBytes()
+	if !bytes.Equal(got, want) {
+		t.Fatalf("EncodeWASM bytes mismatch:\n got=%x\nwant=%x", got, want)
+	}
+}
+
+func TestDecodeWASM_PublicAPI(t *testing.T) {
+	m, err := watgo.DecodeWASM(canonicalAddModuleBytes())
+	if err != nil {
+		t.Fatalf("DecodeWASM failed: %v", err)
+	}
+	if len(m.Types) != 1 {
+		t.Fatalf("got %d types, want 1", len(m.Types))
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	if len(m.Exports) != 1 {
+		t.Fatalf("got %d exports, want 1", len(m.Exports))
+	}
+	if err := watgo.ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule(decoded) failed: %v", err)
+	}
+}
+
+func TestDecodeWASM_DecodeError_PublicAPI(t *testing.T) {
+	_, err := watgo.DecodeWASM([]byte{0x00, 0x61, 0x73})
+	if err == nil {
+		t.Fatal("expected DecodeWASM to fail")
 	}
 }

@@ -73,9 +73,9 @@ func runWasmWatSample(t *testing.T, nodePath, srcDir string) {
 			t.Fatalf("ReadFile %q failed: %v", watPath, err)
 		}
 
-		wasmBytes, err := watgo.CompileWAT(src)
+		wasmBytes, err := watgo.CompileWATToWASM(src)
 		if err != nil {
-			t.Fatalf("CompileWAT %q failed: %v", watPath, err)
+			t.Fatalf("CompileWATToWASM %q failed: %v", watPath, err)
 		}
 
 		wasmPath := strings.TrimSuffix(watPath, filepath.Ext(watPath)) + ".wasm"

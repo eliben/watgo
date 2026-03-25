@@ -10,9 +10,6 @@ import (
 	"strings"
 
 	"github.com/eliben/watgo"
-	"github.com/eliben/watgo/internal/binaryformat"
-	"github.com/eliben/watgo/internal/textformat"
-	"github.com/eliben/watgo/wasmir"
 )
 
 // Run executes the watgo CLI with args and standard streams and returns the
@@ -94,16 +91,16 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// WASM validator and reformatter, in addition to compiling WAT text.
 	var out []byte
 	if isBinaryWasm(src) {
-		m, err := binaryformat.DecodeModule(src)
+		m, err := watgo.DecodeWASM(src)
 		if err != nil {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
 		}
-		if err := wasmir.ValidateModule(m); err != nil {
+		if err := watgo.ValidateModule(m); err != nil {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
 		}
-		out, err = binaryformat.EncodeModule(m)
+		out, err = watgo.EncodeWASM(m)
 		if err != nil {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
@@ -176,7 +173,7 @@ func runValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // parseToBinary compiles WAT text src to binary WebAssembly bytes.
 func parseToBinary(src []byte) ([]byte, error) {
-	return watgo.CompileWAT(src)
+	return watgo.CompileWATToWASM(src)
 }
 
 // validateInput validates either WAT text or WASM binary input.
@@ -185,22 +182,17 @@ func parseToBinary(src []byte) ([]byte, error) {
 // parsed, lowered to IR, and then validated.
 func validateInput(src []byte) error {
 	if isBinaryWasm(src) {
-		m, err := binaryformat.DecodeModule(src)
+		m, err := watgo.DecodeWASM(src)
 		if err != nil {
 			return err
 		}
-		return wasmir.ValidateModule(m)
+		return watgo.ValidateModule(m)
 	}
-
-	tm, err := textformat.ParseModule(string(src))
+	m, err := watgo.ParseWAT(src)
 	if err != nil {
 		return err
 	}
-	m, err := textformat.LowerModule(tm)
-	if err != nil {
-		return err
-	}
-	return wasmir.ValidateModule(m)
+	return watgo.ValidateModule(m)
 }
 
 // isBinaryWasm reports whether src appears to be a WASM binary by checking the

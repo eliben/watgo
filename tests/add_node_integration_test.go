@@ -29,9 +29,9 @@ func TestAddModuleEndToEndWithNode(t *testing.T) {
   )
 )`
 
-	wasmBytes, err := watgo.CompileWAT([]byte(wat))
+	wasmBytes, err := watgo.CompileWATToWASM([]byte(wat))
 	if err != nil {
-		t.Fatalf("CompileWAT failed: %v", err)
+		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
 	tmpDir := t.TempDir()
