@@ -59,6 +59,4 @@ For full command-line help, run:
 
 ```sh
 watgo help
-watgo parse --help
-watgo validate --help
 ```

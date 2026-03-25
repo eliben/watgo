@@ -28,7 +28,22 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runParse(args[1:], stdin, stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdin, stdout, stderr)
-	case "-h", "--help", "help":
+	case "help":
+		if len(args) == 1 {
+			printRootUsage(stdout)
+			return 0
+		}
+		switch args[1] {
+		case "parse":
+			return runParse([]string{"--help"}, stdin, stdout, stderr)
+		case "validate":
+			return runValidate([]string{"--help"}, stdin, stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "watgo: unknown help topic %q\n\n", args[1])
+			printRootUsage(stderr)
+			return 2
+		}
+	case "-h", "--help":
 		printRootUsage(stdout)
 		return 0
 	default:
