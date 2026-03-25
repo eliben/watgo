@@ -112,3 +112,79 @@ func TestRunValidateWASM(t *testing.T) {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
+
+func TestRunRootHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"help"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Fatalf("stdout %q does not contain usage", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "watgo parse") {
+		t.Fatalf("stdout %q does not mention parse", stdout.String())
+	}
+}
+
+func TestRunNoArgsPrintsRootUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run(nil, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("Run returned %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("stderr %q does not contain usage", stderr.String())
+	}
+}
+
+func TestRunUnknownSubcommandPrintsRootUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"bogus"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("Run returned %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown subcommand") {
+		t.Fatalf("stderr %q does not mention unknown subcommand", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("stderr %q does not contain usage", stderr.String())
+	}
+}
+
+func TestRunParseHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"parse", "--help"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "watgo parse [OPTIONS] [INPUT]") {
+		t.Fatalf("stderr %q does not contain parse usage", stderr.String())
+	}
+}
+
+func TestRunValidateHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"validate", "--help"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "watgo validate [INPUT]") {
+		t.Fatalf("stderr %q does not contain validate usage", stderr.String())
+	}
+}

@@ -1,4 +1,8 @@
 * Update notes.md with the latest plans / design
+* Carefully check exported packages: do we need to export diag? Does wasmir
+  have the right API surface?
+* If we expose wasmir/ we have to expose something that lowers to it from WAT,
+  or decodes to it from WASM
 * Will need a way of keeping tests up-to-date - have scripts that can clone
   the repos we use and copy all the scripts to the vendored version
 
