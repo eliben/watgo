@@ -6,12 +6,11 @@
 
 - Parse WAT text into an internal representation.
 - Parse WASM binary into an internal representation.
-- Emit WAT text and WASM binary from that representation.
+- Emit WASM binary from that representation.
+- Future: emit WAT text from that representation
 - Support transforms, analysis, debugging, and inspection.
 
-This design aims for correctness first, then ergonomics and performance.
-
-## Non-Goals (initially)
+## Non-Goals
 
 - Full engine/runtime execution of modules.
 - JIT/AOT compilation.
@@ -24,7 +23,6 @@ This design aims for correctness first, then ergonomics and performance.
 - Lossless-ish text AST for WAT source fidelity (names, folded forms,
   formatting-sensitive details where needed).
 - Strict separation between parsing/validation/encoding.
-- Explicit feature gating (MVP = core spec; proposals opt-in).
 - Deterministic outputs for stable tests and debugging.
 
 ## High-Level Pipeline
@@ -34,28 +32,7 @@ This design aims for correctness first, then ergonomics and performance.
 3. `wasmir` -> validator -> validated IR (or diagnostic set).
 4. `wasmir` -> binary encoder -> WASM bytes.
 5. WASM bytes -> binary decoder -> `wasmir`.
-6. `wasmir` -> text printer -> WAT (canonical pretty-printed form).
-
-## Suggested Package Layout
-
-Keep packages small and composable:
-
-- `internal/wasmir`
-  - Canonical semantic module IR.
-  - Index-based references (typeidx/funcidx/localidx/etc).
-  - No text-only constructs.
-  - Validation
-- `internal/textformat`
-  - Text-format AST preserving names, folded instructions, syntactic sugar.
-  - Lexer + parser
-- `internal/binaryformat`
-  - Decoder: WASM bytes -> `wasmir`.
-  - Encoder: `wasmir` -> WASM bytes.
-  - Expands folded syntax into linear instruction sequences.
-- `internal/features`
-  - Feature flags (MVP + proposals).
-- `cmd/watgo` (later)
-  - CLI (`parse`, `validate`, `wat2wasm`, `wasm2wat`, `dump`, etc).
+6. Future: `wasmir` -> text printer -> WAT (canonical pretty-printed form).
 
 ## IR Design
 
@@ -79,41 +56,6 @@ Use this as the canonical transformation/emission target:
 - Function bodies in normalized instruction form (unfolded).
 - Constants/immediates represented in typed form.
 - Optional metadata map for debug/provenance.
-
-This split avoids polluting the semantic IR with text-only syntax concerns.
-
-## Parsing and Lowering Strategy
-
-### WAT Parser
-
-- Build robust tokenizer first (comments, strings, numbers, keywords, IDs).
-- Parse S-expression structure.
-- Build ASTs for module items and instructions.
-- Keep parser permissive enough to collect multiple errors in one pass.
-
-### Lowerer
-
-- Build symbol tables per index space:
-  - types, funcs, tables, memories, globals, locals, labels.
-- Resolve names to indices with clear diagnostics.
-- Convert folded instructions to linear form.
-- Normalize shorthand where possible.
-
-### Binary Decoder/Encoder
-
-- Decoder should preserve semantics; ignore/retain custom sections based on option.
-- Encoder should produce canonical section ordering and deterministic output.
-- For unsupported/unknown features, produce typed errors tied to feature flags.
-
-## Validation Strategy
-
-Validation should be explicit and reusable (not hidden in parser/decoder):
-
-- Type validation of instructions and blocks.
-- Index bounds checks.
-- Import/export consistency.
-- Start function constraints.
-- Memory/table/global constraints.
 
 ## Testing Strategy
 
