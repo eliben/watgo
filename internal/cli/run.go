@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/eliben/watgo"
@@ -28,6 +29,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runParse(args[1:], stdin, stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdin, stdout, stderr)
+	case "-V", "--version":
+		fmt.Fprintln(stdout, versionString())
+		return 0
 	case "help":
 		if len(args) == 1 {
 			printRootUsage(stdout)
@@ -258,6 +262,7 @@ Usage:
   watgo parse [OPTIONS] [INPUT]
   watgo validate [INPUT]
   watgo help [COMMAND]
+  watgo --version
 
 Commands:
   parse      Parse WebAssembly text format and write binary output
@@ -265,7 +270,20 @@ Commands:
 
 Help:
   Use "watgo help <command>" or "watgo <command> --help" for subcommand help.
+
+Other:
+  -V, --version
+        Print version information.
 `)
+}
+
+func versionString() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" {
+			return "watgo " + info.Main.Version
+		}
+	}
+	return "watgo unknown"
 }
 
 // printParseUsage prints help text for `watgo parse`.

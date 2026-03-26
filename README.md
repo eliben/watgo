@@ -28,13 +28,13 @@ go install github.com/eliben/watgo/cmd/watgo@latest
 To run it directly from a checkout without installing:
 
 ```sh
-go run ./cmd/watgo help
+go run ./cmd/watgo
 ```
 
 To run it straight from the module path without installing:
 
 ```sh
-go run github.com/eliben/watgo/cmd/watgo@latest help
+go run github.com/eliben/watgo/cmd/watgo@latest
 ```
 
 ### Go API

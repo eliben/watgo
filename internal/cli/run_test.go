@@ -128,6 +128,9 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "watgo parse") {
 		t.Fatalf("stdout %q does not mention parse", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "--version") {
+		t.Fatalf("stdout %q does not mention version", stdout.String())
+	}
 }
 
 func TestRunNoArgsPrintsRootUsage(t *testing.T) {
@@ -231,5 +234,33 @@ func TestRunUnknownHelpTopicPrintsRootUsage(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Usage:") {
 		t.Fatalf("stderr %q does not contain usage", stderr.String())
+	}
+}
+
+func TestRunShortVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"-V"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != versionString() {
+		t.Fatalf("stdout %q, want %q", got, versionString())
+	}
+}
+
+func TestRunLongVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--version"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != versionString() {
+		t.Fatalf("stdout %q, want %q", got, versionString())
 	}
 }
