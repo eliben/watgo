@@ -261,19 +261,15 @@ func printRootUsage(w io.Writer) {
 Usage:
   watgo parse [OPTIONS] [INPUT]
   watgo validate [INPUT]
-  watgo help [COMMAND]
-  watgo --version
 
 Commands:
-  parse      Parse WebAssembly text format and write binary output
-  validate   Validate a WebAssembly text or binary file
+  parse              Parse WebAssembly text format and write binary output
+  validate           Validate a WebAssembly text or binary file
+  help               Show help for the root command or a subcommand
+  -V, --version      Print version information
 
-Help:
+Notes:
   Use "watgo help <command>" or "watgo <command> --help" for subcommand help.
-
-Other:
-  -V, --version
-        Print version information.
 `)
 }
 
