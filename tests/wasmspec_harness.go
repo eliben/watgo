@@ -65,6 +65,7 @@ const (
 	valueF64Const         valueKind = "f64.const"
 	valueF64NaNCanonical  valueKind = "f64.nan:canonical"
 	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
+	valueV128Const        valueKind = "v128.const"
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
 	valueRefEq            valueKind = "ref.eq"
@@ -83,8 +84,18 @@ const (
 type scriptValue struct {
 	kind valueKind
 	// bits stores the raw IEEE-754/integer bit pattern used for exact
-	// comparisons in assert_return. NaN marker kinds don't use this field.
+	// comparisons in assert_return. NaN marker kinds and v128.const don't use
+	// this field.
 	bits uint64
+	// v128 stores the raw 16-byte lane encoding for script-level v128.const
+	// values. Non-v128 kinds don't use this field.
+	v128 [16]byte
+	// v128Shape records the textual lane shape used in a v128.const assertion,
+	// such as "i16x8" or "f32x4".
+	v128Shape string
+	// v128Literals preserves the source spelling of each lane literal for
+	// mismatch formatting.
+	v128Literals []string
 	// literal preserves the source literal spelling from the .wast file.
 	// It is used for user-facing mismatch formatting.
 	literal string
@@ -762,6 +773,29 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 			return scriptValue{}, err
 		}
 		return scriptValue{kind: valueF64Const, bits: bits, literal: litValue}, nil
+	case "v128.const":
+		elems := sx.Children()
+		if len(elems) < 3 {
+			return scriptValue{}, fmt.Errorf("v128.const requires a shape and lane literals")
+		}
+		shapeKind, shape, ok := elems[1].Token()
+		if !ok || shapeKind != "KEYWORD" {
+			return scriptValue{}, fmt.Errorf("v128.const shape must be KEYWORD token")
+		}
+		literals := make([]string, len(elems)-2)
+		for i := 2; i < len(elems); i++ {
+			_, lit, ok := elems[i].Token()
+			if !ok {
+				return scriptValue{}, fmt.Errorf("v128.const lane[%d] must be token", i-2)
+			}
+			literals[i-2] = lit
+		}
+		v, err := parseV128ConstValue(shape, literals)
+		if err != nil {
+			return scriptValue{}, err
+		}
+		v.kind = valueV128Const
+		return v, nil
 	case "ref.null":
 		elems := sx.Children()
 		if len(elems) != 1 && len(elems) != 2 {
@@ -840,6 +874,101 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported value kind %q", head)
 	}
+}
+
+func parseV128ConstValue(shape string, literals []string) (scriptValue, error) {
+	var value scriptValue
+	value.v128Shape = shape
+	value.v128Literals = append([]string(nil), literals...)
+	value.literal = shape + " " + strings.Join(literals, " ")
+
+	switch shape {
+	case "i8x16":
+		if len(literals) != 16 {
+			return scriptValue{}, fmt.Errorf("v128.const i8x16 requires 16 lane literals")
+		}
+		for i, lit := range literals {
+			bits, ok := parseI8Literal(lit)
+			if !ok {
+				return scriptValue{}, fmt.Errorf("v128.const i8x16 lane[%d]: invalid literal %q", i, lit)
+			}
+			value.v128[i] = bits
+		}
+	case "i16x8":
+		if len(literals) != 8 {
+			return scriptValue{}, fmt.Errorf("v128.const i16x8 requires 8 lane literals")
+		}
+		for i, lit := range literals {
+			bits, ok := parseI16Literal(lit)
+			if !ok {
+				return scriptValue{}, fmt.Errorf("v128.const i16x8 lane[%d]: invalid literal %q", i, lit)
+			}
+			base := i * 2
+			value.v128[base] = byte(bits)
+			value.v128[base+1] = byte(bits >> 8)
+		}
+	case "i32x4":
+		if len(literals) != 4 {
+			return scriptValue{}, fmt.Errorf("v128.const i32x4 requires 4 lane literals")
+		}
+		for i, lit := range literals {
+			bits, err := numlit.ParseIntBits(lit, 32)
+			if err != nil {
+				return scriptValue{}, fmt.Errorf("v128.const i32x4 lane[%d]: %w", i, err)
+			}
+			base := i * 4
+			value.v128[base] = byte(bits)
+			value.v128[base+1] = byte(bits >> 8)
+			value.v128[base+2] = byte(bits >> 16)
+			value.v128[base+3] = byte(bits >> 24)
+		}
+	case "f32x4":
+		if len(literals) != 4 {
+			return scriptValue{}, fmt.Errorf("v128.const f32x4 requires 4 lane literals")
+		}
+		for i, lit := range literals {
+			bits, err := numlit.ParseF32Bits(lit)
+			if err != nil {
+				return scriptValue{}, fmt.Errorf("v128.const f32x4 lane[%d]: %w", i, err)
+			}
+			base := i * 4
+			value.v128[base] = byte(bits)
+			value.v128[base+1] = byte(bits >> 8)
+			value.v128[base+2] = byte(bits >> 16)
+			value.v128[base+3] = byte(bits >> 24)
+		}
+	default:
+		return scriptValue{}, fmt.Errorf("unsupported v128.const shape %q", shape)
+	}
+	return value, nil
+}
+
+func parseI8Literal(lit string) (byte, bool) {
+	clean := strings.ReplaceAll(lit, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+	if n, err := strconv.ParseInt(clean, 0, 8); err == nil {
+		return byte(int8(n)), true
+	}
+	if n, err := strconv.ParseUint(clean, 0, 8); err == nil {
+		return byte(n), true
+	}
+	return 0, false
+}
+
+func parseI16Literal(lit string) (uint16, bool) {
+	clean := strings.ReplaceAll(lit, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+	if n, err := strconv.ParseInt(clean, 0, 16); err == nil {
+		return uint16(int16(n)), true
+	}
+	if n, err := strconv.ParseUint(clean, 0, 16); err == nil {
+		return uint16(n), true
+	}
+	return 0, false
 }
 
 // parseQuotedModuleWAT parses "(module quote <string>+)".
@@ -971,8 +1100,17 @@ type moduleMetadata struct {
 type nodeValue struct {
 	Type    string `json:"type"`
 	Bits    string `json:"bits,omitempty"`
+	Bytes   string `json:"bytes,omitempty"`
 	Null    bool   `json:"null,omitempty"`
 	RefKind string `json:"refKind,omitempty"`
+}
+
+// runtimeValue is one value returned from the Node bridge after decoding its
+// JSON encoding into an exact harness representation.
+type runtimeValue struct {
+	scalar uint64
+	v128   [16]byte
+	isV128 bool
 }
 
 type nodeResponse struct {
@@ -1331,7 +1469,7 @@ func (r *scriptRunner) runInvoke(res *commandResult, cmd scriptCommand) {
 // It invokes the target export and compares returned values with expected ones.
 func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 	var (
-		results []uint64
+		results []runtimeValue
 		err     error
 	)
 	if cmd.action != nil {
@@ -1358,7 +1496,7 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 		want := cmd.expectValues[i]
 		switch want.kind {
 		case valueI32Const:
-			gotBits := uint32(results[i])
+			gotBits := uint32(results[i].scalar)
 			wantBits := uint32(want.bits)
 			if gotBits != wantBits {
 				res.status = false
@@ -1366,14 +1504,14 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				return
 			}
 		case valueI64Const:
-			gotBits := results[i]
+			gotBits := results[i].scalar
 			if gotBits != want.bits {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF32Const:
-			gotBits := uint32(results[i])
+			gotBits := uint32(results[i].scalar)
 			wantBits := uint32(want.bits)
 			if gotBits != wantBits {
 				res.status = false
@@ -1381,89 +1519,95 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				return
 			}
 		case valueF32NaNCanonical:
-			gotBits := uint32(results[i])
+			gotBits := uint32(results[i].scalar)
 			if !isCanonicalNaN32(gotBits) {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF32NaNArithmetic:
-			gotBits := uint32(results[i])
+			gotBits := uint32(results[i].scalar)
 			if !isArithmeticNaN32(gotBits) {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64Const:
-			gotBits := results[i]
+			gotBits := results[i].scalar
 			if gotBits != want.bits {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64NaNCanonical:
-			gotBits := results[i]
+			gotBits := results[i].scalar
 			if !isCanonicalNaN64(gotBits) {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueF64NaNArithmetic:
-			gotBits := results[i]
+			gotBits := results[i].scalar
 			if !isArithmeticNaN64(gotBits) {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
+		case valueV128Const:
+			if !results[i].isV128 || results[i].v128 != want.v128 {
+				res.status = false
+				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
+				return
+			}
 		case valueRefNull:
-			if results[i] != 0 {
+			if results[i].scalar != 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefFunc:
-			if results[i] == 0 {
+			if results[i].scalar == 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefEq:
-			if results[i] == 0 || results[i]&encodedRefExternTag != 0 {
+			if results[i].scalar == 0 || results[i].scalar&encodedRefExternTag != 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefHost:
-			if results[i] != encodedRefHostTag|want.bits {
+			if results[i].scalar != encodedRefHostTag|want.bits {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefI31:
-			if results[i] != encodedRefI31 {
+			if results[i].scalar != encodedRefI31 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefStruct:
-			if results[i] != encodedRefStruct {
+			if results[i].scalar != encodedRefStruct {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefArray:
-			if results[i] != encodedRefArray {
+			if results[i].scalar != encodedRefArray {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
 		case valueRefExtern:
-			if results[i]&encodedRefExternTag == 0 {
+			if results[i].scalar&encodedRefExternTag == 0 {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
 			}
-			if want.literal != "" && results[i] != encodedRefExternTag|want.bits {
+			if want.literal != "" && results[i].scalar != encodedRefExternTag|want.bits {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
@@ -1495,6 +1639,8 @@ func formatExpectedValue(v scriptValue) string {
 		return "(f64.const nan:canonical)"
 	case valueF64NaNArithmetic:
 		return "(f64.const nan:arithmetic)"
+	case valueV128Const:
+		return "(v128.const " + v.literal + ")"
 	case valueRefNull:
 		if v.literal != "" && v.literal != "ref.null" {
 			return "(ref.null " + strings.TrimPrefix(v.literal, "ref.null ") + ")"
@@ -1522,45 +1668,122 @@ func formatExpectedValue(v scriptValue) string {
 	}
 }
 
-func formatGotValueLikeExpected(got uint64, want scriptValue) string {
+func formatGotValueLikeExpected(got runtimeValue, want scriptValue) string {
 	switch want.kind {
 	case valueI32Const:
-		return fmt.Sprintf("(i32.const %s)", formatI32Like(uint32(got), want.literal))
+		return fmt.Sprintf("(i32.const %s)", formatI32Like(uint32(got.scalar), want.literal))
 	case valueI64Const:
-		return fmt.Sprintf("(i64.const %s)", formatI64Like(got, want.literal))
+		return fmt.Sprintf("(i64.const %s)", formatI64Like(got.scalar, want.literal))
 	case valueF32Const:
-		return fmt.Sprintf("(f32.const %s)", formatF32Like(uint32(got), want.literal))
+		return fmt.Sprintf("(f32.const %s)", formatF32Like(uint32(got.scalar), want.literal))
 	case valueF64Const:
-		return fmt.Sprintf("(f64.const %s)", formatF64Like(got, want.literal))
+		return fmt.Sprintf("(f64.const %s)", formatF64Like(got.scalar, want.literal))
 	case valueF32NaNCanonical, valueF32NaNArithmetic:
-		return fmt.Sprintf("(f32.const %s)", formatF32NaNOrValue(uint32(got), want.literal))
+		return fmt.Sprintf("(f32.const %s)", formatF32NaNOrValue(uint32(got.scalar), want.literal))
 	case valueF64NaNCanonical, valueF64NaNArithmetic:
-		return fmt.Sprintf("(f64.const %s)", formatF64NaNOrValue(got, want.literal))
+		return fmt.Sprintf("(f64.const %s)", formatF64NaNOrValue(got.scalar, want.literal))
+	case valueV128Const:
+		if !got.isV128 {
+			return fmt.Sprintf("0x%x", got.scalar)
+		}
+		return formatV128Like(got.v128, want)
 	case valueRefNull:
-		if got == 0 {
+		if got.scalar == 0 {
 			return "(ref.null)"
 		}
 		return "(ref.func)"
 	case valueRefFunc:
-		if got == 0 {
+		if got.scalar == 0 {
 			return "(ref.null)"
 		}
 		return "(ref.func)"
 	case valueRefEq:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	case valueRefHost:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	case valueRefI31:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	case valueRefStruct:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	case valueRefArray:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	case valueRefExtern:
-		return formatEncodedRef(got)
+		return formatEncodedRef(got.scalar)
 	default:
-		return fmt.Sprintf("0x%x", got)
+		if got.isV128 {
+			return formatV128AsI8x16(got.v128)
+		}
+		return fmt.Sprintf("0x%x", got.scalar)
 	}
+}
+
+func formatV128Like(bits [16]byte, want scriptValue) string {
+	if want.v128Shape == "" {
+		return formatV128AsI8x16(bits)
+	}
+	switch want.v128Shape {
+	case "i8x16":
+		parts := make([]string, 16)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			parts[i] = formatI8Like(bits[i], template)
+		}
+		return "(v128.const i8x16 " + strings.Join(parts, " ") + ")"
+	case "i16x8":
+		parts := make([]string, 8)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			lane := uint16(bits[i*2]) | uint16(bits[i*2+1])<<8
+			parts[i] = formatI16Like(lane, template)
+		}
+		return "(v128.const i16x8 " + strings.Join(parts, " ") + ")"
+	case "i32x4":
+		parts := make([]string, 4)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			base := i * 4
+			lane := uint32(bits[base]) |
+				uint32(bits[base+1])<<8 |
+				uint32(bits[base+2])<<16 |
+				uint32(bits[base+3])<<24
+			parts[i] = formatI32Like(lane, template)
+		}
+		return "(v128.const i32x4 " + strings.Join(parts, " ") + ")"
+	case "f32x4":
+		parts := make([]string, 4)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			base := i * 4
+			lane := uint32(bits[base]) |
+				uint32(bits[base+1])<<8 |
+				uint32(bits[base+2])<<16 |
+				uint32(bits[base+3])<<24
+			parts[i] = formatF32Like(lane, template)
+		}
+		return "(v128.const f32x4 " + strings.Join(parts, " ") + ")"
+	default:
+		return formatV128AsI8x16(bits)
+	}
+}
+
+func formatV128AsI8x16(bits [16]byte) string {
+	parts := make([]string, 16)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("0x%02x", bits[i])
+	}
+	return "(v128.const i8x16 " + strings.Join(parts, " ") + ")"
 }
 
 func formatEncodedRef(bits uint64) string {
@@ -1595,6 +1818,44 @@ func formatI32Like(bits uint32, template string) string {
 
 	if sign != 0 {
 		s := int64(int32(bits))
+		if sign == '+' && s >= 0 {
+			return fmt.Sprintf("+%d", s)
+		}
+		return fmt.Sprintf("%d", s)
+	}
+	return fmt.Sprintf("%d", uint64(bits))
+}
+
+func formatI8Like(bits byte, template string) string {
+	sign, hex := parseNumericStyle(template)
+	if hex {
+		u := uint64(bits)
+		if sign != 0 {
+			return formatSignedHex(int64(int8(bits)), sign)
+		}
+		return fmt.Sprintf("0x%x", u)
+	}
+	if sign != 0 {
+		s := int64(int8(bits))
+		if sign == '+' && s >= 0 {
+			return fmt.Sprintf("+%d", s)
+		}
+		return fmt.Sprintf("%d", s)
+	}
+	return fmt.Sprintf("%d", uint64(bits))
+}
+
+func formatI16Like(bits uint16, template string) string {
+	sign, hex := parseNumericStyle(template)
+	if hex {
+		u := uint64(bits)
+		if sign != 0 {
+			return formatSignedHex(int64(int16(bits)), sign)
+		}
+		return fmt.Sprintf("0x%x", u)
+	}
+	if sign != 0 {
+		s := int64(int16(bits))
 		if sign == '+' && s >= 0 {
 			return fmt.Sprintf("+%d", s)
 		}
@@ -2041,8 +2302,8 @@ func malformedErrorMatches(actual, expected string) bool {
 // invoke calls an exported function on the current module or a named module.
 // action supplies the target export and arguments; when action.moduleName is
 // set we first resolve script-id aliases through moduleAlias.
-// It returns raw wasm values as uint64.
-func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
+// It returns exact runtime values in the harness representation.
+func (r *scriptRunner) invoke(action *invokeAction) ([]runtimeValue, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil invoke action")
 	}
@@ -2078,7 +2339,7 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	results := make([]uint64, len(encodedResults))
+	results := make([]runtimeValue, len(encodedResults))
 	for i, value := range encodedResults {
 		results[i], err = decodeNodeValue(value)
 		if err != nil {
@@ -2090,8 +2351,8 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]uint64, error) {
 
 // get reads one exported global from the current module or a named module.
 // action supplies the target export and optional script module id.
-// It returns exactly one value in wasm bit representation.
-func (r *scriptRunner) get(action *getAction) ([]uint64, error) {
+// It returns exactly one value in the harness representation.
+func (r *scriptRunner) get(action *getAction) ([]runtimeValue, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil get action")
 	}
@@ -2118,7 +2379,7 @@ func (r *scriptRunner) get(action *getAction) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []uint64{raw}, nil
+	return []runtimeValue{raw}, nil
 }
 
 func (r *scriptRunner) lookupTargetModule(scriptModuleName string) (string, *moduleMetadata, error) {
@@ -2238,6 +2499,8 @@ func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, e
 		return nodeValue{Type: valueType, Bits: strconv.FormatUint(uint64(0x7fc00000), 10)}, nil
 	case valueF64NaNCanonical, valueF64NaNArithmetic:
 		return nodeValue{Type: valueType, Bits: strconv.FormatUint(0x7ff8000000000000, 10)}, nil
+	case valueV128Const:
+		return nodeValue{}, fmt.Errorf("v128 invoke arguments are not supported")
 	case valueRefNull:
 		return nodeValue{Type: valueType, Null: true}, nil
 	case valueRefHost:
@@ -2259,6 +2522,8 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 		return "f32", nil
 	case wasmir.ValueKindF64:
 		return "f64", nil
+	case wasmir.ValueKindV128:
+		return "v128", nil
 	case wasmir.ValueKindRef:
 		switch vt.HeapType.Kind {
 		case wasmir.HeapKindFunc, wasmir.HeapKindTypeIndex:
@@ -2282,46 +2547,62 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 	return "", fmt.Errorf("unsupported value type %s", vt)
 }
 
-func decodeNodeValue(v nodeValue) (uint64, error) {
+func decodeNodeValue(v nodeValue) (runtimeValue, error) {
 	if v.Null {
-		return 0, nil
+		return runtimeValue{}, nil
+	}
+	if v.Type == "v128" {
+		if v.Bytes == "" {
+			return runtimeValue{}, fmt.Errorf("missing value bytes for type %q", v.Type)
+		}
+		raw, err := base64.StdEncoding.DecodeString(v.Bytes)
+		if err != nil {
+			return runtimeValue{}, fmt.Errorf("decode v128 bytes: %w", err)
+		}
+		if len(raw) != 16 {
+			return runtimeValue{}, fmt.Errorf("v128 bytes length = %d, want 16", len(raw))
+		}
+		var out runtimeValue
+		copy(out.v128[:], raw)
+		out.isV128 = true
+		return out, nil
 	}
 	switch v.RefKind {
 	case "extern":
 		if v.Bits == "" {
-			return 0, fmt.Errorf("missing externref bits")
+			return runtimeValue{}, fmt.Errorf("missing externref bits")
 		}
 		bits, err := strconv.ParseUint(v.Bits, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+			return runtimeValue{}, fmt.Errorf("parse bits %q: %w", v.Bits, err)
 		}
-		return encodedRefExternTag | bits, nil
+		return runtimeValue{scalar: encodedRefExternTag | bits}, nil
 	case "host":
 		if v.Bits == "" {
-			return 0, fmt.Errorf("missing host ref bits")
+			return runtimeValue{}, fmt.Errorf("missing host ref bits")
 		}
 		bits, err := strconv.ParseUint(v.Bits, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+			return runtimeValue{}, fmt.Errorf("parse bits %q: %w", v.Bits, err)
 		}
-		return encodedRefHostTag | bits, nil
+		return runtimeValue{scalar: encodedRefHostTag | bits}, nil
 	case "i31":
-		return encodedRefI31, nil
+		return runtimeValue{scalar: encodedRefI31}, nil
 	case "struct":
-		return encodedRefStruct, nil
+		return runtimeValue{scalar: encodedRefStruct}, nil
 	case "array":
-		return encodedRefArray, nil
+		return runtimeValue{scalar: encodedRefArray}, nil
 	case "eq":
-		return encodedRefEq, nil
+		return runtimeValue{scalar: encodedRefEq}, nil
 	}
 	if v.Bits == "" {
-		return 0, fmt.Errorf("missing value bits for type %q", v.Type)
+		return runtimeValue{}, fmt.Errorf("missing value bits for type %q", v.Type)
 	}
 	bits, err := strconv.ParseUint(v.Bits, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("parse bits %q: %w", v.Bits, err)
+		return runtimeValue{}, fmt.Errorf("parse bits %q: %w", v.Bits, err)
 	}
-	return bits, nil
+	return runtimeValue{scalar: bits}, nil
 }
 
 // isCanonicalNaN32 reports whether bits encode canonical f32 NaN:

@@ -311,6 +311,27 @@ func TestParseModule_Memory64InlineDataShorthand(t *testing.T) {
 	}
 }
 
+func TestParseModule_DataOffsetClause(t *testing.T) {
+	wat := `(module
+  (data (offset (i32.const 7)) "x")
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if len(m.Data) != 1 {
+		t.Fatalf("got %d data segments, want 1", len(m.Data))
+	}
+	if m.Data[0].Offset == nil {
+		t.Fatal("data offset is nil, want parsed offset expression")
+	}
+	fi := mustFoldedInstr(t, m.Data[0].Offset)
+	if fi.Name != "i32.const" {
+		t.Fatalf("offset instruction name=%q, want i32.const", fi.Name)
+	}
+}
+
 func TestParseModule_Table64Declaration(t *testing.T) {
 	wat := `(module
   (table i64 10 funcref)

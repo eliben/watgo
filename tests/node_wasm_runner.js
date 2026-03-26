@@ -85,6 +85,10 @@ let nextOpaqueExternRefId = 1n;
 // The wrapper returns integer bits, which JS can transport exactly.
 const floatResultWrappers = new Map();
 
+// v128ResultWrappers caches helper modules that preserve exact v128 bytes by
+// lowering a single imported v128 result into four exact i32 words.
+const v128ResultWrappers = new Map();
+
 // anyRefResultClassifiers caches tiny helper modules used to classify a single
 // anyref result inside wasm, where ref.test can distinguish i31/struct/array.
 const anyRefResultClassifiers = new Map();
@@ -126,6 +130,8 @@ function valueTypeCode(type) {
       return 0x7d;
     case 'f64':
       return 0x7c;
+    case 'v128':
+      return 0x7b;
     case 'funcref':
       return 0x70;
     case 'externref':
@@ -252,6 +258,80 @@ function buildSingleFloatResultWrapper(paramTypes, resultType) {
 
   cached = Uint8Array.from(bytes);
   floatResultWrappers.set(key, cached);
+  return cached;
+}
+
+// buildSingleV128ResultWrapper builds a minimal wasm module that imports one
+// `(func (param ...) (result v128))`, stores that result to memory, and then
+// reloads the 16 raw bytes as four i32 results that JS can carry exactly.
+function buildSingleV128ResultWrapper(paramTypes) {
+  const key = paramTypes.join(',');
+  let cached = v128ResultWrappers.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const bytes = [
+    0x00, 0x61, 0x73, 0x6d,
+    0x01, 0x00, 0x00, 0x00,
+  ];
+
+  const typeSection = [];
+  encodeULEB128(typeSection, 2);
+  pushFuncType(typeSection, paramTypes, ['v128']);
+  pushFuncType(typeSection, paramTypes, ['i32', 'i32', 'i32', 'i32']);
+  pushSection(bytes, 1, typeSection);
+
+  const importSection = [];
+  encodeULEB128(importSection, 1);
+  encodeName(importSection, 'm');
+  encodeName(importSection, 'f');
+  importSection.push(0x00);
+  encodeULEB128(importSection, 0);
+  pushSection(bytes, 2, importSection);
+
+  const functionSection = [];
+  encodeULEB128(functionSection, 1);
+  encodeULEB128(functionSection, 1);
+  pushSection(bytes, 3, functionSection);
+
+  const memorySection = [];
+  encodeULEB128(memorySection, 1);
+  memorySection.push(0x00); // min-only limits
+  encodeULEB128(memorySection, 1);
+  pushSection(bytes, 5, memorySection);
+
+  const exportSection = [];
+  encodeULEB128(exportSection, 1);
+  encodeName(exportSection, 'call');
+  exportSection.push(0x00);
+  encodeULEB128(exportSection, 1);
+  pushSection(bytes, 7, exportSection);
+
+  const body = [];
+  encodeULEB128(body, 0); // local decl count
+  body.push(0x41, 0x00); // i32.const 0
+  for (let i = 0; i < paramTypes.length; i++) {
+    body.push(0x20);
+    encodeULEB128(body, i);
+  }
+  body.push(0x10, 0x00); // call 0
+  body.push(0xfd, 0x0b, 0x04, 0x00); // v128.store align=16 offset=0
+  for (const offset of [0, 4, 8, 12]) {
+    body.push(0x41);
+    encodeULEB128(body, offset);
+    body.push(0x28, 0x02, 0x00); // i32.load align=4 offset=0
+  }
+  body.push(0x0b); // end
+
+  const codeSection = [];
+  encodeULEB128(codeSection, 1);
+  encodeULEB128(codeSection, body.length);
+  codeSection.push(...body);
+  pushSection(bytes, 10, codeSection);
+
+  cached = Uint8Array.from(bytes);
+  v128ResultWrappers.set(key, cached);
   return cached;
 }
 
@@ -564,6 +644,24 @@ function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
   return { type: resultType, bits: String(BigInt.asUintN(64, bits)) };
 }
 
+// encodeSingleV128ResultPreservingBytes routes one single-result v128 call
+// through a tiny wasm wrapper so the result comes back to JS as exact bytes.
+function encodeSingleV128ResultPreservingBytes(fn, args, argTypes) {
+  const wrapperBytes = buildSingleV128ResultWrapper(argTypes);
+  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
+  const words = wrapperInstance.exports.call(...args);
+  if (!Array.isArray(words) || words.length !== 4) {
+    throw new Error(`expected four i32 words from v128 wrapper, got ${typeof words}`);
+  }
+  const buf = new ArrayBuffer(16);
+  const view = new DataView(buf);
+  for (let i = 0; i < 4; i++) {
+    view.setUint32(i * 4, words[i] >>> 0, true);
+  }
+  return { type: 'v128', bytes: Buffer.from(buf).toString('base64') };
+}
+
 // encodeSingleAnyRefResult classifies a single anyref result with a helper wasm
 // wrapper. Only the generic "other anyref" case falls back to direct JS
 // inspection so host references can preserve their identity token.
@@ -650,6 +748,13 @@ function handleMessage(msg) {
       const rawArgs = msg.args || [];
       const args = rawArgs.map(decodeValue);
       const resultTypes = msg.resultTypes || [];
+      if (resultTypes.length === 1 && resultTypes[0] === 'v128') {
+        const argTypes = rawArgs.map((arg) => arg.type);
+        return {
+          ok: true,
+          results: [encodeSingleV128ResultPreservingBytes(fn, args, argTypes)],
+        };
+      }
       if (resultTypes.length === 1 && (resultTypes[0] === 'f32' || resultTypes[0] === 'f64')) {
         const argTypes = rawArgs.map((arg) => arg.type);
         try {

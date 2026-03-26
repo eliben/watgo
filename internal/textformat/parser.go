@@ -753,7 +753,16 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 		p.emitError(sx.list[cursor].loc, "data declaration offset must be instruction expression")
 		return dd
 	}
-	dd.Offset = p.parseFoldedInstr(sx.list[cursor])
+	offsetExpr := sx.list[cursor]
+	if offsetExpr.HeadKeyword() == "offset" {
+		if len(offsetExpr.list) != 2 || !offsetExpr.list[1].IsList() {
+			p.emitError(offsetExpr.loc, "data offset clause expects one instruction list")
+			return dd
+		}
+		dd.Offset = p.parseFoldedInstr(offsetExpr.list[1])
+	} else {
+		dd.Offset = p.parseFoldedInstr(offsetExpr)
+	}
 	dd.Strings = p.parseDataStringsFrom(sx, cursor+1)
 	return dd
 }

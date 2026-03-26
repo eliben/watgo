@@ -2641,8 +2641,9 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 	return true
 }
 
-// decodeV128ConstOperands decodes the currently supported SIMD constant form:
-// `v128.const i8x16 lane0 ... lane15`.
+// decodeV128ConstOperands decodes the currently supported SIMD constant forms:
+// `v128.const i8x16 ...`, `v128.const i16x8 ...`, `v128.const i32x4 ...`, and
+// `v128.const f32x4 ...`.
 func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	if len(operands) < 2 {
 		return false
@@ -2659,6 +2660,20 @@ func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operan
 				return false
 			}
 			ins.V128Const[i] = lane
+		}
+		return true
+	case "i16x8":
+		if len(operands) != 9 {
+			return false
+		}
+		for i := 0; i < 8; i++ {
+			lane, ok := lowerI16ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			base := i * 2
+			ins.V128Const[base] = byte(lane)
+			ins.V128Const[base+1] = byte(lane >> 8)
 		}
 		return true
 	case "i32x4":
@@ -2808,6 +2823,26 @@ func lowerI8ConstOperand(op Operand) (byte, bool) {
 	}
 	if n, err := strconv.ParseUint(clean, 0, 8); err == nil {
 		return byte(n), true
+	}
+	return 0, false
+}
+
+// lowerI16ConstOperand resolves op as one signed i16 literal and returns the
+// raw lane bits encoded with that literal's two's-complement representation.
+func lowerI16ConstOperand(op Operand) (uint16, bool) {
+	o, ok := op.(*IntOperand)
+	if !ok {
+		return 0, false
+	}
+	clean := strings.ReplaceAll(o.Value, "_", "")
+	if clean == "" {
+		return 0, false
+	}
+	if n, err := strconv.ParseInt(clean, 0, 16); err == nil {
+		return uint16(int16(n)), true
+	}
+	if n, err := strconv.ParseUint(clean, 0, 16); err == nil {
+		return uint16(n), true
 	}
 	return 0, false
 }

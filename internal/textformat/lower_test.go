@@ -184,6 +184,36 @@ func TestLowerModule_SIMDEndianFlipSlice(t *testing.T) {
 	}
 }
 
+func TestLowerModule_SIMDV128ConstI16x8(t *testing.T) {
+	wat := `(module
+  (func (result v128)
+    (v128.const i16x8 0 1 2 3 4 5 6 7)
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) != 2 {
+		t.Fatalf("got %d body instructions, want 2", len(body))
+	}
+	if body[0].Kind != wasmir.InstrV128Const {
+		t.Fatalf("body[0]=%#v, want v128.const", body[0])
+	}
+	wantLanes := [16]byte{0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0}
+	if body[0].V128Const != wantLanes {
+		t.Fatalf("v128.const lanes = %v, want %v", body[0].V128Const, wantLanes)
+	}
+}
+
 func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 	wat := `(module
   (func (param $a i32) (result i32)
