@@ -1,10 +1,10 @@
 'use strict';
 
 // node_wasm_runner.js is a small JSON-over-stdio bridge used by the Go spec
-// harness in tests/wasmspec_harness.go.
+// harness in tests/wasmspec/wasmspec_harness.go.
 //
 // Invocation:
-//   node tests/node_wasm_runner.js
+//   node tests/wasmspec/node_wasm_runner.js
 //
 // Protocol:
 // - The caller writes one JSON object per line to stdin.

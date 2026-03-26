@@ -712,7 +712,7 @@ type ElementSegment struct {
 	// written as a folded instruction, but wasmir stores instructions only in
 	// linear form.
 	//
-	// For example, tests/wasmspec-scripts/gc/array_init_elem.wast contains:
+	// For example, tests/wasmspec/scripts/gc/array_init_elem.wast contains:
 	//   (elem $e1 arrayref
 	//     (item (array.new_default $arrref_mut (i32.const 1)))
 	//     (item (array.new_default $arrref_mut (i32.const 2))))

@@ -11,7 +11,7 @@ import (
 	"github.com/eliben/watgo"
 )
 
-const wasmWatSamplesDir = "wasm-wat-samples"
+const wasmWatSamplesDir = "."
 
 func TestWasmWatSamples(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {

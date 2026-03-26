@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const wasmSpecScriptsDir = "wasmspec-scripts"
+const wasmSpecScriptsDir = "scripts"
 
 func TestWasmSpecScripts(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {
