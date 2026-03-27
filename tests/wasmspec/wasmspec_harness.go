@@ -1293,15 +1293,29 @@ func (nr *nodeRuntime) validate(wasmBytes []byte) error {
 	}, nil)
 }
 
-func (nr *nodeRuntime) invoke(moduleName, funcName string, args []nodeValue, resultTypes []string) ([]nodeValue, error) {
+// invoke calls one exported function in Node. When helper is non-nil, the
+// request also carries a Go-compiled helper module that Node will instantiate
+// against the target export before invoking it.
+func (nr *nodeRuntime) invoke(moduleName, funcName string, args []nodeValue, resultTypes []string, helper *nodeInvokeHelper) ([]nodeValue, error) {
 	var resp nodeResponse
-	err := nr.request(map[string]any{
+	req := map[string]any{
 		"op":          "invoke",
 		"moduleName":  moduleName,
 		"funcName":    funcName,
 		"args":        args,
 		"resultTypes": resultTypes,
-	}, &resp)
+	}
+	if helper != nil {
+		req["helperKey"] = helper.Key
+		req["helperWasmBase64"] = base64.StdEncoding.EncodeToString(helper.Wasm)
+		req["helperFuncName"] = helper.FuncName
+		req["helperArgs"] = helper.Args
+		req["helperResultTypes"] = helper.ResultTypes
+		if helper.Mode != "" {
+			req["helperMode"] = string(helper.Mode)
+		}
+	}
+	err := nr.request(req, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1339,6 +1353,10 @@ type scriptRunner struct {
 	// It allows "(register ... $id)" to re-instantiate a named module under a
 	// runtime import name.
 	moduleWasm map[string][]byte
+	// helperWasm caches Go-compiled helper modules keyed by their rendered WAT.
+	// These helpers are sent to Node only when an invoke needs wrapper behavior
+	// that JS alone cannot represent exactly.
+	helperWasm map[string][]byte
 	moduleMeta map[string]*moduleMetadata
 
 	// moduleAlias maps script module identifiers (for example "$M") to the
@@ -1362,6 +1380,7 @@ func newScriptRunner(ctx context.Context) (*scriptRunner, error) {
 	r := &scriptRunner{
 		ctx:         ctx,
 		moduleWasm:  map[string][]byte{},
+		helperWasm:  map[string][]byte{},
 		moduleMeta:  map[string]*moduleMetadata{},
 		moduleAlias: map[string]string{},
 	}
@@ -2424,32 +2443,17 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]runtimeValue, error) {
 	if len(sig.Params) != len(action.args) {
 		return nil, fmt.Errorf("invoke arg arity mismatch for %q: got %d want %d", action.funcName, len(action.args), len(sig.Params))
 	}
-	args := make([]nodeValue, len(action.args))
-	for i, arg := range action.args {
-		args[i], err = encodeScriptArg(arg, sig.Params[i])
-		if err != nil {
-			return nil, fmt.Errorf("invoke arg[%d]: %w", i, err)
-		}
-	}
-	resultTypes := make([]string, len(sig.Results))
-	for i, vt := range sig.Results {
-		resultTypes[i], err = valueTypeString(vt)
-		if err != nil {
-			return nil, fmt.Errorf("result type[%d]: %w", i, err)
-		}
-	}
-	encodedResults, err := r.node.invoke(runtimeName, action.funcName, args, resultTypes)
+	// Some wasm values need a wrapper path to survive the JS embedding exactly.
+	// planInvoke decides whether this call is direct or helper-assisted.
+	plan, err := r.planInvoke(sig, action.args)
 	if err != nil {
 		return nil, err
 	}
-	results := make([]runtimeValue, len(encodedResults))
-	for i, value := range encodedResults {
-		results[i], err = decodeNodeValue(value)
-		if err != nil {
-			return nil, fmt.Errorf("result[%d]: %w", i, err)
-		}
+	encodedResults, err := r.node.invoke(runtimeName, action.funcName, plan.Args, plan.ResultTypes, plan.Helper)
+	if err != nil {
+		return nil, err
 	}
-	return results, nil
+	return decodeInvokeResults(encodedResults, plan.DecodeMode)
 }
 
 // get reads one exported global from the current module or a named module.

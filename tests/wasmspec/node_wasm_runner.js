@@ -24,8 +24,10 @@
 //     { op: "validate", wasmBase64 }
 //   Compiles a module without instantiating it.
 // - invoke:
-//     { op: "invoke", moduleName, funcName, args, resultTypes }
-//   Calls an exported function and returns encoded results.
+//     { op: "invoke", moduleName, funcName, args, resultTypes, ...helperFields }
+//   Calls an exported function and returns encoded results. When helper fields
+//   are present, the runner instantiates a Go-compiled helper module that wraps
+//   the target export inside wasm before returning.
 // - get:
 //     { op: "get", moduleName, globalName, valueType }
 //   Reads an exported global and returns its encoded value.
@@ -58,6 +60,9 @@ const fs = require('node:fs');
 // single .wast file run.
 const modules = new Map();
 
+// helperModules stores Go-compiled helper modules keyed by a stable signature.
+const helperModules = new Map();
+
 // externRefs stores stable JS objects keyed by the textual bit-pattern identity
 // assigned by the Go harness for externref values.
 const externRefs = new Map();
@@ -67,498 +72,10 @@ const externRefs = new Map();
 const opaqueExternRefs = new Map();
 let nextOpaqueExternRefId = 1n;
 
-// floatResultWrappers caches compiled helper modules used to preserve exact
-// float result bits across the Wasm/JS boundary. JS numbers do not preserve
-// NaN payloads, so when a wasm export returns a single f32/f64 result we route
-// the call through a generated wrapper module that:
-//   1. imports the target export as a wasm function,
-//   2. calls it with the original arguments, and
-//   3. reinterprets the float result to i32/i64 inside wasm.
-//
-// Example wrapper for an imported `(func (param i64) (result f32))`:
-//   (module
-//     (import "m" "f" (func (param i64) (result f32)))
-//     (func (export "call") (param i64) (result i32)
-//       local.get 0
-//       call 0
-//       i32.reinterpret_f32))
-//
-// The wrapper returns integer bits, which JS can transport exactly.
-const floatResultWrappers = new Map();
-
-// v128ResultWrappers caches compiled helper modules that preserve exact v128
-// bytes by lowering a single imported v128 result into four exact i32 words.
-const v128ResultWrappers = new Map();
-
-// v128ArgWrappers caches helper modules that lower v128 parameters into four
-// i32 words so JS never has to materialize a v128 argument directly.
-const v128ArgWrappers = new Map();
-
-// anyRefResultClassifiers caches compiled helper modules used to classify a
-// single anyref result inside wasm, where ref.test can distinguish
-// i31/struct/array.
-const anyRefResultClassifiers = new Map();
-
 // decodeBytes turns a base64-encoded wasm payload from the Go harness into raw
 // bytes suitable for WebAssembly.Module / WebAssembly.Instance.
 function decodeBytes(wasmBase64) {
   return Buffer.from(wasmBase64, 'base64');
-}
-
-// encodeULEB128 appends one unsigned LEB128 integer to bytes.
-function encodeULEB128(bytes, value) {
-  let v = Number(value);
-  do {
-    let byte = v & 0x7f;
-    v >>>= 7;
-    if (v !== 0) {
-      byte |= 0x80;
-    }
-    bytes.push(byte);
-  } while (v !== 0);
-}
-
-// encodeName appends one wasm name string.
-function encodeName(bytes, text) {
-  const utf8 = Buffer.from(text, 'utf8');
-  encodeULEB128(bytes, utf8.length);
-  bytes.push(...utf8);
-}
-
-// valueTypeCode returns the binary valtype encoding for one supported type.
-function valueTypeCode(type) {
-  switch (type) {
-    case 'i32':
-      return 0x7f;
-    case 'i64':
-      return 0x7e;
-    case 'f32':
-      return 0x7d;
-    case 'f64':
-      return 0x7c;
-    case 'v128':
-      return 0x7b;
-    case 'funcref':
-      return 0x70;
-    case 'externref':
-      return 0x6f;
-    case 'anyref':
-      return 0x6e;
-    case 'eqref':
-      return 0x6d;
-    case 'i31ref':
-      return 0x6c;
-    case 'structref':
-      return 0x6b;
-    case 'arrayref':
-      return 0x6a;
-    case 'nullref':
-      return 0x69;
-    default:
-      throw new Error(`unsupported wrapper value type ${type}`);
-  }
-}
-
-// pushFuncType appends one wasm functype to bytes.
-function pushFuncType(bytes, paramTypes, resultTypes) {
-  bytes.push(0x60);
-  encodeULEB128(bytes, paramTypes.length);
-  for (const type of paramTypes) {
-    bytes.push(valueTypeCode(type));
-  }
-  encodeULEB128(bytes, resultTypes.length);
-  for (const type of resultTypes) {
-    bytes.push(valueTypeCode(type));
-  }
-}
-
-// pushSection appends one complete wasm section.
-function pushSection(bytes, id, payload) {
-  bytes.push(id);
-  encodeULEB128(bytes, payload.length);
-  bytes.push(...payload);
-}
-
-// reinterpretOpcode returns the wasm reinterpret instruction used to turn a
-// single float result into exact integer bits.
-function reinterpretOpcode(resultType) {
-  switch (resultType) {
-    case 'f32':
-      return 0xbc; // i32.reinterpret_f32
-    case 'f64':
-      return 0xbd; // i64.reinterpret_f64
-    default:
-      throw new Error(`unsupported float wrapper result ${resultType}`);
-  }
-}
-
-// intBitsTypeForFloat maps one float result type to the integer type carrying
-// its exact IEEE-754 bits.
-function intBitsTypeForFloat(resultType) {
-  switch (resultType) {
-    case 'f32':
-      return 'i32';
-    case 'f64':
-      return 'i64';
-    default:
-      throw new Error(`unsupported float wrapper result ${resultType}`);
-  }
-}
-
-// buildSingleFloatResultWrapper builds and caches a minimal wasm module that
-// imports one function and reinterprets its single float result to raw integer
-// bits.
-function buildSingleFloatResultWrapper(paramTypes, resultType) {
-  const key = `${paramTypes.join(',')}->${resultType}`;
-  let cached = floatResultWrappers.get(key);
-  if (cached) {
-    return cached;
-  }
-  const bitsType = intBitsTypeForFloat(resultType);
-
-  const bytes = [
-    0x00, 0x61, 0x73, 0x6d, // \0asm
-    0x01, 0x00, 0x00, 0x00, // version 1
-  ];
-
-  const typeSection = [];
-  encodeULEB128(typeSection, 2);
-  pushFuncType(typeSection, paramTypes, [resultType]);
-  pushFuncType(typeSection, paramTypes, [bitsType]);
-  pushSection(bytes, 1, typeSection);
-
-  const importSection = [];
-  encodeULEB128(importSection, 1);
-  encodeName(importSection, 'm');
-  encodeName(importSection, 'f');
-  importSection.push(0x00); // function import
-  encodeULEB128(importSection, 0);
-  pushSection(bytes, 2, importSection);
-
-  const functionSection = [];
-  encodeULEB128(functionSection, 1);
-  encodeULEB128(functionSection, 1);
-  pushSection(bytes, 3, functionSection);
-
-  const exportSection = [];
-  encodeULEB128(exportSection, 1);
-  encodeName(exportSection, 'call');
-  exportSection.push(0x00); // function export
-  encodeULEB128(exportSection, 1);
-  pushSection(bytes, 7, exportSection);
-
-  const body = [];
-  encodeULEB128(body, 0); // local decl count
-  for (let i = 0; i < paramTypes.length; i++) {
-    body.push(0x20); // local.get
-    encodeULEB128(body, i);
-  }
-  body.push(0x10, 0x00); // call 0
-  body.push(reinterpretOpcode(resultType));
-  body.push(0x0b); // end
-
-  const codeSection = [];
-  encodeULEB128(codeSection, 1);
-  encodeULEB128(codeSection, body.length);
-  codeSection.push(...body);
-  pushSection(bytes, 10, codeSection);
-
-  cached = new WebAssembly.Module(Uint8Array.from(bytes));
-  floatResultWrappers.set(key, cached);
-  return cached;
-}
-
-// buildSingleV128ResultWrapper builds and caches a minimal wasm module that
-// imports one `(func (param ...) (result v128))`, stores that result to memory,
-// and then reloads the 16 raw bytes as four i32 results that JS can carry
-// exactly.
-function buildSingleV128ResultWrapper(paramTypes) {
-  const key = paramTypes.join(',');
-  let cached = v128ResultWrappers.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const bytes = [
-    0x00, 0x61, 0x73, 0x6d,
-    0x01, 0x00, 0x00, 0x00,
-  ];
-
-  const typeSection = [];
-  encodeULEB128(typeSection, 2);
-  pushFuncType(typeSection, paramTypes, ['v128']);
-  pushFuncType(typeSection, paramTypes, ['i32', 'i32', 'i32', 'i32']);
-  pushSection(bytes, 1, typeSection);
-
-  const importSection = [];
-  encodeULEB128(importSection, 1);
-  encodeName(importSection, 'm');
-  encodeName(importSection, 'f');
-  importSection.push(0x00);
-  encodeULEB128(importSection, 0);
-  pushSection(bytes, 2, importSection);
-
-  const functionSection = [];
-  encodeULEB128(functionSection, 1);
-  encodeULEB128(functionSection, 1);
-  pushSection(bytes, 3, functionSection);
-
-  const memorySection = [];
-  encodeULEB128(memorySection, 1);
-  memorySection.push(0x00); // min-only limits
-  encodeULEB128(memorySection, 1);
-  pushSection(bytes, 5, memorySection);
-
-  const exportSection = [];
-  encodeULEB128(exportSection, 1);
-  encodeName(exportSection, 'call');
-  exportSection.push(0x00);
-  encodeULEB128(exportSection, 1);
-  pushSection(bytes, 7, exportSection);
-
-  const body = [];
-  encodeULEB128(body, 0); // local decl count
-  body.push(0x41, 0x00); // i32.const 0
-  for (let i = 0; i < paramTypes.length; i++) {
-    body.push(0x20);
-    encodeULEB128(body, i);
-  }
-  body.push(0x10, 0x00); // call 0
-  body.push(0xfd, 0x0b, 0x04, 0x00); // v128.store align=16 offset=0
-  for (const offset of [0, 4, 8, 12]) {
-    body.push(0x41);
-    encodeULEB128(body, offset);
-    body.push(0x28, 0x02, 0x00); // i32.load align=4 offset=0
-  }
-  body.push(0x0b); // end
-
-  const codeSection = [];
-  encodeULEB128(codeSection, 1);
-  encodeULEB128(codeSection, body.length);
-  codeSection.push(...body);
-  pushSection(bytes, 10, codeSection);
-
-  cached = new WebAssembly.Module(Uint8Array.from(bytes));
-  v128ResultWrappers.set(key, cached);
-  return cached;
-}
-
-// loweredInvokeParamTypes expands each v128 parameter into four i32 words so a
-// wrapper export can be called from JS.
-function loweredInvokeParamTypes(paramTypes) {
-  const lowered = [];
-  for (const type of paramTypes) {
-    if (type === 'v128') {
-      lowered.push('i32', 'i32', 'i32', 'i32');
-      continue;
-    }
-    lowered.push(type);
-  }
-  return lowered;
-}
-
-// buildV128ArgWrapper builds and caches a tiny wasm module that imports one
-// target function and exports a lowered `call` shim. The shim reconstructs any
-// v128 parameters from four exact i32 words via scratch memory, then forwards
-// the call inside wasm.
-function buildV128ArgWrapper(paramTypes, resultTypes) {
-  const key = `${paramTypes.join(',')}->${resultTypes.join(',')}`;
-  let cached = v128ArgWrappers.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const loweredParamTypes = loweredInvokeParamTypes(paramTypes);
-  const bytes = [
-    0x00, 0x61, 0x73, 0x6d,
-    0x01, 0x00, 0x00, 0x00,
-  ];
-
-  const typeSection = [];
-  encodeULEB128(typeSection, 2);
-  pushFuncType(typeSection, paramTypes, resultTypes);
-  pushFuncType(typeSection, loweredParamTypes, resultTypes);
-  pushSection(bytes, 1, typeSection);
-
-  const importSection = [];
-  encodeULEB128(importSection, 1);
-  encodeName(importSection, 'm');
-  encodeName(importSection, 'f');
-  importSection.push(0x00);
-  encodeULEB128(importSection, 0);
-  pushSection(bytes, 2, importSection);
-
-  const functionSection = [];
-  encodeULEB128(functionSection, 1);
-  encodeULEB128(functionSection, 1);
-  pushSection(bytes, 3, functionSection);
-
-  const memorySection = [];
-  encodeULEB128(memorySection, 1);
-  memorySection.push(0x00);
-  encodeULEB128(memorySection, 1);
-  pushSection(bytes, 5, memorySection);
-
-  const exportSection = [];
-  encodeULEB128(exportSection, 1);
-  encodeName(exportSection, 'call');
-  exportSection.push(0x00);
-  encodeULEB128(exportSection, 1);
-  pushSection(bytes, 7, exportSection);
-
-  const body = [];
-  encodeULEB128(body, 0);
-
-  let loweredIndex = 0;
-  let scratchOffset = 0;
-  for (const type of paramTypes) {
-    if (type !== 'v128') {
-      body.push(0x20);
-      encodeULEB128(body, loweredIndex);
-      loweredIndex += 1;
-      continue;
-    }
-
-    for (const wordOffset of [0, 4, 8, 12]) {
-      body.push(0x41);
-      encodeULEB128(body, scratchOffset + wordOffset);
-      body.push(0x20);
-      encodeULEB128(body, loweredIndex);
-      body.push(0x36, 0x02, 0x00); // i32.store align=4 offset=0
-      loweredIndex += 1;
-    }
-    body.push(0x41);
-    encodeULEB128(body, scratchOffset);
-    body.push(0xfd);
-    encodeULEB128(body, 0x00); // v128.load
-    encodeULEB128(body, 0x04); // align=16
-    encodeULEB128(body, 0x00); // offset=0
-    scratchOffset += 16;
-  }
-  body.push(0x10, 0x00);
-  body.push(0x0b);
-
-  const codeSection = [];
-  encodeULEB128(codeSection, 1);
-  encodeULEB128(codeSection, body.length);
-  codeSection.push(...body);
-  pushSection(bytes, 10, codeSection);
-
-  cached = new WebAssembly.Module(Uint8Array.from(bytes));
-  v128ArgWrappers.set(key, cached);
-  return cached;
-}
-
-// buildSingleAnyRefResultClassifier builds and caches a minimal wasm module
-// that imports one `(func (param ...) (result anyref))` and classifies its
-// result as:
-//   0 = null
-//   1 = i31
-//   2 = struct
-//   3 = array
-//   4 = other anyref
-function buildSingleAnyRefResultClassifier(paramTypes) {
-  const key = paramTypes.join(',');
-  let cached = anyRefResultClassifiers.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const bytes = [
-    0x00, 0x61, 0x73, 0x6d,
-    0x01, 0x00, 0x00, 0x00,
-  ];
-
-  const typeSection = [];
-  encodeULEB128(typeSection, 2);
-  pushFuncType(typeSection, paramTypes, ['anyref']);
-  pushFuncType(typeSection, paramTypes, ['i32']);
-  pushSection(bytes, 1, typeSection);
-
-  const importSection = [];
-  encodeULEB128(importSection, 1);
-  encodeName(importSection, 'm');
-  encodeName(importSection, 'f');
-  importSection.push(0x00);
-  encodeULEB128(importSection, 0);
-  pushSection(bytes, 2, importSection);
-
-  const functionSection = [];
-  encodeULEB128(functionSection, 1);
-  encodeULEB128(functionSection, 1);
-  pushSection(bytes, 3, functionSection);
-
-  const exportSection = [];
-  encodeULEB128(exportSection, 1);
-  encodeName(exportSection, 'classify');
-  exportSection.push(0x00);
-  encodeULEB128(exportSection, 1);
-  pushSection(bytes, 7, exportSection);
-
-  const body = [];
-  encodeULEB128(body, 1); // local decl groups
-  encodeULEB128(body, 1); // one local
-  body.push(0x6e); // anyref
-
-  for (let i = 0; i < paramTypes.length; i++) {
-    body.push(0x20);
-    encodeULEB128(body, i);
-  }
-  body.push(0x10);
-  encodeULEB128(body, 0);
-  body.push(0x21);
-  encodeULEB128(body, paramTypes.length);
-
-  body.push(0x20);
-  encodeULEB128(body, paramTypes.length);
-  body.push(0xd1); // ref.is_null
-  body.push(0x04, 0x7f); // if (result i32)
-  body.push(0x41);
-  encodeULEB128(body, 0);
-  body.push(0x05);
-
-  body.push(0x20);
-  encodeULEB128(body, paramTypes.length);
-  body.push(0xfb);
-  encodeULEB128(body, 0x14); // ref.test
-  body.push(0x6c); // i31
-  body.push(0x04, 0x7f);
-  body.push(0x41);
-  encodeULEB128(body, 1);
-  body.push(0x05);
-
-  body.push(0x20);
-  encodeULEB128(body, paramTypes.length);
-  body.push(0xfb);
-  encodeULEB128(body, 0x14);
-  body.push(0x6b); // struct
-  body.push(0x04, 0x7f);
-  body.push(0x41);
-  encodeULEB128(body, 2);
-  body.push(0x05);
-
-  body.push(0x20);
-  encodeULEB128(body, paramTypes.length);
-  body.push(0xfb);
-  encodeULEB128(body, 0x14);
-  body.push(0x6a); // array
-  body.push(0x04, 0x7f);
-  body.push(0x41);
-  encodeULEB128(body, 3);
-  body.push(0x05);
-  body.push(0x41);
-  encodeULEB128(body, 4);
-  body.push(0x0b, 0x0b, 0x0b, 0x0b, 0x0b);
-
-  const codeSection = [];
-  encodeULEB128(codeSection, 1);
-  encodeULEB128(codeSection, body.length);
-  codeSection.push(...body);
-  pushSection(bytes, 10, codeSection);
-
-  cached = new WebAssembly.Module(Uint8Array.from(bytes));
-  anyRefResultClassifiers.set(key, cached);
-  return cached;
 }
 
 // buildImports builds the import object visible to a new instantiation from all
@@ -674,55 +191,6 @@ function decodeValue(arg) {
   }
 }
 
-// decodeV128InvokeWords decodes one base64-encoded v128 argument into four
-// exact little-endian i32 words suitable for a lowered wrapper call.
-function decodeV128InvokeWords(arg) {
-  if (arg.type !== 'v128' || !arg.bytes) {
-    throw new Error('invalid v128 invoke argument');
-  }
-  const raw = Buffer.from(arg.bytes, 'base64');
-  if (raw.length !== 16) {
-    throw new Error(`invalid v128 argument byte length ${raw.length}`);
-  }
-  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-  return [
-    view.getUint32(0, true),
-    view.getUint32(4, true),
-    view.getUint32(8, true),
-    view.getUint32(12, true),
-  ];
-}
-
-// prepareInvoke normalizes one exported function call into a callable plus the
-// exact JS arguments needed to reach it. When v128 parameters are present, this
-// instantiates a wrapper that reconstructs them inside wasm from raw i32 words.
-function prepareInvoke(fn, rawArgs, resultTypes) {
-  const argTypes = rawArgs.map((arg) => arg.type);
-  if (!argTypes.includes('v128')) {
-    return {
-      fn,
-      args: rawArgs.map(decodeValue),
-      argTypes,
-    };
-  }
-
-  const wrapperModule = buildV128ArgWrapper(argTypes, resultTypes);
-  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
-  const loweredArgs = [];
-  for (const arg of rawArgs) {
-    if (arg.type === 'v128') {
-      loweredArgs.push(...decodeV128InvokeWords(arg));
-      continue;
-    }
-    loweredArgs.push(decodeValue(arg));
-  }
-  return {
-    fn: wrapperInstance.exports.call,
-    args: loweredArgs,
-    argTypes: loweredInvokeParamTypes(argTypes),
-  };
-}
-
 // encodeValue converts a JS value produced by the WebAssembly JS API into the
 // JSON encoding expected by the Go harness.
 function encodeValue(valueType, value) {
@@ -795,62 +263,6 @@ function encodeValue(valueType, value) {
   }
 }
 
-// encodeSingleFloatResultPreservingBits routes one single-result f32/f64 call
-// through a tiny wasm wrapper so exact NaN payloads survive the bridge back to
-// the Go harness.
-function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
-  const wrapperModule = buildSingleFloatResultWrapper(argTypes, resultType);
-  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
-  const bits = wrapperInstance.exports.call(...args);
-  if (resultType === 'f32') {
-    return { type: resultType, bits: String(bits >>> 0) };
-  }
-  return { type: resultType, bits: String(BigInt.asUintN(64, bits)) };
-}
-
-// encodeSingleV128ResultPreservingBytes routes one single-result v128 call
-// through a tiny wasm wrapper so the result comes back to JS as exact bytes.
-function encodeSingleV128ResultPreservingBytes(fn, args, argTypes) {
-  const wrapperModule = buildSingleV128ResultWrapper(argTypes);
-  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
-  const words = wrapperInstance.exports.call(...args);
-  if (!Array.isArray(words) || words.length !== 4) {
-    throw new Error(`expected four i32 words from v128 wrapper, got ${typeof words}`);
-  }
-  const buf = new ArrayBuffer(16);
-  const view = new DataView(buf);
-  for (let i = 0; i < 4; i++) {
-    view.setUint32(i * 4, words[i] >>> 0, true);
-  }
-  return { type: 'v128', bytes: Buffer.from(buf).toString('base64') };
-}
-
-// encodeSingleAnyRefResult classifies a single anyref result with a helper wasm
-// wrapper. Only the generic "other anyref" case falls back to direct JS
-// inspection so host references can preserve their identity token.
-function encodeSingleAnyRefResult(fn, args, argTypes) {
-  const wrapperModule = buildSingleAnyRefResultClassifier(argTypes);
-  const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
-  const code = wrapperInstance.exports.classify(...args);
-  switch (code) {
-    case 0:
-      return { type: 'anyref', null: true };
-    case 1:
-      return { type: 'anyref', refKind: 'i31' };
-    case 2:
-      return { type: 'anyref', refKind: 'struct' };
-    case 3:
-      return { type: 'anyref', refKind: 'array' };
-    default: {
-      const value = fn(...args);
-      if (typeof value === 'object' && value !== null && typeof value.__watgoExternRef === 'string') {
-        return { type: 'anyref', refKind: 'host', bits: value.__watgoExternRef };
-      }
-      return { type: 'anyref', refKind: 'eq' };
-    }
-  }
-}
-
 // encodeResults normalizes a JS function return value into the array form used
 // by the harness, then encodes each result with the corresponding wasm type.
 function encodeResults(raw, resultTypes) {
@@ -888,6 +300,59 @@ function instantiate(moduleName, wasmBase64) {
   }
 }
 
+// getHelperModule looks up or compiles one Go-supplied helper module.
+function getHelperModule(helperKey, wasmBase64) {
+  let helperModule = helperModules.get(helperKey);
+  if (!helperModule) {
+    helperModule = new WebAssembly.Module(decodeBytes(wasmBase64));
+    helperModules.set(helperKey, helperModule);
+  }
+  return helperModule;
+}
+
+// anyrefFromClassificationCode converts one helper-side classification code
+// into the final JSON encoding expected by the Go harness.
+function anyrefFromClassificationCode(code) {
+  switch (code) {
+    case 0:
+      return { type: 'anyref', null: true };
+    case 1:
+      return { type: 'anyref', refKind: 'i31' };
+    case 2:
+      return { type: 'anyref', refKind: 'struct' };
+    case 3:
+      return { type: 'anyref', refKind: 'array' };
+    default:
+      return null;
+  }
+}
+
+// invokeWithHelper instantiates one cached helper against the target export and
+// invokes its selected export with helper-visible arguments.
+function invokeWithHelper(targetFn, msg) {
+  const helperModule = getHelperModule(msg.helperKey, msg.helperWasmBase64);
+  const helperInstance = new WebAssembly.Instance(helperModule, { m: { f: targetFn } });
+  const helperFn = helperInstance.exports[msg.helperFuncName || 'call'];
+  if (typeof helperFn !== 'function') {
+    throw new Error(`helper export ${JSON.stringify(msg.helperFuncName || 'call')} not found`);
+  }
+  const helperArgs = (msg.helperArgs || []).map(decodeValue);
+  if (msg.helperMode === 'anyref_classify') {
+    const code = helperFn(...helperArgs);
+    const classified = anyrefFromClassificationCode(code);
+    if (classified) {
+      return { ok: true, results: [classified] };
+    }
+    const rawFn = helperInstance.exports.call_raw;
+    if (typeof rawFn !== 'function') {
+      throw new Error('helper export "call_raw" not found');
+    }
+    return { ok: true, results: [encodeValue('anyref', rawFn(...helperArgs))] };
+  }
+  const raw = helperFn(...helperArgs);
+  return { ok: true, results: encodeResults(raw, msg.helperResultTypes || []) };
+}
+
 // handleMessage executes a single JSON request and returns the JSON response
 // body that should be written to stdout. When 'exit' is true in the response,
 // the caller should cleanly shut down after writing the response.
@@ -907,37 +372,13 @@ function handleMessage(msg) {
       if (typeof targetFn !== 'function') {
         throw new Error(`exported function ${JSON.stringify(msg.funcName)} not found`);
       }
+      if (msg.helperWasmBase64) {
+        return invokeWithHelper(targetFn, msg);
+      }
       const rawArgs = msg.args || [];
-      const resultTypes = msg.resultTypes || [];
-      const prepared = prepareInvoke(targetFn, rawArgs, resultTypes);
-      const fn = prepared.fn;
-      const args = prepared.args;
-      const argTypes = prepared.argTypes;
-      if (resultTypes.length === 1 && resultTypes[0] === 'v128') {
-        return {
-          ok: true,
-          results: [encodeSingleV128ResultPreservingBytes(fn, args, argTypes)],
-        };
-      }
-      if (resultTypes.length === 1 && (resultTypes[0] === 'f32' || resultTypes[0] === 'f64')) {
-        try {
-          return {
-            ok: true,
-            results: [encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultTypes[0])],
-          };
-        } catch (_err) {
-          const raw = fn(...args);
-          return { ok: true, results: encodeResults(raw, resultTypes) };
-        }
-      }
-      if (resultTypes.length === 1 && resultTypes[0] === 'anyref') {
-        return {
-          ok: true,
-          results: [encodeSingleAnyRefResult(fn, args, argTypes)],
-        };
-      }
-      const raw = fn(...args);
-      return { ok: true, results: encodeResults(raw, resultTypes) };
+      const args = rawArgs.map(decodeValue);
+      const raw = targetFn(...args);
+      return { ok: true, results: encodeResults(raw, msg.resultTypes || []) };
     }
     case 'get': {
       const record = getModuleRecord(msg.moduleName);

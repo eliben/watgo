@@ -64,7 +64,8 @@ Some wasm results are awkward to observe exactly through the JS embedding API:
 - `v128` results are not directly exposed as raw SIMD bytes in a useful form.
 - `anyref` sometimes needs in-wasm classification with `ref.test`.
 
-To handle this, [node_wasm_runner.js](./node_wasm_runner.js) sometimes builds
-small helper wasm modules on the fly. These wrappers import the target function,
-call it inside wasm, and convert the result into a JS-friendly exact form such
-as integer bits or raw bytes before it crosses back into JS.
+To handle this, the Go harness renders small helper modules as WAT, compiles
+them with `watgo`, and sends the resulting wasm bytes to
+[node_wasm_runner.js](./node_wasm_runner.js). These wrappers import the target
+function, call it inside wasm, and convert the result into a JS-friendly exact
+form such as integer bits or raw bytes before it crosses back into JS.
