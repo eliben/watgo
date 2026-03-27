@@ -1881,11 +1881,23 @@ var loweringSpecs = map[string]loweringSpec{
 	"i32.ctz":             {operandCount: 0},
 	"f32.gt":              {operandCount: 0},
 	"i8x16.swizzle":       {operandCount: 0},
+	"i8x16.shl":           {operandCount: 0},
+	"i8x16.shr_s":         {operandCount: 0},
+	"i8x16.shr_u":         {operandCount: 0},
+	"i16x8.shl":           {operandCount: 0},
+	"i16x8.shr_s":         {operandCount: 0},
+	"i16x8.shr_u":         {operandCount: 0},
 	"i32x4.eq":            {operandCount: 0},
 	"i32x4.lt_s":          {operandCount: 0},
+	"i32x4.shl":           {operandCount: 0},
+	"i32x4.shr_s":         {operandCount: 0},
+	"i32x4.shr_u":         {operandCount: 0},
 	"i32x4.add":           {operandCount: 0},
 	"i32x4.neg":           {operandCount: 0},
 	"i32x4.min_s":         {operandCount: 0},
+	"i64x2.shl":           {operandCount: 0},
+	"i64x2.shr_s":         {operandCount: 0},
+	"i64x2.shr_u":         {operandCount: 0},
 	"f32x4.add":           {operandCount: 0},
 	"v128.bitselect":      {operandCount: 0},
 	"i32.const":           {operandCount: 1, decode: decodeI32ConstOperands},
@@ -2642,8 +2654,8 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 }
 
 // decodeV128ConstOperands decodes the currently supported SIMD constant forms:
-// `v128.const i8x16 ...`, `v128.const i16x8 ...`, `v128.const i32x4 ...`, and
-// `v128.const f32x4 ...`.
+// `v128.const i8x16 ...`, `v128.const i16x8 ...`, `v128.const i32x4 ...`,
+// `v128.const i64x2 ...`, and `v128.const f32x4 ...`.
 func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	if len(operands) < 2 {
 		return false
@@ -2690,6 +2702,27 @@ func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operan
 			ins.V128Const[base+1] = byte(lane >> 8)
 			ins.V128Const[base+2] = byte(lane >> 16)
 			ins.V128Const[base+3] = byte(lane >> 24)
+		}
+		return true
+	case "i64x2":
+		if len(operands) != 3 {
+			return false
+		}
+		for i := 0; i < 2; i++ {
+			lane, ok := lowerI64ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			base := i * 8
+			u := uint64(lane)
+			ins.V128Const[base] = byte(u)
+			ins.V128Const[base+1] = byte(u >> 8)
+			ins.V128Const[base+2] = byte(u >> 16)
+			ins.V128Const[base+3] = byte(u >> 24)
+			ins.V128Const[base+4] = byte(u >> 32)
+			ins.V128Const[base+5] = byte(u >> 40)
+			ins.V128Const[base+6] = byte(u >> 48)
+			ins.V128Const[base+7] = byte(u >> 56)
 		}
 		return true
 	case "f32x4":
@@ -2818,11 +2851,25 @@ func lowerI8ConstOperand(op Operand) (byte, bool) {
 	if clean == "" {
 		return 0, false
 	}
-	if n, err := strconv.ParseInt(clean, 0, 8); err == nil {
+	base := 10
+	signPrefix := ""
+	unsigned := clean
+	if clean[0] == '+' || clean[0] == '-' {
+		signPrefix = clean[:1]
+		unsigned = clean[1:]
+	}
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		base = 16
+		unsigned = unsigned[2:]
+	}
+	signed := signPrefix + unsigned
+	if n, err := strconv.ParseInt(signed, base, 8); err == nil {
 		return byte(int8(n)), true
 	}
-	if n, err := strconv.ParseUint(clean, 0, 8); err == nil {
-		return byte(n), true
+	if clean[0] != '-' {
+		if n, err := strconv.ParseUint(unsigned, base, 8); err == nil {
+			return byte(n), true
+		}
 	}
 	return 0, false
 }
@@ -2838,11 +2885,25 @@ func lowerI16ConstOperand(op Operand) (uint16, bool) {
 	if clean == "" {
 		return 0, false
 	}
-	if n, err := strconv.ParseInt(clean, 0, 16); err == nil {
+	base := 10
+	signPrefix := ""
+	unsigned := clean
+	if clean[0] == '+' || clean[0] == '-' {
+		signPrefix = clean[:1]
+		unsigned = clean[1:]
+	}
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		base = 16
+		unsigned = unsigned[2:]
+	}
+	signed := signPrefix + unsigned
+	if n, err := strconv.ParseInt(signed, base, 16); err == nil {
 		return uint16(int16(n)), true
 	}
-	if n, err := strconv.ParseUint(clean, 0, 16); err == nil {
-		return uint16(n), true
+	if clean[0] != '-' {
+		if n, err := strconv.ParseUint(unsigned, base, 16); err == nil {
+			return uint16(n), true
+		}
 	}
 	return 0, false
 }

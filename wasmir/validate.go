@@ -3239,6 +3239,21 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
+		case InstrI8x16Shl, InstrI8x16ShrS, InstrI8x16ShrU,
+			InstrI16x8Shl, InstrI16x8ShrS, InstrI16x8ShrU,
+			InstrI32x4Shl, InstrI32x4ShrS, InstrI32x4ShrU,
+			InstrI64x2Shl, InstrI64x2ShrS, InstrI64x2ShrU:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: %s expects v128 and i32 operands", insCtx, name)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
 		case InstrI32x4Splat:
 			if len(stack) < 1 {
 				diags.Addf("%s: i32x4.splat needs 1 operand", insCtx)
@@ -3767,6 +3782,18 @@ func instrName(kind InstrKind) string {
 		return "i31.get_u"
 	case InstrI8x16Swizzle:
 		return "i8x16.swizzle"
+	case InstrI8x16Shl:
+		return "i8x16.shl"
+	case InstrI8x16ShrS:
+		return "i8x16.shr_s"
+	case InstrI8x16ShrU:
+		return "i8x16.shr_u"
+	case InstrI16x8Shl:
+		return "i16x8.shl"
+	case InstrI16x8ShrS:
+		return "i16x8.shr_s"
+	case InstrI16x8ShrU:
+		return "i16x8.shr_u"
 	case InstrI32x4Splat:
 		return "i32x4.splat"
 	case InstrI32x4ExtractLane:
@@ -3775,12 +3802,24 @@ func instrName(kind InstrKind) string {
 		return "i32x4.eq"
 	case InstrI32x4LtS:
 		return "i32x4.lt_s"
+	case InstrI32x4Shl:
+		return "i32x4.shl"
+	case InstrI32x4ShrS:
+		return "i32x4.shr_s"
+	case InstrI32x4ShrU:
+		return "i32x4.shr_u"
 	case InstrI32x4Add:
 		return "i32x4.add"
 	case InstrI32x4Neg:
 		return "i32x4.neg"
 	case InstrI32x4MinS:
 		return "i32x4.min_s"
+	case InstrI64x2Shl:
+		return "i64x2.shl"
+	case InstrI64x2ShrS:
+		return "i64x2.shr_s"
+	case InstrI64x2ShrU:
+		return "i64x2.shr_u"
 	case InstrF32x4Add:
 		return "f32x4.add"
 	case InstrV128Bitselect:

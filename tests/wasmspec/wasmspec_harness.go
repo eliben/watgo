@@ -923,6 +923,25 @@ func parseV128ConstValue(shape string, literals []string) (scriptValue, error) {
 			value.v128[base+2] = byte(bits >> 16)
 			value.v128[base+3] = byte(bits >> 24)
 		}
+	case "i64x2":
+		if len(literals) != 2 {
+			return scriptValue{}, fmt.Errorf("v128.const i64x2 requires 2 lane literals")
+		}
+		for i, lit := range literals {
+			bits, err := numlit.ParseIntBits(lit, 64)
+			if err != nil {
+				return scriptValue{}, fmt.Errorf("v128.const i64x2 lane[%d]: %w", i, err)
+			}
+			base := i * 8
+			value.v128[base] = byte(bits)
+			value.v128[base+1] = byte(bits >> 8)
+			value.v128[base+2] = byte(bits >> 16)
+			value.v128[base+3] = byte(bits >> 24)
+			value.v128[base+4] = byte(bits >> 32)
+			value.v128[base+5] = byte(bits >> 40)
+			value.v128[base+6] = byte(bits >> 48)
+			value.v128[base+7] = byte(bits >> 56)
+		}
 	case "f32x4":
 		if len(literals) != 4 {
 			return scriptValue{}, fmt.Errorf("v128.const f32x4 requires 4 lane literals")
@@ -949,11 +968,25 @@ func parseI8Literal(lit string) (byte, bool) {
 	if clean == "" {
 		return 0, false
 	}
-	if n, err := strconv.ParseInt(clean, 0, 8); err == nil {
+	base := 10
+	signPrefix := ""
+	unsigned := clean
+	if clean[0] == '+' || clean[0] == '-' {
+		signPrefix = clean[:1]
+		unsigned = clean[1:]
+	}
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		base = 16
+		unsigned = unsigned[2:]
+	}
+	signed := signPrefix + unsigned
+	if n, err := strconv.ParseInt(signed, base, 8); err == nil {
 		return byte(int8(n)), true
 	}
-	if n, err := strconv.ParseUint(clean, 0, 8); err == nil {
-		return byte(n), true
+	if clean[0] != '-' {
+		if n, err := strconv.ParseUint(unsigned, base, 8); err == nil {
+			return byte(n), true
+		}
 	}
 	return 0, false
 }
@@ -963,11 +996,25 @@ func parseI16Literal(lit string) (uint16, bool) {
 	if clean == "" {
 		return 0, false
 	}
-	if n, err := strconv.ParseInt(clean, 0, 16); err == nil {
+	base := 10
+	signPrefix := ""
+	unsigned := clean
+	if clean[0] == '+' || clean[0] == '-' {
+		signPrefix = clean[:1]
+		unsigned = clean[1:]
+	}
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		base = 16
+		unsigned = unsigned[2:]
+	}
+	signed := signPrefix + unsigned
+	if n, err := strconv.ParseInt(signed, base, 16); err == nil {
 		return uint16(int16(n)), true
 	}
-	if n, err := strconv.ParseUint(clean, 0, 16); err == nil {
-		return uint16(n), true
+	if clean[0] != '-' {
+		if n, err := strconv.ParseUint(unsigned, base, 16); err == nil {
+			return uint16(n), true
+		}
 	}
 	return 0, false
 }
@@ -1867,6 +1914,25 @@ func formatV128Like(bits [16]byte, want scriptValue) string {
 			parts[i] = formatI32Like(lane, template)
 		}
 		return "(v128.const i32x4 " + strings.Join(parts, " ") + ")"
+	case "i64x2":
+		parts := make([]string, 2)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			base := i * 8
+			lane := uint64(bits[base]) |
+				uint64(bits[base+1])<<8 |
+				uint64(bits[base+2])<<16 |
+				uint64(bits[base+3])<<24 |
+				uint64(bits[base+4])<<32 |
+				uint64(bits[base+5])<<40 |
+				uint64(bits[base+6])<<48 |
+				uint64(bits[base+7])<<56
+			parts[i] = formatI64Like(lane, template)
+		}
+		return "(v128.const i64x2 " + strings.Join(parts, " ") + ")"
 	case "f32x4":
 		parts := make([]string, 4)
 		for i := range parts {

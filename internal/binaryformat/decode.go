@@ -1780,6 +1780,18 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Const, V128Const: lanes})
 			case subopI8x16SwizzleCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Swizzle})
+			case subopI8x16ShlCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Shl})
+			case subopI8x16ShrSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrS})
+			case subopI8x16ShrUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrU})
+			case subopI16x8ShlCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Shl})
+			case subopI16x8ShrSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrS})
+			case subopI16x8ShrUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrU})
 			case subopI32x4SplatCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Splat})
 			case subopI32x4ExtractLaneCode:
@@ -1793,12 +1805,24 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Eq})
 			case subopI32x4LtSCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4LtS})
+			case subopI32x4ShlCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Shl})
+			case subopI32x4ShrSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ShrS})
+			case subopI32x4ShrUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ShrU})
 			case subopI32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Add})
 			case subopI32x4NegCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Neg})
 			case subopI32x4MinSCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4MinS})
+			case subopI64x2ShlCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Shl})
+			case subopI64x2ShrSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrS})
+			case subopI64x2ShrUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrU})
 			case subopF32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
 			case subopV128BitselectCode:

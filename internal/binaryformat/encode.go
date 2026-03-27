@@ -293,14 +293,26 @@ const (
 	subopV128StoreCode        uint32 = 0x0b
 	subopV128ConstCode        uint32 = 0x0c
 	subopI8x16SwizzleCode     uint32 = 0x0e
+	subopI8x16ShlCode         uint32 = 0x6b
+	subopI8x16ShrSCode        uint32 = 0x6c
+	subopI8x16ShrUCode        uint32 = 0x6d
+	subopI16x8ShlCode         uint32 = 0x8b
+	subopI16x8ShrSCode        uint32 = 0x8c
+	subopI16x8ShrUCode        uint32 = 0x8d
 	subopI32x4SplatCode       uint32 = 0x11
 	subopI32x4ExtractLaneCode uint32 = 0x1b
 	subopI32x4EqCode          uint32 = 0x37
 	subopI32x4LtSCode         uint32 = 0x39
 	subopV128BitselectCode    uint32 = 0x52
 	subopI32x4NegCode         uint32 = 0xa1
+	subopI32x4ShlCode         uint32 = 0xab
+	subopI32x4ShrSCode        uint32 = 0xac
+	subopI32x4ShrUCode        uint32 = 0xad
 	subopI32x4AddCode         uint32 = 0xae
 	subopI32x4MinSCode        uint32 = 0xb6
+	subopI64x2ShlCode         uint32 = 0xcb
+	subopI64x2ShrSCode        uint32 = 0xcc
+	subopI64x2ShrUCode        uint32 = 0xcd
 	subopF32x4AddCode         uint32 = 0xe4
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
@@ -1543,6 +1555,24 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI8x16Swizzle:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16SwizzleCode)
+	case wasmir.InstrI8x16Shl:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16ShlCode)
+	case wasmir.InstrI8x16ShrS:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16ShrSCode)
+	case wasmir.InstrI8x16ShrU:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16ShrUCode)
+	case wasmir.InstrI16x8Shl:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8ShlCode)
+	case wasmir.InstrI16x8ShrS:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8ShrSCode)
+	case wasmir.InstrI16x8ShrU:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8ShrUCode)
 	case wasmir.InstrI32x4Splat:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4SplatCode)
@@ -1556,6 +1586,15 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI32x4LtS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4LtSCode)
+	case wasmir.InstrI32x4Shl:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4ShlCode)
+	case wasmir.InstrI32x4ShrS:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4ShrSCode)
+	case wasmir.InstrI32x4ShrU:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4ShrUCode)
 	case wasmir.InstrI32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4AddCode)
@@ -1565,6 +1604,15 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI32x4MinS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4MinSCode)
+	case wasmir.InstrI64x2Shl:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2ShlCode)
+	case wasmir.InstrI64x2ShrS:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2ShrSCode)
+	case wasmir.InstrI64x2ShrU:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2ShrUCode)
 	case wasmir.InstrF32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF32x4AddCode)
