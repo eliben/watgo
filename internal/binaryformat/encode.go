@@ -248,87 +248,103 @@ const (
 	subopTableSizeCode  uint32 = 0x10
 	subopTableFillCode  uint32 = 0x11
 
-	subopStructNewCode        uint32 = 0x00
-	subopStructNewDefaultCode uint32 = 0x01
-	subopStructGetCode        uint32 = 0x02
-	subopStructGetSCode       uint32 = 0x03
-	subopStructGetUCode       uint32 = 0x04
-	subopStructSetCode        uint32 = 0x05
-	subopArrayNewCode         uint32 = 0x06
-	subopArrayLenCode         uint32 = 0x0f
-	subopArrayNewDefaultCode  uint32 = 0x07
-	subopArrayNewFixedCode    uint32 = 0x08
-	subopArrayNewDataCode     uint32 = 0x09
-	subopArrayNewElemCode     uint32 = 0x0a
-	subopArrayGetCode         uint32 = 0x0b
-	subopArrayGetSCode        uint32 = 0x0c
-	subopArrayGetUCode        uint32 = 0x0d
-	subopArraySetCode         uint32 = 0x0e
-	subopArrayFillCode        uint32 = 0x10
-	subopArrayCopyCode        uint32 = 0x11
-	subopArrayInitDataCode    uint32 = 0x12
-	subopArrayInitElemCode    uint32 = 0x13
-	subopRefTestCode          uint32 = 0x14
-	subopRefTestNullCode      uint32 = 0x15
-	subopRefCastCode          uint32 = 0x16
-	subopRefCastNullCode      uint32 = 0x17
-	subopBrOnCastCode         uint32 = 0x18
-	subopBrOnCastFailCode     uint32 = 0x19
-	subopAnyConvertExternCode uint32 = 0x1a
-	subopExternConvertAnyCode uint32 = 0x1b
-	subopRefI31Code           uint32 = 0x1c
-	subopI31GetSCode          uint32 = 0x1d
-	subopI31GetUCode          uint32 = 0x1e
-	subopV128LoadCode         uint32 = 0x00
-	subopV128Load8x8SCode     uint32 = 0x01
-	subopV128Load8x8UCode     uint32 = 0x02
-	subopV128Load16x4SCode    uint32 = 0x03
-	subopV128Load16x4UCode    uint32 = 0x04
-	subopV128Load32x2SCode    uint32 = 0x05
-	subopV128Load32x2UCode    uint32 = 0x06
-	subopV128Load8SplatCode   uint32 = 0x07
-	subopV128Load16SplatCode  uint32 = 0x08
-	subopV128Load32SplatCode  uint32 = 0x09
-	subopV128Load64SplatCode  uint32 = 0x0a
-	subopV128StoreCode        uint32 = 0x0b
-	subopV128ConstCode        uint32 = 0x0c
-	subopV128AnyTrueCode      uint32 = 0x53
-	subopV128NotCode          uint32 = 0x4d
-	subopV128AndCode          uint32 = 0x4e
-	subopV128AndNotCode       uint32 = 0x4f
-	subopV128OrCode           uint32 = 0x50
-	subopV128XorCode          uint32 = 0x51
-	subopI8x16SwizzleCode     uint32 = 0x0e
-	subopI8x16AllTrueCode     uint32 = 0x63
-	subopI8x16BitmaskCode     uint32 = 0x64
-	subopI8x16ShlCode         uint32 = 0x6b
-	subopI8x16ShrSCode        uint32 = 0x6c
-	subopI8x16ShrUCode        uint32 = 0x6d
-	subopI16x8AllTrueCode     uint32 = 0x83
-	subopI16x8BitmaskCode     uint32 = 0x84
-	subopI16x8ShlCode         uint32 = 0x8b
-	subopI16x8ShrSCode        uint32 = 0x8c
-	subopI16x8ShrUCode        uint32 = 0x8d
-	subopI32x4SplatCode       uint32 = 0x11
-	subopI32x4ExtractLaneCode uint32 = 0x1b
-	subopI32x4AllTrueCode     uint32 = 0xa3
-	subopI32x4BitmaskCode     uint32 = 0xa4
-	subopI32x4EqCode          uint32 = 0x37
-	subopI32x4LtSCode         uint32 = 0x39
-	subopV128BitselectCode    uint32 = 0x52
-	subopI32x4NegCode         uint32 = 0xa1
-	subopI32x4ShlCode         uint32 = 0xab
-	subopI32x4ShrSCode        uint32 = 0xac
-	subopI32x4ShrUCode        uint32 = 0xad
-	subopI32x4AddCode         uint32 = 0xae
-	subopI32x4MinSCode        uint32 = 0xb6
-	subopI64x2AllTrueCode     uint32 = 0xc3
-	subopI64x2BitmaskCode     uint32 = 0xc4
-	subopI64x2ShlCode         uint32 = 0xcb
-	subopI64x2ShrSCode        uint32 = 0xcc
-	subopI64x2ShrUCode        uint32 = 0xcd
-	subopI64x2AddCode         uint32 = 0xce
-	subopF32x4AddCode         uint32 = 0xe4
+	subopStructNewCode             uint32 = 0x00
+	subopStructNewDefaultCode      uint32 = 0x01
+	subopStructGetCode             uint32 = 0x02
+	subopStructGetSCode            uint32 = 0x03
+	subopStructGetUCode            uint32 = 0x04
+	subopStructSetCode             uint32 = 0x05
+	subopArrayNewCode              uint32 = 0x06
+	subopArrayLenCode              uint32 = 0x0f
+	subopArrayNewDefaultCode       uint32 = 0x07
+	subopArrayNewFixedCode         uint32 = 0x08
+	subopArrayNewDataCode          uint32 = 0x09
+	subopArrayNewElemCode          uint32 = 0x0a
+	subopArrayGetCode              uint32 = 0x0b
+	subopArrayGetSCode             uint32 = 0x0c
+	subopArrayGetUCode             uint32 = 0x0d
+	subopArraySetCode              uint32 = 0x0e
+	subopArrayFillCode             uint32 = 0x10
+	subopArrayCopyCode             uint32 = 0x11
+	subopArrayInitDataCode         uint32 = 0x12
+	subopArrayInitElemCode         uint32 = 0x13
+	subopRefTestCode               uint32 = 0x14
+	subopRefTestNullCode           uint32 = 0x15
+	subopRefCastCode               uint32 = 0x16
+	subopRefCastNullCode           uint32 = 0x17
+	subopBrOnCastCode              uint32 = 0x18
+	subopBrOnCastFailCode          uint32 = 0x19
+	subopAnyConvertExternCode      uint32 = 0x1a
+	subopExternConvertAnyCode      uint32 = 0x1b
+	subopRefI31Code                uint32 = 0x1c
+	subopI31GetSCode               uint32 = 0x1d
+	subopI31GetUCode               uint32 = 0x1e
+	subopV128LoadCode              uint32 = 0x00
+	subopV128Load8x8SCode          uint32 = 0x01
+	subopV128Load8x8UCode          uint32 = 0x02
+	subopV128Load16x4SCode         uint32 = 0x03
+	subopV128Load16x4UCode         uint32 = 0x04
+	subopV128Load32x2SCode         uint32 = 0x05
+	subopV128Load32x2UCode         uint32 = 0x06
+	subopV128Load8SplatCode        uint32 = 0x07
+	subopV128Load16SplatCode       uint32 = 0x08
+	subopV128Load32SplatCode       uint32 = 0x09
+	subopV128Load64SplatCode       uint32 = 0x0a
+	subopV128StoreCode             uint32 = 0x0b
+	subopV128ConstCode             uint32 = 0x0c
+	subopV128AnyTrueCode           uint32 = 0x53
+	subopV128NotCode               uint32 = 0x4d
+	subopV128AndCode               uint32 = 0x4e
+	subopV128AndNotCode            uint32 = 0x4f
+	subopV128OrCode                uint32 = 0x50
+	subopV128XorCode               uint32 = 0x51
+	subopI8x16SwizzleCode          uint32 = 0x0e
+	subopI8x16AllTrueCode          uint32 = 0x63
+	subopI8x16BitmaskCode          uint32 = 0x64
+	subopI8x16NarrowI16x8SCode     uint32 = 0x65
+	subopI8x16NarrowI16x8UCode     uint32 = 0x66
+	subopI8x16ShlCode              uint32 = 0x6b
+	subopI8x16ShrSCode             uint32 = 0x6c
+	subopI8x16ShrUCode             uint32 = 0x6d
+	subopI16x8AllTrueCode          uint32 = 0x83
+	subopI16x8BitmaskCode          uint32 = 0x84
+	subopI16x8NarrowI32x4SCode     uint32 = 0x85
+	subopI16x8NarrowI32x4UCode     uint32 = 0x86
+	subopI16x8ExtendLowI8x16SCode  uint32 = 0x87
+	subopI16x8ExtendLowI8x16UCode  uint32 = 0x89
+	subopI16x8ShlCode              uint32 = 0x8b
+	subopI16x8ShrSCode             uint32 = 0x8c
+	subopI16x8ShrUCode             uint32 = 0x8d
+	subopI32x4SplatCode            uint32 = 0x11
+	subopI32x4ExtractLaneCode      uint32 = 0x1b
+	subopI32x4AllTrueCode          uint32 = 0xa3
+	subopI32x4BitmaskCode          uint32 = 0xa4
+	subopI32x4EqCode               uint32 = 0x37
+	subopI32x4LtSCode              uint32 = 0x39
+	subopV128BitselectCode         uint32 = 0x52
+	subopI32x4NegCode              uint32 = 0xa1
+	subopI32x4ExtendLowI16x8SCode  uint32 = 0xa7
+	subopI32x4ExtendLowI16x8UCode  uint32 = 0xa9
+	subopI32x4ShlCode              uint32 = 0xab
+	subopI32x4ShrSCode             uint32 = 0xac
+	subopI32x4ShrUCode             uint32 = 0xad
+	subopI32x4AddCode              uint32 = 0xae
+	subopI32x4SubCode              uint32 = 0xb1
+	subopI32x4MulCode              uint32 = 0xb5
+	subopI32x4MinSCode             uint32 = 0xb6
+	subopI64x2AllTrueCode          uint32 = 0xc3
+	subopI64x2BitmaskCode          uint32 = 0xc4
+	subopI64x2ShlCode              uint32 = 0xcb
+	subopI64x2ShrSCode             uint32 = 0xcc
+	subopI64x2ShrUCode             uint32 = 0xcd
+	subopI64x2AddCode              uint32 = 0xce
+	subopF32x4DemoteF64x2ZeroCode  uint32 = 0x5e
+	subopF64x2PromoteLowF32x4Code  uint32 = 0x5f
+	subopF32x4ConvertI32x4SCode    uint32 = 0xfa
+	subopF32x4ConvertI32x4UCode    uint32 = 0xfb
+	subopF64x2ConvertLowI32x4SCode uint32 = 0xfe
+	subopF64x2ConvertLowI32x4UCode uint32 = 0xff
+	subopF32x4AddCode              uint32 = 0xe4
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -1594,6 +1610,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI8x16Bitmask:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16BitmaskCode)
+	case wasmir.InstrI8x16NarrowI16x8S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16NarrowI16x8SCode)
+	case wasmir.InstrI8x16NarrowI16x8U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16NarrowI16x8UCode)
 	case wasmir.InstrI8x16Shl:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16ShlCode)
@@ -1612,6 +1634,18 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI16x8Bitmask:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI16x8BitmaskCode)
+	case wasmir.InstrI16x8NarrowI32x4S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8NarrowI32x4SCode)
+	case wasmir.InstrI16x8NarrowI32x4U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8NarrowI32x4UCode)
+	case wasmir.InstrI16x8ExtendLowI8x16S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8ExtendLowI8x16SCode)
+	case wasmir.InstrI16x8ExtendLowI8x16U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8ExtendLowI8x16UCode)
 	case wasmir.InstrI16x8ShrS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI16x8ShrSCode)
@@ -1637,6 +1671,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI32x4LtS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4LtSCode)
+	case wasmir.InstrI32x4ExtendLowI16x8S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4ExtendLowI16x8SCode)
+	case wasmir.InstrI32x4ExtendLowI16x8U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4ExtendLowI16x8UCode)
 	case wasmir.InstrI32x4Shl:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4ShlCode)
@@ -1649,6 +1689,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4AddCode)
+	case wasmir.InstrI32x4Sub:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4SubCode)
+	case wasmir.InstrI32x4Mul:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4MulCode)
 	case wasmir.InstrI32x4Neg:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4NegCode)
@@ -1673,9 +1719,27 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI64x2Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI64x2AddCode)
+	case wasmir.InstrF32x4ConvertI32x4S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4ConvertI32x4SCode)
+	case wasmir.InstrF32x4ConvertI32x4U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4ConvertI32x4UCode)
 	case wasmir.InstrF32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF32x4AddCode)
+	case wasmir.InstrF64x2ConvertLowI32x4S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF64x2ConvertLowI32x4SCode)
+	case wasmir.InstrF64x2ConvertLowI32x4U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF64x2ConvertLowI32x4UCode)
+	case wasmir.InstrF32x4DemoteF64x2Zero:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4DemoteF64x2ZeroCode)
+	case wasmir.InstrF64x2PromoteLowF32x4:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF64x2PromoteLowF32x4Code)
 	case wasmir.InstrV128Bitselect:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopV128BitselectCode)

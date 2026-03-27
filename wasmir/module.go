@@ -197,7 +197,7 @@ func (vt ValueType) String() string {
 }
 
 // InstrKind identifies one supported instruction opcode in semantic IR form.
-type InstrKind uint8
+type InstrKind uint16
 
 const (
 	InstrLocalGet InstrKind = iota
@@ -319,11 +319,17 @@ const (
 	InstrI8x16Swizzle
 	InstrI8x16AllTrue
 	InstrI8x16Bitmask
+	InstrI8x16NarrowI16x8S
+	InstrI8x16NarrowI16x8U
 	InstrI8x16Shl
 	InstrI8x16ShrS
 	InstrI8x16ShrU
 	InstrI16x8AllTrue
 	InstrI16x8Bitmask
+	InstrI16x8NarrowI32x4S
+	InstrI16x8NarrowI32x4U
+	InstrI16x8ExtendLowI8x16S
+	InstrI16x8ExtendLowI8x16U
 	InstrI16x8Shl
 	InstrI16x8ShrS
 	InstrI16x8ShrU
@@ -333,10 +339,14 @@ const (
 	InstrI32x4Bitmask
 	InstrI32x4Eq
 	InstrI32x4LtS
+	InstrI32x4ExtendLowI16x8S
+	InstrI32x4ExtendLowI16x8U
 	InstrI32x4Shl
 	InstrI32x4ShrS
 	InstrI32x4ShrU
 	InstrI32x4Add
+	InstrI32x4Sub
+	InstrI32x4Mul
 	InstrI32x4Neg
 	InstrI32x4MinS
 	InstrI64x2AllTrue
@@ -345,7 +355,13 @@ const (
 	InstrI64x2ShrS
 	InstrI64x2ShrU
 	InstrI64x2Add
+	InstrF32x4ConvertI32x4S
+	InstrF32x4ConvertI32x4U
 	InstrF32x4Add
+	InstrF64x2ConvertLowI32x4S
+	InstrF64x2ConvertLowI32x4U
+	InstrF32x4DemoteF64x2Zero
+	InstrF64x2PromoteLowF32x4
 	InstrV128Bitselect
 	InstrI32Add
 	InstrI32Sub

@@ -3313,7 +3313,10 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
-		case InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4MinS, InstrI64x2Add, InstrF32x4Add:
+		case InstrI8x16NarrowI16x8S, InstrI8x16NarrowI16x8U,
+			InstrI16x8NarrowI32x4S, InstrI16x8NarrowI32x4U,
+			InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4Sub, InstrI32x4Mul, InstrI32x4MinS,
+			InstrI64x2Add, InstrF32x4Add:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -3325,13 +3328,19 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
-		case InstrI32x4Neg:
+		case InstrI16x8ExtendLowI8x16S, InstrI16x8ExtendLowI8x16U,
+			InstrI32x4ExtendLowI16x8S, InstrI32x4ExtendLowI16x8U,
+			InstrF32x4ConvertI32x4S, InstrF32x4ConvertI32x4U,
+			InstrF64x2ConvertLowI32x4S, InstrF64x2ConvertLowI32x4U,
+			InstrF32x4DemoteF64x2Zero, InstrF64x2PromoteLowF32x4,
+			InstrI32x4Neg:
+			name := instrName(ins.Kind)
 			if len(stack) < 1 {
-				diags.Addf("%s: i32x4.neg needs 1 operand", insCtx)
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeV128 {
-				diags.Addf("%s: i32x4.neg expects v128 operand", insCtx)
+				diags.Addf("%s: %s expects v128 operand", insCtx, name)
 				continue
 			}
 		case InstrV128Bitselect:
@@ -3835,6 +3844,10 @@ func instrName(kind InstrKind) string {
 		return "i8x16.all_true"
 	case InstrI8x16Bitmask:
 		return "i8x16.bitmask"
+	case InstrI8x16NarrowI16x8S:
+		return "i8x16.narrow_i16x8_s"
+	case InstrI8x16NarrowI16x8U:
+		return "i8x16.narrow_i16x8_u"
 	case InstrI8x16Shl:
 		return "i8x16.shl"
 	case InstrI8x16ShrS:
@@ -3847,6 +3860,14 @@ func instrName(kind InstrKind) string {
 		return "i16x8.all_true"
 	case InstrI16x8Bitmask:
 		return "i16x8.bitmask"
+	case InstrI16x8NarrowI32x4S:
+		return "i16x8.narrow_i32x4_s"
+	case InstrI16x8NarrowI32x4U:
+		return "i16x8.narrow_i32x4_u"
+	case InstrI16x8ExtendLowI8x16S:
+		return "i16x8.extend_low_i8x16_s"
+	case InstrI16x8ExtendLowI8x16U:
+		return "i16x8.extend_low_i8x16_u"
 	case InstrI16x8ShrS:
 		return "i16x8.shr_s"
 	case InstrI16x8ShrU:
@@ -3863,6 +3884,10 @@ func instrName(kind InstrKind) string {
 		return "i32x4.eq"
 	case InstrI32x4LtS:
 		return "i32x4.lt_s"
+	case InstrI32x4ExtendLowI16x8S:
+		return "i32x4.extend_low_i16x8_s"
+	case InstrI32x4ExtendLowI16x8U:
+		return "i32x4.extend_low_i16x8_u"
 	case InstrI32x4Shl:
 		return "i32x4.shl"
 	case InstrI32x4ShrS:
@@ -3871,6 +3896,10 @@ func instrName(kind InstrKind) string {
 		return "i32x4.shr_u"
 	case InstrI32x4Add:
 		return "i32x4.add"
+	case InstrI32x4Sub:
+		return "i32x4.sub"
+	case InstrI32x4Mul:
+		return "i32x4.mul"
 	case InstrI32x4Neg:
 		return "i32x4.neg"
 	case InstrI32x4MinS:
@@ -3887,8 +3916,20 @@ func instrName(kind InstrKind) string {
 		return "i64x2.shr_u"
 	case InstrI64x2Add:
 		return "i64x2.add"
+	case InstrF32x4ConvertI32x4S:
+		return "f32x4.convert_i32x4_s"
+	case InstrF32x4ConvertI32x4U:
+		return "f32x4.convert_i32x4_u"
 	case InstrF32x4Add:
 		return "f32x4.add"
+	case InstrF64x2ConvertLowI32x4S:
+		return "f64x2.convert_low_i32x4_s"
+	case InstrF64x2ConvertLowI32x4U:
+		return "f64x2.convert_low_i32x4_u"
+	case InstrF32x4DemoteF64x2Zero:
+		return "f32x4.demote_f64x2_zero"
+	case InstrF64x2PromoteLowF32x4:
+		return "f64x2.promote_low_f32x4"
 	case InstrV128Bitselect:
 		return "v128.bitselect"
 	case InstrBlock:

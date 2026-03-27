@@ -947,7 +947,7 @@ func parseV128ConstValue(shape string, literals []string) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("v128.const f32x4 requires 4 lane literals")
 		}
 		for i, lit := range literals {
-			bits, err := numlit.ParseF32Bits(lit)
+			bits, err := parseExpectedF32LaneBits(lit)
 			if err != nil {
 				return scriptValue{}, fmt.Errorf("v128.const f32x4 lane[%d]: %w", i, err)
 			}
@@ -962,7 +962,7 @@ func parseV128ConstValue(shape string, literals []string) (scriptValue, error) {
 			return scriptValue{}, fmt.Errorf("v128.const f64x2 requires 2 lane literals")
 		}
 		for i, lit := range literals {
-			bits, err := numlit.ParseF64Bits(lit)
+			bits, err := parseExpectedF64LaneBits(lit)
 			if err != nil {
 				return scriptValue{}, fmt.Errorf("v128.const f64x2 lane[%d]: %w", i, err)
 			}
@@ -1008,6 +1008,32 @@ func parseI8Literal(lit string) (byte, bool) {
 		}
 	}
 	return 0, false
+}
+
+// parseExpectedF32LaneBits parses one expected f32 lane literal from a
+// `v128.const` assertion, accepting the same NaN matcher spellings used by
+// scalar `f32.const` expected values.
+func parseExpectedF32LaneBits(lit string) (uint32, error) {
+	switch lit {
+	case "nan:canonical":
+		return 0x7fc00000, nil
+	case "nan:arithmetic":
+		return 0x7fc00001, nil
+	}
+	return numlit.ParseF32Bits(lit)
+}
+
+// parseExpectedF64LaneBits parses one expected f64 lane literal from a
+// `v128.const` assertion, accepting the same NaN matcher spellings used by
+// scalar `f64.const` expected values.
+func parseExpectedF64LaneBits(lit string) (uint64, error) {
+	switch lit {
+	case "nan:canonical":
+		return 0x7ff8000000000000, nil
+	case "nan:arithmetic":
+		return 0x7ff8000000000001, nil
+	}
+	return numlit.ParseF64Bits(lit)
 }
 
 func parseI16Literal(lit string) (uint16, bool) {
@@ -1729,7 +1755,7 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 				return
 			}
 		case valueV128Const:
-			if !results[i].isV128 || results[i].v128 != want.v128 {
+			if !results[i].isV128 || !matchV128Expected(results[i].v128, want) {
 				res.status = false
 				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 				return
@@ -1794,6 +1820,92 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 		}
 	}
 	res.status = true
+}
+
+// matchV128Expected compares a runtime v128 result against the script's
+// expected value, preserving per-lane NaN matcher semantics for float-shaped
+// vectors instead of requiring exact payload equality.
+func matchV128Expected(got [16]byte, want scriptValue) bool {
+	if want.v128Shape == "" {
+		return got == want.v128
+	}
+
+	switch want.v128Shape {
+	case "f32x4":
+		for i := 0; i < 4; i++ {
+			base := i * 4
+			lane := uint32(got[base]) |
+				uint32(got[base+1])<<8 |
+				uint32(got[base+2])<<16 |
+				uint32(got[base+3])<<24
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			switch template {
+			case "nan:canonical":
+				if !isCanonicalNaN32(lane) {
+					return false
+				}
+			case "nan:arithmetic":
+				if !isArithmeticNaN32(lane) {
+					return false
+				}
+			default:
+				wantBase := i * 4
+				wantLane := uint32(want.v128[wantBase]) |
+					uint32(want.v128[wantBase+1])<<8 |
+					uint32(want.v128[wantBase+2])<<16 |
+					uint32(want.v128[wantBase+3])<<24
+				if lane != wantLane {
+					return false
+				}
+			}
+		}
+		return true
+	case "f64x2":
+		for i := 0; i < 2; i++ {
+			base := i * 8
+			lane := uint64(got[base]) |
+				uint64(got[base+1])<<8 |
+				uint64(got[base+2])<<16 |
+				uint64(got[base+3])<<24 |
+				uint64(got[base+4])<<32 |
+				uint64(got[base+5])<<40 |
+				uint64(got[base+6])<<48 |
+				uint64(got[base+7])<<56
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			switch template {
+			case "nan:canonical":
+				if !isCanonicalNaN64(lane) {
+					return false
+				}
+			case "nan:arithmetic":
+				if !isArithmeticNaN64(lane) {
+					return false
+				}
+			default:
+				wantBase := i * 8
+				wantLane := uint64(want.v128[wantBase]) |
+					uint64(want.v128[wantBase+1])<<8 |
+					uint64(want.v128[wantBase+2])<<16 |
+					uint64(want.v128[wantBase+3])<<24 |
+					uint64(want.v128[wantBase+4])<<32 |
+					uint64(want.v128[wantBase+5])<<40 |
+					uint64(want.v128[wantBase+6])<<48 |
+					uint64(want.v128[wantBase+7])<<56
+				if lane != wantLane {
+					return false
+				}
+			}
+		}
+		return true
+	default:
+		return got == want.v128
+	}
 }
 
 func formatExpectedValue(v scriptValue) string {

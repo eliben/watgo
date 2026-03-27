@@ -1796,6 +1796,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16AllTrue})
 			case subopI8x16BitmaskCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Bitmask})
+			case subopI8x16NarrowI16x8SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16NarrowI16x8S})
+			case subopI8x16NarrowI16x8UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16NarrowI16x8U})
 			case subopI8x16ShlCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Shl})
 			case subopI8x16ShrSCode:
@@ -1808,6 +1812,14 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AllTrue})
 			case subopI16x8BitmaskCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Bitmask})
+			case subopI16x8NarrowI32x4SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8NarrowI32x4S})
+			case subopI16x8NarrowI32x4UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8NarrowI32x4U})
+			case subopI16x8ExtendLowI8x16SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtendLowI8x16S})
+			case subopI16x8ExtendLowI8x16UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtendLowI8x16U})
 			case subopI16x8ShrSCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrS})
 			case subopI16x8ShrUCode:
@@ -1829,6 +1841,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Eq})
 			case subopI32x4LtSCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4LtS})
+			case subopI32x4ExtendLowI16x8SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtendLowI16x8S})
+			case subopI32x4ExtendLowI16x8UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtendLowI16x8U})
 			case subopI32x4ShlCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Shl})
 			case subopI32x4ShrSCode:
@@ -1837,6 +1853,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ShrU})
 			case subopI32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Add})
+			case subopI32x4SubCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Sub})
+			case subopI32x4MulCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Mul})
 			case subopI32x4NegCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Neg})
 			case subopI32x4MinSCode:
@@ -1853,8 +1873,20 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrU})
 			case subopI64x2AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Add})
+			case subopF32x4ConvertI32x4SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4S})
+			case subopF32x4ConvertI32x4UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4U})
 			case subopF32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
+			case subopF64x2ConvertLowI32x4SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2ConvertLowI32x4S})
+			case subopF64x2ConvertLowI32x4UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2ConvertLowI32x4U})
+			case subopF32x4DemoteF64x2ZeroCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4DemoteF64x2Zero})
+			case subopF64x2PromoteLowF32x4Code:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2PromoteLowF32x4})
 			case subopV128BitselectCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Bitselect})
 			default:
