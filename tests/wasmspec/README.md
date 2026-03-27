@@ -3,6 +3,9 @@
 This directory contains the integration harness for running `.wast` scripts from
 the WebAssembly spec tests against `watgo`.
 
+Detailed per-command/debug tracing is disabled by default. To enable it for a
+run, set `WATGO_WASMSPEC_DEBUG=1`.
+
 ## Files
 
 - [scripts/](./scripts)

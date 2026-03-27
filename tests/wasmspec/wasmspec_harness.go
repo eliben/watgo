@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/diag"
@@ -1079,6 +1080,12 @@ type runOptions struct {
 	// strictErrorText checks expected error text for assert_invalid/assert_malformed.
 	// If false, any compilation error satisfies these assertions.
 	strictErrorText bool
+	// progress, when non-nil, is called before each command executes.
+	progress func(index, total int, cmd scriptCommand)
+	// progressDone, when non-nil, is called after each command executes.
+	progressDone func(index, total int, cmd scriptCommand, res commandResult, elapsed time.Duration)
+	// logf emits ad hoc diagnostics during harness execution when non-nil.
+	logf func(format string, args ...any)
 }
 
 const currentModuleRuntimeName = "__watgo_current__"
@@ -1162,13 +1169,77 @@ func newNodeRuntime(ctx context.Context) (*nodeRuntime, error) {
 	return nr, nil
 }
 
-func (nr *nodeRuntime) close() error {
+func (nr *nodeRuntime) close(logf func(format string, args ...any)) error {
 	if nr == nil {
 		return nil
 	}
-	_ = nr.request(map[string]any{"op": "close"}, nil)
-	_ = nr.stdin.Close()
-	if err := nr.cmd.Wait(); err != nil {
+	gotCloseResponse := false
+	if logf != nil {
+		logf("node close: encoding close request")
+	}
+	if err := nr.enc.Encode(map[string]any{"op": "close"}); err != nil {
+		if logf != nil {
+			logf("node close: encode failed: %v", err)
+		}
+	} else {
+		if logf != nil {
+			logf("node close: close request sent; waiting for response")
+		}
+		var resp nodeResponse
+		if err := nr.dec.Decode(&resp); err != nil {
+			if logf != nil {
+				logf("node close: response decode failed: %v", err)
+			}
+		} else if logf != nil {
+			logf("node close: got response ok=%v", resp.OK)
+			gotCloseResponse = resp.OK
+		} else {
+			gotCloseResponse = resp.OK
+		}
+	}
+	if logf != nil {
+		logf("node close: closing stdin")
+	}
+	if err := nr.stdin.Close(); err != nil && logf != nil {
+		logf("node close: stdin close failed: %v", err)
+	}
+	if logf != nil {
+		pid := -1
+		if nr.cmd != nil && nr.cmd.Process != nil {
+			pid = nr.cmd.Process.Pid
+		}
+		logf("node close: waiting for process pid=%d", pid)
+	}
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- nr.cmd.Wait()
+	}()
+	forcedKill := false
+	var err error
+	select {
+	case err = <-waitCh:
+	case <-time.After(1 * time.Second):
+		forcedKill = true
+		if logf != nil {
+			logf("node close: graceful shutdown timed out after 2s; killing process")
+		}
+		if nr.cmd != nil && nr.cmd.Process != nil {
+			if killErr := nr.cmd.Process.Kill(); killErr != nil && logf != nil {
+				logf("node close: process kill failed: %v", killErr)
+			}
+		}
+		err = <-waitCh
+	}
+	if err != nil {
+		if logf != nil {
+			logf("node close: wait failed: %v", err)
+		}
+		if forcedKill && gotCloseResponse {
+			if logf != nil {
+				logf("node close: ignoring wait error after forced kill because close was acknowledged")
+			}
+			return nil
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr := strings.TrimSpace(nr.stderr.String())
 			if stderr != "" {
@@ -1176,6 +1247,9 @@ func (nr *nodeRuntime) close() error {
 			}
 		}
 		return err
+	}
+	if logf != nil {
+		logf("node close: wait returned success")
 	}
 	return nil
 }
@@ -1308,7 +1382,16 @@ func (r *scriptRunner) close() error {
 	if r.node == nil {
 		return nil
 	}
-	return r.node.close()
+	return r.node.close(nil)
+}
+
+// closeWithLogf releases the Node.js runtime while emitting step-by-step
+// diagnostics with logf when non-nil.
+func (r *scriptRunner) closeWithLogf(logf func(format string, args ...any)) error {
+	if r.node == nil {
+		return nil
+	}
+	return r.node.close(logf)
 }
 
 // run executes commands in script order and returns one result per command.
@@ -1316,6 +1399,10 @@ func (r *scriptRunner) close() error {
 func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandResult {
 	results := make([]commandResult, 0, len(commands))
 	for i, cmd := range commands {
+		if opts.progress != nil {
+			opts.progress(i, len(commands), cmd)
+		}
+		start := time.Now()
 		res := commandResult{
 			index: i,
 			kind:  cmd.kind,
@@ -1343,6 +1430,9 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 		default:
 			res.status = false
 			res.detail = fmt.Sprintf("unsupported command kind %q", cmd.kind)
+		}
+		if opts.progressDone != nil {
+			opts.progressDone(i, len(commands), cmd, res, time.Since(start))
 		}
 		results = append(results, res)
 	}
@@ -2262,13 +2352,26 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand, opts runOptions) {
 	var err error
 	if isModuleBinaryExpr(cmd.moduleExpr) {
+		if opts.logf != nil {
+			opts.logf("assert_malformed: decoding binary module")
+		}
 		var wasmBytes []byte
 		wasmBytes, err = parseBinaryModuleBytes(cmd.moduleExpr)
 		if err == nil {
 			_, err = binaryformat.DecodeModule(wasmBytes)
 		}
 	} else {
+		if opts.logf != nil {
+			opts.logf("assert_malformed: compiling quoted WAT")
+		}
 		_, err = watgo.CompileWATToWASM([]byte(cmd.quotedWAT))
+	}
+	if opts.logf != nil {
+		if err != nil {
+			opts.logf("assert_malformed: compile/decode returned %v", err)
+		} else {
+			opts.logf("assert_malformed: compile/decode returned success")
+		}
 	}
 	if err == nil {
 		res.status = false

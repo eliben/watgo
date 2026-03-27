@@ -2,14 +2,21 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 const wasmSpecScriptsDir = "scripts"
+const wasmSpecDebugEnvVar = "WATGO_WASMSPEC_DEBUG"
+
+func wasmSpecDebugEnabled() bool {
+	return os.Getenv(wasmSpecDebugEnvVar) != ""
+}
 
 func TestWasmSpecScripts(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {
@@ -66,17 +73,48 @@ func runWasmSpecScriptFile(t *testing.T, scriptPath string) {
 		t.Fatalf("parseScript for %q failed: %v", scriptPath, err)
 	}
 
+	var logf func(format string, args ...any)
+	opts := runOptions{strictErrorText: false}
+	if wasmSpecDebugEnabled() {
+		scriptName := filepath.ToSlash(scriptPath)
+		logf = func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "[wasmspec %s] %s\n", scriptName, fmt.Sprintf(format, args...))
+		}
+		opts.logf = logf
+		opts.progress = func(index, total int, cmd scriptCommand) {
+			fmt.Fprintf(os.Stderr, "[wasmspec %s] command %d/%d: %s at %s\n",
+				scriptName, index+1, total, cmd.kind, cmd.loc)
+		}
+		opts.progressDone = func(index, total int, cmd scriptCommand, res commandResult, elapsed time.Duration) {
+			status := "PASS"
+			if !res.status {
+				status = "FAIL"
+			}
+			fmt.Fprintf(os.Stderr, "[wasmspec %s] done command %d/%d: %s at %s -> %s (%s)\n",
+				scriptName, index+1, total, cmd.kind, cmd.loc, status, elapsed)
+		}
+		fmt.Fprintf(os.Stderr, "[wasmspec %s] starting runner.run with %d commands\n", scriptName, len(commands))
+	}
+
 	runner, err := newScriptRunner(context.Background())
 	if err != nil {
 		t.Fatalf("spec runner bootstrap failed: %v", err)
 	}
 	defer func() {
-		if closeErr := runner.close(); closeErr != nil {
+		if wasmSpecDebugEnabled() {
+			fmt.Fprintf(os.Stderr, "[wasmspec %s] closing node runner\n", filepath.ToSlash(scriptPath))
+		}
+		if closeErr := runner.closeWithLogf(logf); closeErr != nil {
 			t.Fatalf("spec runner close failed: %v", closeErr)
 		}
+		if wasmSpecDebugEnabled() {
+			fmt.Fprintf(os.Stderr, "[wasmspec %s] closed node runner\n", filepath.ToSlash(scriptPath))
+		}
 	}()
-
-	results := runner.run(commands, runOptions{strictErrorText: false})
+	results := runner.run(commands, opts)
+	if wasmSpecDebugEnabled() {
+		fmt.Fprintf(os.Stderr, "[wasmspec %s] finished runner.run\n", filepath.ToSlash(scriptPath))
+	}
 	if got, want := len(results), len(commands); got != want {
 		t.Fatalf("got %d command results, want %d", got, want)
 	}

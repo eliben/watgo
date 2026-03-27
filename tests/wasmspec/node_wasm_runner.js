@@ -52,6 +52,7 @@
 //   identity within a single runner lifetime.
 
 const readline = require('node:readline');
+const fs = require('node:fs');
 
 // modules stores named module instances that remain live for the duration of a
 // single .wast file run.
@@ -800,7 +801,8 @@ const rl = readline.createInterface({
 });
 
 // Process each request line synchronously, emit a single response line, and
-// handle shutdown when requested.
+// handle shutdown when requested. Use a synchronous write so the close path
+// does not depend on an async stdout callback before exiting.
 rl.on('line', (line) => {
   if (!line.trim()) {
     return;
@@ -815,7 +817,7 @@ rl.on('line', (line) => {
       error: err && err.message ? err.message : String(err),
     };
   }
-  process.stdout.write(JSON.stringify(response) + '\n');
+  fs.writeSync(process.stdout.fd, JSON.stringify(response) + '\n');
   if (response.exit) {
     rl.close();
     process.exit(0);
