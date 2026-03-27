@@ -3318,7 +3318,9 @@ instrLoop:
 			InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4Sub, InstrI32x4Mul, InstrI32x4MinS,
 			InstrI64x2Add,
 			InstrF32x4Eq, InstrF32x4Ne, InstrF32x4Lt, InstrF32x4Gt, InstrF32x4Le, InstrF32x4Ge,
-			InstrF32x4Add, InstrF32x4Sub, InstrF32x4Mul, InstrF32x4Div, InstrF32x4Min, InstrF32x4Max, InstrF32x4Pmin, InstrF32x4Pmax:
+			InstrF32x4Add, InstrF32x4Sub, InstrF32x4Mul, InstrF32x4Div, InstrF32x4Min, InstrF32x4Max, InstrF32x4Pmin, InstrF32x4Pmax,
+			InstrF64x2Eq, InstrF64x2Ne, InstrF64x2Lt, InstrF64x2Gt, InstrF64x2Le, InstrF64x2Ge,
+			InstrF64x2Add, InstrF64x2Sub, InstrF64x2Mul, InstrF64x2Div, InstrF64x2Min, InstrF64x2Max, InstrF64x2Pmin, InstrF64x2Pmax:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -3334,6 +3336,8 @@ instrLoop:
 			InstrI32x4ExtendLowI16x8S, InstrI32x4ExtendLowI16x8U,
 			InstrF32x4Ceil, InstrF32x4Floor, InstrF32x4Trunc, InstrF32x4Nearest,
 			InstrF32x4Abs, InstrF32x4Neg, InstrF32x4Sqrt,
+			InstrF64x2Ceil, InstrF64x2Floor, InstrF64x2Trunc, InstrF64x2Nearest,
+			InstrF64x2Abs, InstrF64x2Neg, InstrF64x2Sqrt,
 			InstrF32x4ConvertI32x4S, InstrF32x4ConvertI32x4U,
 			InstrF64x2ConvertLowI32x4S, InstrF64x2ConvertLowI32x4U,
 			InstrF32x4DemoteF64x2Zero, InstrF64x2PromoteLowF32x4,
@@ -3966,6 +3970,48 @@ func instrName(kind InstrKind) string {
 		return "f32x4.pmin"
 	case InstrF32x4Pmax:
 		return "f32x4.pmax"
+	case InstrF64x2Eq:
+		return "f64x2.eq"
+	case InstrF64x2Ne:
+		return "f64x2.ne"
+	case InstrF64x2Lt:
+		return "f64x2.lt"
+	case InstrF64x2Gt:
+		return "f64x2.gt"
+	case InstrF64x2Le:
+		return "f64x2.le"
+	case InstrF64x2Ge:
+		return "f64x2.ge"
+	case InstrF64x2Ceil:
+		return "f64x2.ceil"
+	case InstrF64x2Floor:
+		return "f64x2.floor"
+	case InstrF64x2Trunc:
+		return "f64x2.trunc"
+	case InstrF64x2Nearest:
+		return "f64x2.nearest"
+	case InstrF64x2Abs:
+		return "f64x2.abs"
+	case InstrF64x2Neg:
+		return "f64x2.neg"
+	case InstrF64x2Sqrt:
+		return "f64x2.sqrt"
+	case InstrF64x2Add:
+		return "f64x2.add"
+	case InstrF64x2Sub:
+		return "f64x2.sub"
+	case InstrF64x2Mul:
+		return "f64x2.mul"
+	case InstrF64x2Div:
+		return "f64x2.div"
+	case InstrF64x2Min:
+		return "f64x2.min"
+	case InstrF64x2Max:
+		return "f64x2.max"
+	case InstrF64x2Pmin:
+		return "f64x2.pmin"
+	case InstrF64x2Pmax:
+		return "f64x2.pmax"
 	case InstrF64x2ConvertLowI32x4S:
 		return "f64x2.convert_low_i32x4_s"
 	case InstrF64x2ConvertLowI32x4U:

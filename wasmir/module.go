@@ -378,6 +378,27 @@ const (
 	InstrF32x4Max
 	InstrF32x4Pmin
 	InstrF32x4Pmax
+	InstrF64x2Eq
+	InstrF64x2Ne
+	InstrF64x2Lt
+	InstrF64x2Gt
+	InstrF64x2Le
+	InstrF64x2Ge
+	InstrF64x2Ceil
+	InstrF64x2Floor
+	InstrF64x2Trunc
+	InstrF64x2Nearest
+	InstrF64x2Abs
+	InstrF64x2Neg
+	InstrF64x2Sqrt
+	InstrF64x2Add
+	InstrF64x2Sub
+	InstrF64x2Mul
+	InstrF64x2Div
+	InstrF64x2Min
+	InstrF64x2Max
+	InstrF64x2Pmin
+	InstrF64x2Pmax
 	InstrF64x2ConvertLowI32x4S
 	InstrF64x2ConvertLowI32x4U
 	InstrF32x4DemoteF64x2Zero
