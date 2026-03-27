@@ -1806,6 +1806,36 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrS})
 			case subopI8x16ShrUCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrU})
+			case subopI16x8EqCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Eq})
+			case subopI16x8NeCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Ne})
+			case subopI16x8LtSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LtS})
+			case subopI16x8LtUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LtU})
+			case subopI16x8GtSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GtS})
+			case subopI16x8GtUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GtU})
+			case subopI16x8LeSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LeS})
+			case subopI16x8LeUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LeU})
+			case subopI16x8GeSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GeS})
+			case subopI16x8GeUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GeU})
+			case subopI16x8ExtaddPairwiseI8x16SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtaddPairwiseI8x16S})
+			case subopI16x8ExtaddPairwiseI8x16UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtaddPairwiseI8x16U})
+			case subopI16x8AbsCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Abs})
+			case subopI16x8NegCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Neg})
+			case subopI16x8Q15mulrSatSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Q15mulrSatS})
 			case subopI16x8ShlCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Shl})
 			case subopI16x8AllTrueCode:
@@ -1824,6 +1854,38 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrS})
 			case subopI16x8ShrUCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrU})
+			case subopI16x8AddCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Add})
+			case subopI16x8AddSatSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AddSatS})
+			case subopI16x8AddSatUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AddSatU})
+			case subopI16x8SubCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Sub})
+			case subopI16x8SubSatSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8SubSatS})
+			case subopI16x8SubSatUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8SubSatU})
+			case subopI16x8MulCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Mul})
+			case subopI16x8MinSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MinS})
+			case subopI16x8MinUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MinU})
+			case subopI16x8MaxSCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MaxS})
+			case subopI16x8MaxUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MaxU})
+			case subopI16x8AvgrUCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AvgrU})
+			case subopI16x8ExtmulLowI8x16SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulLowI8x16S})
+			case subopI16x8ExtmulHighI8x16SCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulHighI8x16S})
+			case subopI16x8ExtmulLowI8x16UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulLowI8x16U})
+			case subopI16x8ExtmulHighI8x16UCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulHighI8x16U})
 			case subopI32x4SplatCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Splat})
 			case subopI32x4ExtractLaneCode:

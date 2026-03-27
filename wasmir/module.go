@@ -324,6 +324,21 @@ const (
 	InstrI8x16Shl
 	InstrI8x16ShrS
 	InstrI8x16ShrU
+	InstrI16x8Eq
+	InstrI16x8Ne
+	InstrI16x8LtS
+	InstrI16x8LtU
+	InstrI16x8GtS
+	InstrI16x8GtU
+	InstrI16x8LeS
+	InstrI16x8LeU
+	InstrI16x8GeS
+	InstrI16x8GeU
+	InstrI16x8ExtaddPairwiseI8x16S
+	InstrI16x8ExtaddPairwiseI8x16U
+	InstrI16x8Abs
+	InstrI16x8Neg
+	InstrI16x8Q15mulrSatS
 	InstrI16x8AllTrue
 	InstrI16x8Bitmask
 	InstrI16x8NarrowI32x4S
@@ -333,6 +348,22 @@ const (
 	InstrI16x8Shl
 	InstrI16x8ShrS
 	InstrI16x8ShrU
+	InstrI16x8Add
+	InstrI16x8AddSatS
+	InstrI16x8AddSatU
+	InstrI16x8Sub
+	InstrI16x8SubSatS
+	InstrI16x8SubSatU
+	InstrI16x8Mul
+	InstrI16x8MinS
+	InstrI16x8MinU
+	InstrI16x8MaxS
+	InstrI16x8MaxU
+	InstrI16x8AvgrU
+	InstrI16x8ExtmulLowI8x16S
+	InstrI16x8ExtmulHighI8x16S
+	InstrI16x8ExtmulLowI8x16U
+	InstrI16x8ExtmulHighI8x16U
 	InstrI32x4Splat
 	InstrI32x4ExtractLane
 	InstrI32x4AllTrue

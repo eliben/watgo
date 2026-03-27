@@ -3314,7 +3314,13 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI8x16NarrowI16x8S, InstrI8x16NarrowI16x8U,
+			InstrI16x8Eq, InstrI16x8Ne, InstrI16x8LtS, InstrI16x8LtU, InstrI16x8GtS, InstrI16x8GtU, InstrI16x8LeS, InstrI16x8LeU, InstrI16x8GeS, InstrI16x8GeU,
 			InstrI16x8NarrowI32x4S, InstrI16x8NarrowI32x4U,
+			InstrI16x8Add, InstrI16x8AddSatS, InstrI16x8AddSatU,
+			InstrI16x8Sub, InstrI16x8SubSatS, InstrI16x8SubSatU,
+			InstrI16x8Mul, InstrI16x8MinS, InstrI16x8MinU, InstrI16x8MaxS, InstrI16x8MaxU, InstrI16x8AvgrU,
+			InstrI16x8Q15mulrSatS,
+			InstrI16x8ExtmulLowI8x16S, InstrI16x8ExtmulHighI8x16S, InstrI16x8ExtmulLowI8x16U, InstrI16x8ExtmulHighI8x16U,
 			InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4Sub, InstrI32x4Mul, InstrI32x4MinS,
 			InstrI64x2Add,
 			InstrF32x4Eq, InstrF32x4Ne, InstrF32x4Lt, InstrF32x4Gt, InstrF32x4Le, InstrF32x4Ge,
@@ -3332,7 +3338,9 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
-		case InstrI16x8ExtendLowI8x16S, InstrI16x8ExtendLowI8x16U,
+		case InstrI16x8ExtaddPairwiseI8x16S, InstrI16x8ExtaddPairwiseI8x16U,
+			InstrI16x8Abs, InstrI16x8Neg,
+			InstrI16x8ExtendLowI8x16S, InstrI16x8ExtendLowI8x16U,
 			InstrI32x4ExtendLowI16x8S, InstrI32x4ExtendLowI16x8U,
 			InstrF32x4Ceil, InstrF32x4Floor, InstrF32x4Trunc, InstrF32x4Nearest,
 			InstrF32x4Abs, InstrF32x4Neg, InstrF32x4Sqrt,
@@ -3862,6 +3870,36 @@ func instrName(kind InstrKind) string {
 		return "i8x16.shr_s"
 	case InstrI8x16ShrU:
 		return "i8x16.shr_u"
+	case InstrI16x8Eq:
+		return "i16x8.eq"
+	case InstrI16x8Ne:
+		return "i16x8.ne"
+	case InstrI16x8LtS:
+		return "i16x8.lt_s"
+	case InstrI16x8LtU:
+		return "i16x8.lt_u"
+	case InstrI16x8GtS:
+		return "i16x8.gt_s"
+	case InstrI16x8GtU:
+		return "i16x8.gt_u"
+	case InstrI16x8LeS:
+		return "i16x8.le_s"
+	case InstrI16x8LeU:
+		return "i16x8.le_u"
+	case InstrI16x8GeS:
+		return "i16x8.ge_s"
+	case InstrI16x8GeU:
+		return "i16x8.ge_u"
+	case InstrI16x8ExtaddPairwiseI8x16S:
+		return "i16x8.extadd_pairwise_i8x16_s"
+	case InstrI16x8ExtaddPairwiseI8x16U:
+		return "i16x8.extadd_pairwise_i8x16_u"
+	case InstrI16x8Abs:
+		return "i16x8.abs"
+	case InstrI16x8Neg:
+		return "i16x8.neg"
+	case InstrI16x8Q15mulrSatS:
+		return "i16x8.q15mulr_sat_s"
 	case InstrI16x8Shl:
 		return "i16x8.shl"
 	case InstrI16x8AllTrue:
@@ -3880,6 +3918,38 @@ func instrName(kind InstrKind) string {
 		return "i16x8.shr_s"
 	case InstrI16x8ShrU:
 		return "i16x8.shr_u"
+	case InstrI16x8Add:
+		return "i16x8.add"
+	case InstrI16x8AddSatS:
+		return "i16x8.add_sat_s"
+	case InstrI16x8AddSatU:
+		return "i16x8.add_sat_u"
+	case InstrI16x8Sub:
+		return "i16x8.sub"
+	case InstrI16x8SubSatS:
+		return "i16x8.sub_sat_s"
+	case InstrI16x8SubSatU:
+		return "i16x8.sub_sat_u"
+	case InstrI16x8Mul:
+		return "i16x8.mul"
+	case InstrI16x8MinS:
+		return "i16x8.min_s"
+	case InstrI16x8MinU:
+		return "i16x8.min_u"
+	case InstrI16x8MaxS:
+		return "i16x8.max_s"
+	case InstrI16x8MaxU:
+		return "i16x8.max_u"
+	case InstrI16x8AvgrU:
+		return "i16x8.avgr_u"
+	case InstrI16x8ExtmulLowI8x16S:
+		return "i16x8.extmul_low_i8x16_s"
+	case InstrI16x8ExtmulHighI8x16S:
+		return "i16x8.extmul_high_i8x16_s"
+	case InstrI16x8ExtmulLowI8x16U:
+		return "i16x8.extmul_low_i8x16_u"
+	case InstrI16x8ExtmulHighI8x16U:
+		return "i16x8.extmul_high_i8x16_u"
 	case InstrI32x4Splat:
 		return "i32x4.splat"
 	case InstrI32x4ExtractLane:
