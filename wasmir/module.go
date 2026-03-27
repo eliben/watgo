@@ -344,6 +344,7 @@ const (
 	InstrI64x2Shl
 	InstrI64x2ShrS
 	InstrI64x2ShrU
+	InstrI64x2Add
 	InstrF32x4Add
 	InstrV128Bitselect
 	InstrI32Add

@@ -1851,6 +1851,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrS})
 			case subopI64x2ShrUCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrU})
+			case subopI64x2AddCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Add})
 			case subopF32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
 			case subopV128BitselectCode:
@@ -2356,6 +2358,22 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 			return wasmir.Instruction{}, err
 		}
 		ins = wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIndex}
+	case opPrefixFDCode:
+		subop, err := readU32(r)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		switch subop {
+		case subopV128ConstCode:
+			bytes, err := readN(r, 16)
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			ins.Kind = wasmir.InstrV128Const
+			copy(ins.V128Const[:], bytes)
+		default:
+			return wasmir.Instruction{}, fmt.Errorf("unsupported const expr 0xfd subopcode 0x%x", subop)
+		}
 	case opPrefixFBCode:
 		subop, err := readU32(r)
 		if err != nil {

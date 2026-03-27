@@ -3313,7 +3313,7 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
-		case InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4MinS, InstrF32x4Add:
+		case InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4MinS, InstrI64x2Add, InstrF32x4Add:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -3623,6 +3623,8 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 			push(ValueTypeF32)
 		case InstrF64Const:
 			push(ValueTypeF64)
+		case InstrV128Const:
+			push(ValueTypeV128)
 		case InstrRefNull:
 			push(ins.RefType)
 		case InstrRefFunc:
@@ -3883,6 +3885,8 @@ func instrName(kind InstrKind) string {
 		return "i64x2.shr_s"
 	case InstrI64x2ShrU:
 		return "i64x2.shr_u"
+	case InstrI64x2Add:
+		return "i64x2.add"
 	case InstrF32x4Add:
 		return "f32x4.add"
 	case InstrV128Bitselect:

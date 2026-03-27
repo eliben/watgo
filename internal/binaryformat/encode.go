@@ -327,6 +327,7 @@ const (
 	subopI64x2ShlCode         uint32 = 0xcb
 	subopI64x2ShrSCode        uint32 = 0xcc
 	subopI64x2ShrUCode        uint32 = 0xcd
+	subopI64x2AddCode         uint32 = 0xce
 	subopF32x4AddCode         uint32 = 0xe4
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
@@ -1669,6 +1670,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI64x2ShrU:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI64x2ShrUCode)
+	case wasmir.InstrI64x2Add:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2AddCode)
 	case wasmir.InstrF32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF32x4AddCode)
@@ -1708,6 +1712,10 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 	case wasmir.InstrF64Const:
 		out.WriteByte(opF64ConstCode)
 		writeU64LE(out, init.F64Const)
+	case wasmir.InstrV128Const:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128ConstCode)
+		out.Write(init.V128Const[:])
 	case wasmir.InstrRefNull:
 		out.WriteByte(opRefNullCode)
 		if init.RefType.UsesTypeIndex() {

@@ -372,6 +372,7 @@ func init() {
 		"i64x2.shl":           wasmir.InstrI64x2Shl,
 		"i64x2.shr_s":         wasmir.InstrI64x2ShrS,
 		"i64x2.shr_u":         wasmir.InstrI64x2ShrU,
+		"i64x2.add":           wasmir.InstrI64x2Add,
 		"f32x4.add":           wasmir.InstrF32x4Add,
 		"i32.add":             wasmir.InstrI32Add,
 		"i32.and":             wasmir.InstrI32And,

@@ -1912,6 +1912,7 @@ var loweringSpecs = map[string]loweringSpec{
 	"i64x2.shl":           {operandCount: 0},
 	"i64x2.shr_s":         {operandCount: 0},
 	"i64x2.shr_u":         {operandCount: 0},
+	"i64x2.add":           {operandCount: 0},
 	"f32x4.add":           {operandCount: 0},
 	"v128.bitselect":      {operandCount: 0},
 	"i32.const":           {operandCount: 1, decode: decodeI32ConstOperands},
@@ -2669,7 +2670,7 @@ func decodeF64ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operand
 
 // decodeV128ConstOperands decodes the currently supported SIMD constant forms:
 // `v128.const i8x16 ...`, `v128.const i16x8 ...`, `v128.const i32x4 ...`,
-// `v128.const i64x2 ...`, and `v128.const f32x4 ...`.
+// `v128.const i64x2 ...`, `v128.const f32x4 ...`, and `v128.const f64x2 ...`.
 func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	if len(operands) < 2 {
 		return false
@@ -2753,6 +2754,26 @@ func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operan
 			ins.V128Const[base+1] = byte(lane >> 8)
 			ins.V128Const[base+2] = byte(lane >> 16)
 			ins.V128Const[base+3] = byte(lane >> 24)
+		}
+		return true
+	case "f64x2":
+		if len(operands) != 3 {
+			return false
+		}
+		for i := 0; i < 2; i++ {
+			lane, ok := lowerF64ConstOperand(operands[i+1])
+			if !ok {
+				return false
+			}
+			base := i * 8
+			ins.V128Const[base] = byte(lane)
+			ins.V128Const[base+1] = byte(lane >> 8)
+			ins.V128Const[base+2] = byte(lane >> 16)
+			ins.V128Const[base+3] = byte(lane >> 24)
+			ins.V128Const[base+4] = byte(lane >> 32)
+			ins.V128Const[base+5] = byte(lane >> 40)
+			ins.V128Const[base+6] = byte(lane >> 48)
+			ins.V128Const[base+7] = byte(lane >> 56)
 		}
 		return true
 	default:
@@ -3110,6 +3131,17 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 }
 
 func (l *moduleLowerer) lowerPlainConstInstr(name string, operands []Operand) (*loweredConstInstr, bool) {
+	if name == "v128.const" {
+		var ins wasmir.Instruction
+		ins.Kind = wasmir.InstrV128Const
+		if !decodeV128ConstOperands(nil, &ins, operands) {
+			return nil, false
+		}
+		return &loweredConstInstr{
+			Instrs: []wasmir.Instruction{ins},
+			Type:   wasmir.ValueTypeV128,
+		}, true
+	}
 	if len(operands) != 1 {
 		return nil, false
 	}

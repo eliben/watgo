@@ -957,6 +957,25 @@ func parseV128ConstValue(shape string, literals []string) (scriptValue, error) {
 			value.v128[base+2] = byte(bits >> 16)
 			value.v128[base+3] = byte(bits >> 24)
 		}
+	case "f64x2":
+		if len(literals) != 2 {
+			return scriptValue{}, fmt.Errorf("v128.const f64x2 requires 2 lane literals")
+		}
+		for i, lit := range literals {
+			bits, err := numlit.ParseF64Bits(lit)
+			if err != nil {
+				return scriptValue{}, fmt.Errorf("v128.const f64x2 lane[%d]: %w", i, err)
+			}
+			base := i * 8
+			value.v128[base] = byte(bits)
+			value.v128[base+1] = byte(bits >> 8)
+			value.v128[base+2] = byte(bits >> 16)
+			value.v128[base+3] = byte(bits >> 24)
+			value.v128[base+4] = byte(bits >> 32)
+			value.v128[base+5] = byte(bits >> 40)
+			value.v128[base+6] = byte(bits >> 48)
+			value.v128[base+7] = byte(bits >> 56)
+		}
 	default:
 		return scriptValue{}, fmt.Errorf("unsupported v128.const shape %q", shape)
 	}
@@ -1948,6 +1967,25 @@ func formatV128Like(bits [16]byte, want scriptValue) string {
 			parts[i] = formatF32Like(lane, template)
 		}
 		return "(v128.const f32x4 " + strings.Join(parts, " ") + ")"
+	case "f64x2":
+		parts := make([]string, 2)
+		for i := range parts {
+			template := "0"
+			if i < len(want.v128Literals) {
+				template = want.v128Literals[i]
+			}
+			base := i * 8
+			lane := uint64(bits[base]) |
+				uint64(bits[base+1])<<8 |
+				uint64(bits[base+2])<<16 |
+				uint64(bits[base+3])<<24 |
+				uint64(bits[base+4])<<32 |
+				uint64(bits[base+5])<<40 |
+				uint64(bits[base+6])<<48 |
+				uint64(bits[base+7])<<56
+			parts[i] = formatF64Like(lane, template)
+		}
+		return "(v128.const f64x2 " + strings.Join(parts, " ") + ")"
 	default:
 		return formatV128AsI8x16(bits)
 	}
