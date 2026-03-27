@@ -1778,6 +1778,16 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				var lanes [16]byte
 				copy(lanes[:], bytes)
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Const, V128Const: lanes})
+			case subopV128NotCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Not})
+			case subopV128AndCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128And})
+			case subopV128AndNotCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128AndNot})
+			case subopV128OrCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Or})
+			case subopV128XorCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Xor})
 			case subopI8x16SwizzleCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Swizzle})
 			case subopI8x16ShlCode:

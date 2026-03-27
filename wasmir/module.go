@@ -310,6 +310,11 @@ const (
 	InstrRefIsNull
 	InstrRefAsNonNull
 	InstrRefFunc
+	InstrV128Not
+	InstrV128And
+	InstrV128AndNot
+	InstrV128Or
+	InstrV128Xor
 	InstrI8x16Swizzle
 	InstrI8x16Shl
 	InstrI8x16ShrS

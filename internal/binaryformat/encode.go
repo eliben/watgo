@@ -292,6 +292,11 @@ const (
 	subopV128Load64SplatCode  uint32 = 0x0a
 	subopV128StoreCode        uint32 = 0x0b
 	subopV128ConstCode        uint32 = 0x0c
+	subopV128NotCode          uint32 = 0x4d
+	subopV128AndCode          uint32 = 0x4e
+	subopV128AndNotCode       uint32 = 0x4f
+	subopV128OrCode           uint32 = 0x50
+	subopV128XorCode          uint32 = 0x51
 	subopI8x16SwizzleCode     uint32 = 0x0e
 	subopI8x16ShlCode         uint32 = 0x6b
 	subopI8x16ShrSCode        uint32 = 0x6c
@@ -1552,6 +1557,21 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopV128ConstCode)
 		out.Write(instr.V128Const[:])
+	case wasmir.InstrV128Not:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128NotCode)
+	case wasmir.InstrV128And:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128AndCode)
+	case wasmir.InstrV128AndNot:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128AndNotCode)
+	case wasmir.InstrV128Or:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128OrCode)
+	case wasmir.InstrV128Xor:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128XorCode)
 	case wasmir.InstrI8x16Swizzle:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16SwizzleCode)

@@ -3239,6 +3239,27 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
+		case InstrV128Not:
+			if len(stack) < 1 {
+				diags.Addf("%s: v128.not needs 1 operand", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 {
+				diags.Addf("%s: v128.not expects v128 operand", insCtx)
+				continue
+			}
+		case InstrV128And, InstrV128AndNot, InstrV128Or, InstrV128Xor:
+			name := instrName(ins.Kind)
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: %s expects v128 operands", insCtx, name)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
 		case InstrI8x16Shl, InstrI8x16ShrS, InstrI8x16ShrU,
 			InstrI16x8Shl, InstrI16x8ShrS, InstrI16x8ShrU,
 			InstrI32x4Shl, InstrI32x4ShrS, InstrI32x4ShrU,
@@ -3780,6 +3801,16 @@ func instrName(kind InstrKind) string {
 		return "i31.get_s"
 	case InstrI31GetU:
 		return "i31.get_u"
+	case InstrV128Not:
+		return "v128.not"
+	case InstrV128And:
+		return "v128.and"
+	case InstrV128AndNot:
+		return "v128.andnot"
+	case InstrV128Or:
+		return "v128.or"
+	case InstrV128Xor:
+		return "v128.xor"
 	case InstrI8x16Swizzle:
 		return "i8x16.swizzle"
 	case InstrI8x16Shl:
