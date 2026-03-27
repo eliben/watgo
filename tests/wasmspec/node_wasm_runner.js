@@ -66,10 +66,10 @@ const externRefs = new Map();
 const opaqueExternRefs = new Map();
 let nextOpaqueExternRefId = 1n;
 
-// floatResultWrappers caches tiny helper modules used to preserve exact float
-// result bits across the Wasm/JS boundary. JS numbers do not preserve NaN
-// payloads, so when a wasm export returns a single f32/f64 result we route the
-// call through a generated wrapper module that:
+// floatResultWrappers caches compiled helper modules used to preserve exact
+// float result bits across the Wasm/JS boundary. JS numbers do not preserve
+// NaN payloads, so when a wasm export returns a single f32/f64 result we route
+// the call through a generated wrapper module that:
 //   1. imports the target export as a wasm function,
 //   2. calls it with the original arguments, and
 //   3. reinterprets the float result to i32/i64 inside wasm.
@@ -85,12 +85,13 @@ let nextOpaqueExternRefId = 1n;
 // The wrapper returns integer bits, which JS can transport exactly.
 const floatResultWrappers = new Map();
 
-// v128ResultWrappers caches helper modules that preserve exact v128 bytes by
-// lowering a single imported v128 result into four exact i32 words.
+// v128ResultWrappers caches compiled helper modules that preserve exact v128
+// bytes by lowering a single imported v128 result into four exact i32 words.
 const v128ResultWrappers = new Map();
 
-// anyRefResultClassifiers caches tiny helper modules used to classify a single
-// anyref result inside wasm, where ref.test can distinguish i31/struct/array.
+// anyRefResultClassifiers caches compiled helper modules used to classify a
+// single anyref result inside wasm, where ref.test can distinguish
+// i31/struct/array.
 const anyRefResultClassifiers = new Map();
 
 // decodeBytes turns a base64-encoded wasm payload from the Go harness into raw
@@ -199,15 +200,16 @@ function intBitsTypeForFloat(resultType) {
   }
 }
 
-// buildSingleFloatResultWrapper builds a minimal wasm module that imports one
-// function and reinterprets its single float result to raw integer bits.
+// buildSingleFloatResultWrapper builds and caches a minimal wasm module that
+// imports one function and reinterprets its single float result to raw integer
+// bits.
 function buildSingleFloatResultWrapper(paramTypes, resultType) {
-  const bitsType = intBitsTypeForFloat(resultType);
   const key = `${paramTypes.join(',')}->${resultType}`;
   let cached = floatResultWrappers.get(key);
   if (cached) {
     return cached;
   }
+  const bitsType = intBitsTypeForFloat(resultType);
 
   const bytes = [
     0x00, 0x61, 0x73, 0x6d, // \0asm
@@ -256,14 +258,15 @@ function buildSingleFloatResultWrapper(paramTypes, resultType) {
   codeSection.push(...body);
   pushSection(bytes, 10, codeSection);
 
-  cached = Uint8Array.from(bytes);
+  cached = new WebAssembly.Module(Uint8Array.from(bytes));
   floatResultWrappers.set(key, cached);
   return cached;
 }
 
-// buildSingleV128ResultWrapper builds a minimal wasm module that imports one
-// `(func (param ...) (result v128))`, stores that result to memory, and then
-// reloads the 16 raw bytes as four i32 results that JS can carry exactly.
+// buildSingleV128ResultWrapper builds and caches a minimal wasm module that
+// imports one `(func (param ...) (result v128))`, stores that result to memory,
+// and then reloads the 16 raw bytes as four i32 results that JS can carry
+// exactly.
 function buildSingleV128ResultWrapper(paramTypes) {
   const key = paramTypes.join(',');
   let cached = v128ResultWrappers.get(key);
@@ -330,13 +333,14 @@ function buildSingleV128ResultWrapper(paramTypes) {
   codeSection.push(...body);
   pushSection(bytes, 10, codeSection);
 
-  cached = Uint8Array.from(bytes);
+  cached = new WebAssembly.Module(Uint8Array.from(bytes));
   v128ResultWrappers.set(key, cached);
   return cached;
 }
 
-// buildSingleAnyRefResultClassifier builds a minimal wasm module that imports
-// one `(func (param ...) (result anyref))` and classifies its result as:
+// buildSingleAnyRefResultClassifier builds and caches a minimal wasm module
+// that imports one `(func (param ...) (result anyref))` and classifies its
+// result as:
 //   0 = null
 //   1 = i31
 //   2 = struct
@@ -441,7 +445,7 @@ function buildSingleAnyRefResultClassifier(paramTypes) {
   codeSection.push(...body);
   pushSection(bytes, 10, codeSection);
 
-  cached = Uint8Array.from(bytes);
+  cached = new WebAssembly.Module(Uint8Array.from(bytes));
   anyRefResultClassifiers.set(key, cached);
   return cached;
 }
@@ -634,8 +638,7 @@ function encodeValue(valueType, value) {
 // through a tiny wasm wrapper so exact NaN payloads survive the bridge back to
 // the Go harness.
 function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
-  const wrapperBytes = buildSingleFloatResultWrapper(argTypes, resultType);
-  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperModule = buildSingleFloatResultWrapper(argTypes, resultType);
   const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
   const bits = wrapperInstance.exports.call(...args);
   if (resultType === 'f32') {
@@ -647,8 +650,7 @@ function encodeSingleFloatResultPreservingBits(fn, args, argTypes, resultType) {
 // encodeSingleV128ResultPreservingBytes routes one single-result v128 call
 // through a tiny wasm wrapper so the result comes back to JS as exact bytes.
 function encodeSingleV128ResultPreservingBytes(fn, args, argTypes) {
-  const wrapperBytes = buildSingleV128ResultWrapper(argTypes);
-  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperModule = buildSingleV128ResultWrapper(argTypes);
   const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
   const words = wrapperInstance.exports.call(...args);
   if (!Array.isArray(words) || words.length !== 4) {
@@ -666,8 +668,7 @@ function encodeSingleV128ResultPreservingBytes(fn, args, argTypes) {
 // wrapper. Only the generic "other anyref" case falls back to direct JS
 // inspection so host references can preserve their identity token.
 function encodeSingleAnyRefResult(fn, args, argTypes) {
-  const wrapperBytes = buildSingleAnyRefResultClassifier(argTypes);
-  const wrapperModule = new WebAssembly.Module(wrapperBytes);
+  const wrapperModule = buildSingleAnyRefResultClassifier(argTypes);
   const wrapperInstance = new WebAssembly.Instance(wrapperModule, { m: { f: fn } });
   const code = wrapperInstance.exports.classify(...args);
   switch (code) {
