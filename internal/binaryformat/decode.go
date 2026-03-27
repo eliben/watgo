@@ -1692,6 +1692,76 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 					return out
 				}
 				out = append(out, ins)
+			case subopV128Load8x8SCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8x8S)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load8x8_s invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load8x8UCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8x8U)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load8x8_u invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load16x4SCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16x4S)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load16x4_s invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load16x4UCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16x4U)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load16x4_u invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load32x2SCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32x2S)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load32x2_s invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load32x2UCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32x2U)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load32x2_u invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load8SplatCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8Splat)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load8_splat invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load16SplatCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16Splat)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load16_splat invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load32SplatCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32Splat)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load32_splat invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
+			case subopV128Load64SplatCode:
+				ins, err := decodeMemInstr(r, wasmir.InstrV128Load64Splat)
+				if err != nil {
+					diags.Addf("code[%d]: v128.load64_splat invalid memarg: %v", funcIdx, err)
+					return out
+				}
+				out = append(out, ins)
 			case subopV128StoreCode:
 				ins, err := decodeMemInstr(r, wasmir.InstrV128Store)
 				if err != nil {

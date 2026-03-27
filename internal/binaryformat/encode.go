@@ -280,6 +280,16 @@ const (
 	subopI31GetSCode          uint32 = 0x1d
 	subopI31GetUCode          uint32 = 0x1e
 	subopV128LoadCode         uint32 = 0x00
+	subopV128Load8x8SCode     uint32 = 0x01
+	subopV128Load8x8UCode     uint32 = 0x02
+	subopV128Load16x4SCode    uint32 = 0x03
+	subopV128Load16x4UCode    uint32 = 0x04
+	subopV128Load32x2SCode    uint32 = 0x05
+	subopV128Load32x2UCode    uint32 = 0x06
+	subopV128Load8SplatCode   uint32 = 0x07
+	subopV128Load16SplatCode  uint32 = 0x08
+	subopV128Load32SplatCode  uint32 = 0x09
+	subopV128Load64SplatCode  uint32 = 0x0a
 	subopV128StoreCode        uint32 = 0x0b
 	subopV128ConstCode        uint32 = 0x0c
 	subopI8x16SwizzleCode     uint32 = 0x0e
@@ -1232,6 +1242,46 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrV128Load:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopV128LoadCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load8x8S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load8x8SCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load8x8U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load8x8UCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load16x4S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load16x4SCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load16x4U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load16x4UCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load32x2S:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load32x2SCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load32x2U:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load32x2UCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load8Splat:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load8SplatCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load16Splat:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load16SplatCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load32Splat:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load32SplatCode)
+		encodeMemArg(out, instr)
+	case wasmir.InstrV128Load64Splat:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128Load64SplatCode)
 		encodeMemArg(out, instr)
 	case wasmir.InstrV128Store:
 		out.WriteByte(opPrefixFDCode)

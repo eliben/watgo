@@ -688,11 +688,19 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	switch kind {
 	case InstrI32Load8S, InstrI32Load8U, InstrI64Load8S, InstrI64Load8U, InstrI32Store8, InstrI64Store8:
 		return 0, true
+	case InstrV128Load8Splat:
+		return 0, true
 	case InstrI32Load16S, InstrI32Load16U, InstrI64Load16S, InstrI64Load16U, InstrI32Store16, InstrI64Store16:
+		return 1, true
+	case InstrV128Load16Splat:
 		return 1, true
 	case InstrI32Load, InstrF32Load, InstrI64Load32S, InstrI64Load32U, InstrI32Store, InstrI64Store32, InstrF32Store:
 		return 2, true
+	case InstrV128Load32Splat:
+		return 2, true
 	case InstrI64Load, InstrF64Load, InstrI64Store, InstrF64Store:
+		return 3, true
+	case InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load64Splat:
 		return 3, true
 	case InstrV128Load, InstrV128Store:
 		return 4, true
@@ -2406,22 +2414,22 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF64))
-		case InstrV128Load:
+		case InstrV128Load, InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load8Splat, InstrV128Load16Splat, InstrV128Load32Splat, InstrV128Load64Splat:
 			if len(m.Memories) == 0 {
-				diags.Addf("%s: v128.load requires memory", insCtx)
+				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
 				continue
 			}
 			if int(ins.MemoryIndex) >= len(m.Memories) {
-				diags.Addf("%s: v128.load memory index %d out of range", insCtx, ins.MemoryIndex)
+				diags.Addf("%s: %s memory index %d out of range", insCtx, instrName(ins.Kind), ins.MemoryIndex)
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
 			if len(stack) < 1 {
-				diags.Addf("%s: v128.load needs 1 operand", insCtx)
+				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
 			if stack[len(stack)-1] != addrType {
-				diags.Addf("%s: v128.load expects %s address operand", insCtx, addrType)
+				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeV128))
@@ -3847,6 +3855,26 @@ func instrName(kind InstrKind) string {
 		return "f64.load"
 	case InstrV128Load:
 		return "v128.load"
+	case InstrV128Load8x8S:
+		return "v128.load8x8_s"
+	case InstrV128Load8x8U:
+		return "v128.load8x8_u"
+	case InstrV128Load16x4S:
+		return "v128.load16x4_s"
+	case InstrV128Load16x4U:
+		return "v128.load16x4_u"
+	case InstrV128Load32x2S:
+		return "v128.load32x2_s"
+	case InstrV128Load32x2U:
+		return "v128.load32x2_u"
+	case InstrV128Load8Splat:
+		return "v128.load8_splat"
+	case InstrV128Load16Splat:
+		return "v128.load16_splat"
+	case InstrV128Load32Splat:
+		return "v128.load32_splat"
+	case InstrV128Load64Splat:
+		return "v128.load64_splat"
 	case InstrI32Load8S:
 		return "i32.load8_s"
 	case InstrI32Load8U:

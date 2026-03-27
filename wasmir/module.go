@@ -271,6 +271,16 @@ const (
 	InstrF32Load
 	InstrF64Load
 	InstrV128Load
+	InstrV128Load8x8S
+	InstrV128Load8x8U
+	InstrV128Load16x4S
+	InstrV128Load16x4U
+	InstrV128Load32x2S
+	InstrV128Load32x2U
+	InstrV128Load8Splat
+	InstrV128Load16Splat
+	InstrV128Load32Splat
+	InstrV128Load64Splat
 	InstrI32Load8S
 	InstrI32Load8U
 	InstrI32Load16S

@@ -2603,7 +2603,7 @@ func encodeScriptArg(arg scriptValue, targetType wasmir.ValueType) (nodeValue, e
 	case valueF64NaNCanonical, valueF64NaNArithmetic:
 		return nodeValue{Type: valueType, Bits: strconv.FormatUint(0x7ff8000000000000, 10)}, nil
 	case valueV128Const:
-		return nodeValue{}, fmt.Errorf("v128 invoke arguments are not supported")
+		return nodeValue{Type: valueType, Bytes: base64.StdEncoding.EncodeToString(arg.v128[:])}, nil
 	case valueRefNull:
 		return nodeValue{Type: valueType, Null: true}, nil
 	case valueRefHost:
