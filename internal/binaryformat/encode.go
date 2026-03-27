@@ -338,6 +338,19 @@ const (
 	subopI64x2ShrSCode             uint32 = 0xcc
 	subopI64x2ShrUCode             uint32 = 0xcd
 	subopI64x2AddCode              uint32 = 0xce
+	subopF32x4EqCode               uint32 = 0x41
+	subopF32x4NeCode               uint32 = 0x42
+	subopF32x4LtCode               uint32 = 0x43
+	subopF32x4GtCode               uint32 = 0x44
+	subopF32x4LeCode               uint32 = 0x45
+	subopF32x4GeCode               uint32 = 0x46
+	subopF32x4CeilCode             uint32 = 0x67
+	subopF32x4FloorCode            uint32 = 0x68
+	subopF32x4TruncCode            uint32 = 0x69
+	subopF32x4NearestCode          uint32 = 0x6a
+	subopF32x4AbsCode              uint32 = 0xe0
+	subopF32x4NegCode              uint32 = 0xe1
+	subopF32x4SqrtCode             uint32 = 0xe3
 	subopF32x4DemoteF64x2ZeroCode  uint32 = 0x5e
 	subopF64x2PromoteLowF32x4Code  uint32 = 0x5f
 	subopF32x4ConvertI32x4SCode    uint32 = 0xfa
@@ -345,6 +358,13 @@ const (
 	subopF64x2ConvertLowI32x4SCode uint32 = 0xfe
 	subopF64x2ConvertLowI32x4UCode uint32 = 0xff
 	subopF32x4AddCode              uint32 = 0xe4
+	subopF32x4SubCode              uint32 = 0xe5
+	subopF32x4MulCode              uint32 = 0xe6
+	subopF32x4DivCode              uint32 = 0xe7
+	subopF32x4MinCode              uint32 = 0xe8
+	subopF32x4MaxCode              uint32 = 0xe9
+	subopF32x4PminCode             uint32 = 0xea
+	subopF32x4PmaxCode             uint32 = 0xeb
 
 	// blockTypeEmptyCode is the no-result blocktype used by block/loop/if.
 	blockTypeEmptyCode byte = 0x40
@@ -1719,6 +1739,45 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI64x2Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI64x2AddCode)
+	case wasmir.InstrF32x4Eq:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4EqCode)
+	case wasmir.InstrF32x4Ne:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4NeCode)
+	case wasmir.InstrF32x4Lt:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4LtCode)
+	case wasmir.InstrF32x4Gt:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4GtCode)
+	case wasmir.InstrF32x4Le:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4LeCode)
+	case wasmir.InstrF32x4Ge:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4GeCode)
+	case wasmir.InstrF32x4Ceil:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4CeilCode)
+	case wasmir.InstrF32x4Floor:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4FloorCode)
+	case wasmir.InstrF32x4Trunc:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4TruncCode)
+	case wasmir.InstrF32x4Nearest:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4NearestCode)
+	case wasmir.InstrF32x4Abs:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4AbsCode)
+	case wasmir.InstrF32x4Neg:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4NegCode)
+	case wasmir.InstrF32x4Sqrt:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4SqrtCode)
 	case wasmir.InstrF32x4ConvertI32x4S:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF32x4ConvertI32x4SCode)
@@ -1728,6 +1787,27 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrF32x4Add:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF32x4AddCode)
+	case wasmir.InstrF32x4Sub:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4SubCode)
+	case wasmir.InstrF32x4Mul:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4MulCode)
+	case wasmir.InstrF32x4Div:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4DivCode)
+	case wasmir.InstrF32x4Min:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4MinCode)
+	case wasmir.InstrF32x4Max:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4MaxCode)
+	case wasmir.InstrF32x4Pmin:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4PminCode)
+	case wasmir.InstrF32x4Pmax:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopF32x4PmaxCode)
 	case wasmir.InstrF64x2ConvertLowI32x4S:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopF64x2ConvertLowI32x4SCode)

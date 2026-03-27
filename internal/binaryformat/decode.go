@@ -1873,12 +1873,52 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrU})
 			case subopI64x2AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Add})
+			case subopF32x4EqCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Eq})
+			case subopF32x4NeCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ne})
+			case subopF32x4LtCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Lt})
+			case subopF32x4GtCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Gt})
+			case subopF32x4LeCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Le})
+			case subopF32x4GeCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ge})
+			case subopF32x4CeilCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ceil})
+			case subopF32x4FloorCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Floor})
+			case subopF32x4TruncCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Trunc})
+			case subopF32x4NearestCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Nearest})
+			case subopF32x4AbsCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Abs})
+			case subopF32x4NegCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Neg})
+			case subopF32x4SqrtCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Sqrt})
 			case subopF32x4ConvertI32x4SCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4S})
 			case subopF32x4ConvertI32x4UCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4U})
 			case subopF32x4AddCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
+			case subopF32x4SubCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Sub})
+			case subopF32x4MulCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Mul})
+			case subopF32x4DivCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Div})
+			case subopF32x4MinCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Min})
+			case subopF32x4MaxCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Max})
+			case subopF32x4PminCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Pmin})
+			case subopF32x4PmaxCode:
+				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Pmax})
 			case subopF64x2ConvertLowI32x4SCode:
 				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2ConvertLowI32x4S})
 			case subopF64x2ConvertLowI32x4UCode:

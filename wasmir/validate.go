@@ -3316,7 +3316,9 @@ instrLoop:
 		case InstrI8x16NarrowI16x8S, InstrI8x16NarrowI16x8U,
 			InstrI16x8NarrowI32x4S, InstrI16x8NarrowI32x4U,
 			InstrI32x4Eq, InstrI32x4LtS, InstrI32x4Add, InstrI32x4Sub, InstrI32x4Mul, InstrI32x4MinS,
-			InstrI64x2Add, InstrF32x4Add:
+			InstrI64x2Add,
+			InstrF32x4Eq, InstrF32x4Ne, InstrF32x4Lt, InstrF32x4Gt, InstrF32x4Le, InstrF32x4Ge,
+			InstrF32x4Add, InstrF32x4Sub, InstrF32x4Mul, InstrF32x4Div, InstrF32x4Min, InstrF32x4Max, InstrF32x4Pmin, InstrF32x4Pmax:
 			name := instrName(ins.Kind)
 			if len(stack) < 2 {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -3330,6 +3332,8 @@ instrLoop:
 			appendStackType(ValueTypeV128)
 		case InstrI16x8ExtendLowI8x16S, InstrI16x8ExtendLowI8x16U,
 			InstrI32x4ExtendLowI16x8S, InstrI32x4ExtendLowI16x8U,
+			InstrF32x4Ceil, InstrF32x4Floor, InstrF32x4Trunc, InstrF32x4Nearest,
+			InstrF32x4Abs, InstrF32x4Neg, InstrF32x4Sqrt,
 			InstrF32x4ConvertI32x4S, InstrF32x4ConvertI32x4U,
 			InstrF64x2ConvertLowI32x4S, InstrF64x2ConvertLowI32x4U,
 			InstrF32x4DemoteF64x2Zero, InstrF64x2PromoteLowF32x4,
@@ -3916,12 +3920,52 @@ func instrName(kind InstrKind) string {
 		return "i64x2.shr_u"
 	case InstrI64x2Add:
 		return "i64x2.add"
+	case InstrF32x4Eq:
+		return "f32x4.eq"
+	case InstrF32x4Ne:
+		return "f32x4.ne"
+	case InstrF32x4Lt:
+		return "f32x4.lt"
+	case InstrF32x4Gt:
+		return "f32x4.gt"
+	case InstrF32x4Le:
+		return "f32x4.le"
+	case InstrF32x4Ge:
+		return "f32x4.ge"
+	case InstrF32x4Ceil:
+		return "f32x4.ceil"
+	case InstrF32x4Floor:
+		return "f32x4.floor"
+	case InstrF32x4Trunc:
+		return "f32x4.trunc"
+	case InstrF32x4Nearest:
+		return "f32x4.nearest"
+	case InstrF32x4Abs:
+		return "f32x4.abs"
+	case InstrF32x4Neg:
+		return "f32x4.neg"
+	case InstrF32x4Sqrt:
+		return "f32x4.sqrt"
 	case InstrF32x4ConvertI32x4S:
 		return "f32x4.convert_i32x4_s"
 	case InstrF32x4ConvertI32x4U:
 		return "f32x4.convert_i32x4_u"
 	case InstrF32x4Add:
 		return "f32x4.add"
+	case InstrF32x4Sub:
+		return "f32x4.sub"
+	case InstrF32x4Mul:
+		return "f32x4.mul"
+	case InstrF32x4Div:
+		return "f32x4.div"
+	case InstrF32x4Min:
+		return "f32x4.min"
+	case InstrF32x4Max:
+		return "f32x4.max"
+	case InstrF32x4Pmin:
+		return "f32x4.pmin"
+	case InstrF32x4Pmax:
+		return "f32x4.pmax"
 	case InstrF64x2ConvertLowI32x4S:
 		return "f64x2.convert_low_i32x4_s"
 	case InstrF64x2ConvertLowI32x4U:

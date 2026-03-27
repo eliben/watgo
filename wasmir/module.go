@@ -355,9 +355,29 @@ const (
 	InstrI64x2ShrS
 	InstrI64x2ShrU
 	InstrI64x2Add
+	InstrF32x4Eq
+	InstrF32x4Ne
+	InstrF32x4Lt
+	InstrF32x4Gt
+	InstrF32x4Le
+	InstrF32x4Ge
+	InstrF32x4Ceil
+	InstrF32x4Floor
+	InstrF32x4Trunc
+	InstrF32x4Nearest
+	InstrF32x4Abs
+	InstrF32x4Neg
+	InstrF32x4Sqrt
 	InstrF32x4ConvertI32x4S
 	InstrF32x4ConvertI32x4U
 	InstrF32x4Add
+	InstrF32x4Sub
+	InstrF32x4Mul
+	InstrF32x4Div
+	InstrF32x4Min
+	InstrF32x4Max
+	InstrF32x4Pmin
+	InstrF32x4Pmax
 	InstrF64x2ConvertLowI32x4S
 	InstrF64x2ConvertLowI32x4U
 	InstrF32x4DemoteF64x2Zero
