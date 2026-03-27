@@ -3239,6 +3239,20 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
+		case InstrV128AnyTrue, InstrI8x16AllTrue, InstrI8x16Bitmask,
+			InstrI16x8AllTrue, InstrI16x8Bitmask,
+			InstrI32x4AllTrue, InstrI32x4Bitmask,
+			InstrI64x2AllTrue, InstrI64x2Bitmask:
+			name := instrName(ins.Kind)
+			if len(stack) < 1 {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 {
+				diags.Addf("%s: %s expects v128 operand", insCtx, name)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrV128Not:
 			if len(stack) < 1 {
 				diags.Addf("%s: v128.not needs 1 operand", insCtx)
@@ -3801,6 +3815,8 @@ func instrName(kind InstrKind) string {
 		return "i31.get_s"
 	case InstrI31GetU:
 		return "i31.get_u"
+	case InstrV128AnyTrue:
+		return "v128.any_true"
 	case InstrV128Not:
 		return "v128.not"
 	case InstrV128And:
@@ -3813,6 +3829,10 @@ func instrName(kind InstrKind) string {
 		return "v128.xor"
 	case InstrI8x16Swizzle:
 		return "i8x16.swizzle"
+	case InstrI8x16AllTrue:
+		return "i8x16.all_true"
+	case InstrI8x16Bitmask:
+		return "i8x16.bitmask"
 	case InstrI8x16Shl:
 		return "i8x16.shl"
 	case InstrI8x16ShrS:
@@ -3821,6 +3841,10 @@ func instrName(kind InstrKind) string {
 		return "i8x16.shr_u"
 	case InstrI16x8Shl:
 		return "i16x8.shl"
+	case InstrI16x8AllTrue:
+		return "i16x8.all_true"
+	case InstrI16x8Bitmask:
+		return "i16x8.bitmask"
 	case InstrI16x8ShrS:
 		return "i16x8.shr_s"
 	case InstrI16x8ShrU:
@@ -3829,6 +3853,10 @@ func instrName(kind InstrKind) string {
 		return "i32x4.splat"
 	case InstrI32x4ExtractLane:
 		return "i32x4.extract_lane"
+	case InstrI32x4AllTrue:
+		return "i32x4.all_true"
+	case InstrI32x4Bitmask:
+		return "i32x4.bitmask"
 	case InstrI32x4Eq:
 		return "i32x4.eq"
 	case InstrI32x4LtS:
@@ -3847,6 +3875,10 @@ func instrName(kind InstrKind) string {
 		return "i32x4.min_s"
 	case InstrI64x2Shl:
 		return "i64x2.shl"
+	case InstrI64x2AllTrue:
+		return "i64x2.all_true"
+	case InstrI64x2Bitmask:
+		return "i64x2.bitmask"
 	case InstrI64x2ShrS:
 		return "i64x2.shr_s"
 	case InstrI64x2ShrU:

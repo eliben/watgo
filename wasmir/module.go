@@ -310,20 +310,27 @@ const (
 	InstrRefIsNull
 	InstrRefAsNonNull
 	InstrRefFunc
+	InstrV128AnyTrue
 	InstrV128Not
 	InstrV128And
 	InstrV128AndNot
 	InstrV128Or
 	InstrV128Xor
 	InstrI8x16Swizzle
+	InstrI8x16AllTrue
+	InstrI8x16Bitmask
 	InstrI8x16Shl
 	InstrI8x16ShrS
 	InstrI8x16ShrU
+	InstrI16x8AllTrue
+	InstrI16x8Bitmask
 	InstrI16x8Shl
 	InstrI16x8ShrS
 	InstrI16x8ShrU
 	InstrI32x4Splat
 	InstrI32x4ExtractLane
+	InstrI32x4AllTrue
+	InstrI32x4Bitmask
 	InstrI32x4Eq
 	InstrI32x4LtS
 	InstrI32x4Shl
@@ -332,6 +339,8 @@ const (
 	InstrI32x4Add
 	InstrI32x4Neg
 	InstrI32x4MinS
+	InstrI64x2AllTrue
+	InstrI64x2Bitmask
 	InstrI64x2Shl
 	InstrI64x2ShrS
 	InstrI64x2ShrU

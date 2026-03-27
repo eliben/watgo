@@ -292,20 +292,27 @@ const (
 	subopV128Load64SplatCode  uint32 = 0x0a
 	subopV128StoreCode        uint32 = 0x0b
 	subopV128ConstCode        uint32 = 0x0c
+	subopV128AnyTrueCode      uint32 = 0x53
 	subopV128NotCode          uint32 = 0x4d
 	subopV128AndCode          uint32 = 0x4e
 	subopV128AndNotCode       uint32 = 0x4f
 	subopV128OrCode           uint32 = 0x50
 	subopV128XorCode          uint32 = 0x51
 	subopI8x16SwizzleCode     uint32 = 0x0e
+	subopI8x16AllTrueCode     uint32 = 0x63
+	subopI8x16BitmaskCode     uint32 = 0x64
 	subopI8x16ShlCode         uint32 = 0x6b
 	subopI8x16ShrSCode        uint32 = 0x6c
 	subopI8x16ShrUCode        uint32 = 0x6d
+	subopI16x8AllTrueCode     uint32 = 0x83
+	subopI16x8BitmaskCode     uint32 = 0x84
 	subopI16x8ShlCode         uint32 = 0x8b
 	subopI16x8ShrSCode        uint32 = 0x8c
 	subopI16x8ShrUCode        uint32 = 0x8d
 	subopI32x4SplatCode       uint32 = 0x11
 	subopI32x4ExtractLaneCode uint32 = 0x1b
+	subopI32x4AllTrueCode     uint32 = 0xa3
+	subopI32x4BitmaskCode     uint32 = 0xa4
 	subopI32x4EqCode          uint32 = 0x37
 	subopI32x4LtSCode         uint32 = 0x39
 	subopV128BitselectCode    uint32 = 0x52
@@ -315,6 +322,8 @@ const (
 	subopI32x4ShrUCode        uint32 = 0xad
 	subopI32x4AddCode         uint32 = 0xae
 	subopI32x4MinSCode        uint32 = 0xb6
+	subopI64x2AllTrueCode     uint32 = 0xc3
+	subopI64x2BitmaskCode     uint32 = 0xc4
 	subopI64x2ShlCode         uint32 = 0xcb
 	subopI64x2ShrSCode        uint32 = 0xcc
 	subopI64x2ShrUCode        uint32 = 0xcd
@@ -1557,6 +1566,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopV128ConstCode)
 		out.Write(instr.V128Const[:])
+	case wasmir.InstrV128AnyTrue:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopV128AnyTrueCode)
 	case wasmir.InstrV128Not:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopV128NotCode)
@@ -1575,6 +1587,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI8x16Swizzle:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16SwizzleCode)
+	case wasmir.InstrI8x16AllTrue:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16AllTrueCode)
+	case wasmir.InstrI8x16Bitmask:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI8x16BitmaskCode)
 	case wasmir.InstrI8x16Shl:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI8x16ShlCode)
@@ -1587,6 +1605,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI16x8Shl:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI16x8ShlCode)
+	case wasmir.InstrI16x8AllTrue:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8AllTrueCode)
+	case wasmir.InstrI16x8Bitmask:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI16x8BitmaskCode)
 	case wasmir.InstrI16x8ShrS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI16x8ShrSCode)
@@ -1600,6 +1624,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4ExtractLaneCode)
 		out.WriteByte(byte(instr.LaneIndex))
+	case wasmir.InstrI32x4AllTrue:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4AllTrueCode)
+	case wasmir.InstrI32x4Bitmask:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI32x4BitmaskCode)
 	case wasmir.InstrI32x4Eq:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI32x4EqCode)
@@ -1627,6 +1657,12 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrI64x2Shl:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI64x2ShlCode)
+	case wasmir.InstrI64x2AllTrue:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2AllTrueCode)
+	case wasmir.InstrI64x2Bitmask:
+		out.WriteByte(opPrefixFDCode)
+		writeULEB128(out, subopI64x2BitmaskCode)
 	case wasmir.InstrI64x2ShrS:
 		out.WriteByte(opPrefixFDCode)
 		writeULEB128(out, subopI64x2ShrSCode)
