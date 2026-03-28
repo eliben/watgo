@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/instrdef"
 	"github.com/eliben/watgo/internal/numlit"
 	"github.com/eliben/watgo/wasmir"
 )
@@ -1756,45 +1757,45 @@ type loweringSpec struct {
 // It returns true on success and false when operands are invalid.
 type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool
 
-func loweringOperandDecoderFor(kind wasmir.LoweringOperandKind) loweringOperandDecoder {
+func loweringOperandDecoderFor(kind instrdef.LoweringOperandKind) loweringOperandDecoder {
 	switch kind {
-	case wasmir.LoweringOperandNone:
+	case instrdef.LoweringOperandNone:
 		return nil
-	case wasmir.LoweringOperandLocalIndex:
+	case instrdef.LoweringOperandLocalIndex:
 		return decodeLocalGetOperands
-	case wasmir.LoweringOperandLocalSet:
+	case instrdef.LoweringOperandLocalSet:
 		return decodeLocalSetOperands
-	case wasmir.LoweringOperandLocalTee:
+	case instrdef.LoweringOperandLocalTee:
 		return decodeLocalTeeOperands
-	case wasmir.LoweringOperandCall:
+	case instrdef.LoweringOperandCall:
 		return decodeCallOperands
-	case wasmir.LoweringOperandCallRef:
+	case instrdef.LoweringOperandCallRef:
 		return decodeCallRefOperands
-	case wasmir.LoweringOperandBranchDepth:
+	case instrdef.LoweringOperandBranchDepth:
 		return decodeBrOperands
-	case wasmir.LoweringOperandGlobalIndex:
+	case instrdef.LoweringOperandGlobalIndex:
 		return decodeGlobalGetOperands
-	case wasmir.LoweringOperandGlobalSet:
+	case instrdef.LoweringOperandGlobalSet:
 		return decodeGlobalSetOperands
-	case wasmir.LoweringOperandI32Const:
+	case instrdef.LoweringOperandI32Const:
 		return decodeI32ConstOperands
-	case wasmir.LoweringOperandI64Const:
+	case instrdef.LoweringOperandI64Const:
 		return decodeI64ConstOperands
-	case wasmir.LoweringOperandF32Const:
+	case instrdef.LoweringOperandF32Const:
 		return decodeF32ConstOperands
-	case wasmir.LoweringOperandF64Const:
+	case instrdef.LoweringOperandF64Const:
 		return decodeF64ConstOperands
-	case wasmir.LoweringOperandV128Const:
+	case instrdef.LoweringOperandV128Const:
 		return decodeV128ConstOperands
-	case wasmir.LoweringOperandLaneIndex:
+	case instrdef.LoweringOperandLaneIndex:
 		return decodeLaneIndexOperands
-	case wasmir.LoweringOperandRefNull:
+	case instrdef.LoweringOperandRefNull:
 		return decodeRefNullOperands
-	case wasmir.LoweringOperandRefFunc:
+	case instrdef.LoweringOperandRefFunc:
 		return decodeRefFuncOperands
-	case wasmir.LoweringOperandDataIndex:
+	case instrdef.LoweringOperandDataIndex:
 		return decodeDataIndexOperands
-	case wasmir.LoweringOperandElemIndex:
+	case instrdef.LoweringOperandElemIndex:
 		return decodeElemIndexOperands
 	default:
 		return nil
@@ -1804,8 +1805,8 @@ func loweringOperandDecoderFor(kind wasmir.LoweringOperandKind) loweringOperandD
 // loweringSpecs maps plain instruction names to table-driven lowering rules.
 var loweringSpecs = func() map[string]loweringSpec {
 	specs := make(map[string]loweringSpec)
-	for _, def := range wasmir.InstructionDefs() {
-		if def.Text.SyntaxClass != wasmir.InstrSyntaxPlain {
+	for _, def := range instrdef.InstructionDefs() {
+		if def.Text.SyntaxClass != instrdef.InstrSyntaxPlain {
 			continue
 		}
 		specs[def.TextName] = loweringSpec{
@@ -2254,7 +2255,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 // lowerMemoryInstr lowers load/store instructions with optional memarg
 // keywords (for example align=1 offset=8).
 func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) bool {
-	if !instructionHasSyntaxClass(pi.Name, wasmir.InstrSyntaxMemory) {
+	if !instructionHasSyntaxClass(pi.Name, instrdef.InstrSyntaxMemory) {
 		return false
 	}
 	kind, ok := instructionKind(pi.Name)

@@ -1,4 +1,6 @@
-package wasmir
+package instrdef
+
+import . "github.com/eliben/watgo/wasmir"
 
 // InstrSyntaxClass groups instructions by their source-level text syntax.
 //

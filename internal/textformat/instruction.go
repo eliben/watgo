@@ -1,6 +1,9 @@
 package textformat
 
-import "github.com/eliben/watgo/wasmir"
+import (
+	"github.com/eliben/watgo/internal/instrdef"
+	"github.com/eliben/watgo/wasmir"
+)
 
 // Instruction is one text-format instruction node in the parser AST.
 //
@@ -165,7 +168,7 @@ func (op *TypeOperand) Loc() string {
 // needed by parser and lowering decisions.
 type instrInfo struct {
 	kind        wasmir.InstrKind
-	syntaxClass wasmir.InstrSyntaxClass
+	syntaxClass instrdef.InstrSyntaxClass
 }
 
 // instructionInfoByName is the single lookup table for instruction facts used
@@ -175,7 +178,7 @@ var instructionInfoByName map[string]instrInfo
 
 func init() {
 	instructionInfoByName = make(map[string]instrInfo)
-	for _, def := range wasmir.InstructionDefs() {
+	for _, def := range instrdef.InstructionDefs() {
 		instructionInfoByName[def.TextName] = instrInfo{
 			kind:        def.Kind,
 			syntaxClass: def.Text.SyntaxClass,
@@ -194,7 +197,7 @@ func instructionKind(name string) (wasmir.InstrKind, bool) {
 
 // instructionHasSyntaxClass reports whether name belongs to the given syntax
 // family in the shared instruction catalog.
-func instructionHasSyntaxClass(name string, class wasmir.InstrSyntaxClass) bool {
+func instructionHasSyntaxClass(name string, class instrdef.InstrSyntaxClass) bool {
 	entry, ok := instructionInfoByName[name]
 	return ok && entry.syntaxClass == class
 }

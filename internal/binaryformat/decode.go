@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/instrdef"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -1130,13 +1131,13 @@ func decodeInstructionFromOpcode(r *bytes.Reader, op byte) (wasmir.Instruction, 
 				return wasmir.Instruction{Kind: wasmir.InstrRefCast, RefType: refType}, nil
 			}
 		}
-		def, ok := wasmir.LookupInstructionByBinary(op, subop)
+		def, ok := instrdef.LookupInstructionByBinary(op, subop)
 		if !ok {
 			return wasmir.Instruction{}, fmt.Errorf("unsupported 0x%x subopcode 0x%x", op, subop)
 		}
 		return decodeInstructionFromDef(r, def)
 	default:
-		def, ok := wasmir.LookupInstructionByBinary(0, uint32(op))
+		def, ok := instrdef.LookupInstructionByBinary(0, uint32(op))
 		if !ok {
 			return wasmir.Instruction{}, fmt.Errorf("unsupported opcode 0x%x", op)
 		}
@@ -1144,8 +1145,8 @@ func decodeInstructionFromOpcode(r *bytes.Reader, op byte) (wasmir.Instruction, 
 	}
 }
 
-func decodeInstructionFromDef(r *bytes.Reader, def wasmir.InstructionDef) (wasmir.Instruction, error) {
-	if def.Binary.Encoding == wasmir.BinaryEncodingSimple {
+func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (wasmir.Instruction, error) {
+	if def.Binary.Encoding == instrdef.BinaryEncodingSimple {
 		return wasmir.Instruction{Kind: def.Kind}, nil
 	}
 
@@ -1556,7 +1557,7 @@ func decodeConstExprInstrs(r *bytes.Reader) ([]wasmir.Instruction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if def, ok := wasmir.LookupInstructionByBinary(0, uint32(op)); ok && def.Kind == wasmir.InstrEnd {
+		if def, ok := instrdef.LookupInstructionByBinary(0, uint32(op)); ok && def.Kind == wasmir.InstrEnd {
 			return out, nil
 		}
 		ins, err := decodeConstExprInstr(r, op)
@@ -1596,7 +1597,7 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 }
 
 func instructionName(kind wasmir.InstrKind) string {
-	if def, ok := wasmir.LookupInstructionByKind(kind); ok {
+	if def, ok := instrdef.LookupInstructionByKind(kind); ok {
 		return def.TextName
 	}
 	return fmt.Sprintf("instruction %d", kind)

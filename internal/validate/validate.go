@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/instrdef"
 	. "github.com/eliben/watgo/wasmir"
 )
 
@@ -1079,7 +1080,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		return true
 	}
 
-	stackSigOperandText := func(sig FixedStackSig) string {
+	stackSigOperandText := func(sig instrdef.FixedStackSig) string {
 		switch sig.ParamCount {
 		case 0:
 			return "no operands"
@@ -1097,7 +1098,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 	}
 
-	applyFixedStackSig := func(insCtx string, kind InstrKind, sig FixedStackSig) {
+	applyFixedStackSig := func(insCtx string, kind InstrKind, sig instrdef.FixedStackSig) {
 		if len(stack) < int(sig.ParamCount) {
 			diags.Addf("%s: %s needs %d operands", insCtx, instrName(kind), sig.ParamCount)
 			return
@@ -1180,7 +1181,7 @@ instrLoop:
 			}
 		}
 
-		if def, ok := LookupInstructionByKind(ins.Kind); ok && def.Validate.StackSig.Enabled {
+		if def, ok := instrdef.LookupInstructionByKind(ins.Kind); ok && def.Validate.StackSig.Enabled {
 			applyFixedStackSig(insCtx, ins.Kind, def.Validate.StackSig)
 			continue
 		}
@@ -3754,7 +3755,7 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 }
 
 func instrName(kind InstrKind) string {
-	if def, ok := LookupInstructionByKind(kind); ok {
+	if def, ok := instrdef.LookupInstructionByKind(kind); ok {
 		return def.TextName
 	}
 	return fmt.Sprintf("instruction(%d)", kind)

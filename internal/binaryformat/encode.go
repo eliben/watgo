@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/instrdef"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -694,8 +695,8 @@ func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment
 // encodeSimpleInstruction emits one no-immediate instruction that is described
 // in wasmir's shared instruction catalog.
 func encodeSimpleInstruction(out *bytes.Buffer, instr wasmir.Instruction) bool {
-	def, ok := wasmir.LookupInstructionByKind(instr.Kind)
-	if !ok || def.Binary.Encoding != wasmir.BinaryEncodingSimple {
+	def, ok := instrdef.LookupInstructionByKind(instr.Kind)
+	if !ok || def.Binary.Encoding != instrdef.BinaryEncodingSimple {
 		return false
 	}
 	if def.Binary.Prefix == 0 {
@@ -711,8 +712,8 @@ func encodeSimpleInstruction(out *bytes.Buffer, instr wasmir.Instruction) bool {
 // shared instruction catalog for instructions that still use handwritten
 // immediate encoding.
 func writeInstructionOpcode(out *bytes.Buffer, kind wasmir.InstrKind) bool {
-	def, ok := wasmir.LookupInstructionByKind(kind)
-	if !ok || def.Binary.Encoding == wasmir.BinaryEncodingNone {
+	def, ok := instrdef.LookupInstructionByKind(kind)
+	if !ok || def.Binary.Encoding == instrdef.BinaryEncodingNone {
 		return false
 	}
 	if def.Binary.Prefix == 0 {
