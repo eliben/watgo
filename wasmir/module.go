@@ -399,12 +399,26 @@ const (
 	InstrI32x4ExtmulHighI16x8S
 	InstrI32x4ExtmulLowI16x8U
 	InstrI32x4ExtmulHighI16x8U
+	InstrI64x2Eq
+	InstrI64x2Ne
+	InstrI64x2LtS
+	InstrI64x2GtS
+	InstrI64x2LeS
+	InstrI64x2GeS
+	InstrI64x2Abs
+	InstrI64x2Neg
 	InstrI64x2AllTrue
 	InstrI64x2Bitmask
 	InstrI64x2Shl
 	InstrI64x2ShrS
 	InstrI64x2ShrU
 	InstrI64x2Add
+	InstrI64x2Sub
+	InstrI64x2Mul
+	InstrI64x2ExtmulLowI32x4S
+	InstrI64x2ExtmulHighI32x4S
+	InstrI64x2ExtmulLowI32x4U
+	InstrI64x2ExtmulHighI32x4U
 	InstrF32x4Eq
 	InstrF32x4Ne
 	InstrF32x4Lt
