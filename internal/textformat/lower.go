@@ -1756,45 +1756,45 @@ type loweringSpec struct {
 // It returns true on success and false when operands are invalid.
 type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool
 
-func loweringOperandDecoderFor(kind wasmir.LoweringDecoderKind) loweringOperandDecoder {
+func loweringOperandDecoderFor(kind wasmir.LoweringOperandKind) loweringOperandDecoder {
 	switch kind {
-	case wasmir.LoweringDecodeNone:
+	case wasmir.LoweringOperandNone:
 		return nil
-	case wasmir.LoweringDecodeLocalIndex:
+	case wasmir.LoweringOperandLocalIndex:
 		return decodeLocalGetOperands
-	case wasmir.LoweringDecodeLocalSet:
+	case wasmir.LoweringOperandLocalSet:
 		return decodeLocalSetOperands
-	case wasmir.LoweringDecodeLocalTee:
+	case wasmir.LoweringOperandLocalTee:
 		return decodeLocalTeeOperands
-	case wasmir.LoweringDecodeCall:
+	case wasmir.LoweringOperandCall:
 		return decodeCallOperands
-	case wasmir.LoweringDecodeCallRef:
+	case wasmir.LoweringOperandCallRef:
 		return decodeCallRefOperands
-	case wasmir.LoweringDecodeBranchDepth:
+	case wasmir.LoweringOperandBranchDepth:
 		return decodeBrOperands
-	case wasmir.LoweringDecodeGlobalIndex:
+	case wasmir.LoweringOperandGlobalIndex:
 		return decodeGlobalGetOperands
-	case wasmir.LoweringDecodeGlobalSet:
+	case wasmir.LoweringOperandGlobalSet:
 		return decodeGlobalSetOperands
-	case wasmir.LoweringDecodeI32Const:
+	case wasmir.LoweringOperandI32Const:
 		return decodeI32ConstOperands
-	case wasmir.LoweringDecodeI64Const:
+	case wasmir.LoweringOperandI64Const:
 		return decodeI64ConstOperands
-	case wasmir.LoweringDecodeF32Const:
+	case wasmir.LoweringOperandF32Const:
 		return decodeF32ConstOperands
-	case wasmir.LoweringDecodeF64Const:
+	case wasmir.LoweringOperandF64Const:
 		return decodeF64ConstOperands
-	case wasmir.LoweringDecodeV128Const:
+	case wasmir.LoweringOperandV128Const:
 		return decodeV128ConstOperands
-	case wasmir.LoweringDecodeLaneIndex:
+	case wasmir.LoweringOperandLaneIndex:
 		return decodeLaneIndexOperands
-	case wasmir.LoweringDecodeRefNull:
+	case wasmir.LoweringOperandRefNull:
 		return decodeRefNullOperands
-	case wasmir.LoweringDecodeRefFunc:
+	case wasmir.LoweringOperandRefFunc:
 		return decodeRefFuncOperands
-	case wasmir.LoweringDecodeDataIndex:
+	case wasmir.LoweringOperandDataIndex:
 		return decodeDataIndexOperands
-	case wasmir.LoweringDecodeElemIndex:
+	case wasmir.LoweringOperandElemIndex:
 		return decodeElemIndexOperands
 	default:
 		return nil
@@ -1810,7 +1810,7 @@ var loweringSpecs = func() map[string]loweringSpec {
 		}
 		specs[def.TextName] = loweringSpec{
 			operandCount: int(def.Text.OperandCount),
-			decode:       loweringOperandDecoderFor(def.Text.LoweringDecoder),
+			decode:       loweringOperandDecoderFor(def.Text.LoweringOperands),
 		}
 	}
 	return specs

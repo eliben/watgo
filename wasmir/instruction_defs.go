@@ -14,33 +14,33 @@ const (
 	InstrSyntaxSpecial
 )
 
-// LoweringDecoderKind identifies which shared plain-instruction operand decoder
+// LoweringOperandKind identifies which shared plain-instruction operand handler
 // should be used by text lowering.
 //
-// A zero value means the instruction is lowered directly without decoding any
+// A zero value means the instruction is lowered directly without processing any
 // explicit operands.
-type LoweringDecoderKind uint8
+type LoweringOperandKind uint8
 
 const (
-	LoweringDecodeNone LoweringDecoderKind = iota
-	LoweringDecodeLocalIndex
-	LoweringDecodeLocalSet
-	LoweringDecodeLocalTee
-	LoweringDecodeCall
-	LoweringDecodeCallRef
-	LoweringDecodeBranchDepth
-	LoweringDecodeGlobalIndex
-	LoweringDecodeGlobalSet
-	LoweringDecodeI32Const
-	LoweringDecodeI64Const
-	LoweringDecodeF32Const
-	LoweringDecodeF64Const
-	LoweringDecodeV128Const
-	LoweringDecodeLaneIndex
-	LoweringDecodeRefNull
-	LoweringDecodeRefFunc
-	LoweringDecodeDataIndex
-	LoweringDecodeElemIndex
+	LoweringOperandNone LoweringOperandKind = iota
+	LoweringOperandLocalIndex
+	LoweringOperandLocalSet
+	LoweringOperandLocalTee
+	LoweringOperandCall
+	LoweringOperandCallRef
+	LoweringOperandBranchDepth
+	LoweringOperandGlobalIndex
+	LoweringOperandGlobalSet
+	LoweringOperandI32Const
+	LoweringOperandI64Const
+	LoweringOperandF32Const
+	LoweringOperandF64Const
+	LoweringOperandV128Const
+	LoweringOperandLaneIndex
+	LoweringOperandRefNull
+	LoweringOperandRefFunc
+	LoweringOperandDataIndex
+	LoweringOperandElemIndex
 )
 
 // FixedStackSig describes the exact operand/result value types for a simple
@@ -62,9 +62,9 @@ type FixedStackSig struct {
 // Text-oriented consumers use this to recognize syntax families and generic
 // plain-instruction lowering behavior.
 type InstructionTextDef struct {
-	SyntaxClass     InstrSyntaxClass
-	OperandCount    int8
-	LoweringDecoder LoweringDecoderKind
+	SyntaxClass      InstrSyntaxClass
+	OperandCount     int8
+	LoweringOperands LoweringOperandKind
 }
 
 // InstructionBinaryDef contains generic binary encoding metadata for
@@ -440,29 +440,29 @@ var (
 		specialInstr(InstrTableSet, "table.set"),
 		specialInstr(InstrTableSize, "table.size"),
 
-		// Plain instructions with shared lowering decoders.
-		plainDecodedInstr(InstrBr, "br", 1, LoweringDecodeBranchDepth),
-		plainDecodedInstr(InstrBrIf, "br_if", 1, LoweringDecodeBranchDepth),
-		plainDecodedInstr(InstrBrOnNonNull, "br_on_non_null", 1, LoweringDecodeBranchDepth),
-		plainDecodedInstr(InstrBrOnNull, "br_on_null", 1, LoweringDecodeBranchDepth),
-		plainDecodedInstr(InstrCall, "call", 1, LoweringDecodeCall),
-		plainDecodedInstr(InstrCallRef, "call_ref", 1, LoweringDecodeCallRef),
-		plainDecodedInstr(InstrDataDrop, "data.drop", 1, LoweringDecodeDataIndex),
-		plainDecodedInstr(InstrElemDrop, "elem.drop", 1, LoweringDecodeElemIndex),
-		plainDecodedInstr(InstrF32Const, "f32.const", 1, LoweringDecodeF32Const),
-		plainDecodedInstr(InstrF64Const, "f64.const", 1, LoweringDecodeF64Const),
-		plainDecodedInstr(InstrGlobalGet, "global.get", 1, LoweringDecodeGlobalIndex),
-		plainDecodedInstr(InstrGlobalSet, "global.set", 1, LoweringDecodeGlobalSet),
-		plainDecodedInstr(InstrI32Const, "i32.const", 1, LoweringDecodeI32Const),
-		plainDecodedInstr(InstrI32x4ExtractLane, "i32x4.extract_lane", 1, LoweringDecodeLaneIndex),
-		plainDecodedInstr(InstrI64Const, "i64.const", 1, LoweringDecodeI64Const),
-		plainDecodedInstr(InstrLocalGet, "local.get", 1, LoweringDecodeLocalIndex),
-		plainDecodedInstr(InstrLocalSet, "local.set", 1, LoweringDecodeLocalSet),
-		plainDecodedInstr(InstrLocalTee, "local.tee", 1, LoweringDecodeLocalTee),
-		plainDecodedInstr(InstrMemoryInit, "memory.init", 1, LoweringDecodeDataIndex),
-		plainDecodedInstr(InstrRefFunc, "ref.func", 1, LoweringDecodeRefFunc),
-		plainDecodedInstr(InstrRefNull, "ref.null", 1, LoweringDecodeRefNull),
-		plainDecodedInstr(InstrV128Const, "v128.const", -1, LoweringDecodeV128Const),
+		// Plain instructions with shared lowering operand handling.
+		plainOperandInstr(InstrBr, "br", 1, LoweringOperandBranchDepth),
+		plainOperandInstr(InstrBrIf, "br_if", 1, LoweringOperandBranchDepth),
+		plainOperandInstr(InstrBrOnNonNull, "br_on_non_null", 1, LoweringOperandBranchDepth),
+		plainOperandInstr(InstrBrOnNull, "br_on_null", 1, LoweringOperandBranchDepth),
+		plainOperandInstr(InstrCall, "call", 1, LoweringOperandCall),
+		plainOperandInstr(InstrCallRef, "call_ref", 1, LoweringOperandCallRef),
+		plainOperandInstr(InstrDataDrop, "data.drop", 1, LoweringOperandDataIndex),
+		plainOperandInstr(InstrElemDrop, "elem.drop", 1, LoweringOperandElemIndex),
+		plainOperandInstr(InstrF32Const, "f32.const", 1, LoweringOperandF32Const),
+		plainOperandInstr(InstrF64Const, "f64.const", 1, LoweringOperandF64Const),
+		plainOperandInstr(InstrGlobalGet, "global.get", 1, LoweringOperandGlobalIndex),
+		plainOperandInstr(InstrGlobalSet, "global.set", 1, LoweringOperandGlobalSet),
+		plainOperandInstr(InstrI32Const, "i32.const", 1, LoweringOperandI32Const),
+		plainOperandInstr(InstrI32x4ExtractLane, "i32x4.extract_lane", 1, LoweringOperandLaneIndex),
+		plainOperandInstr(InstrI64Const, "i64.const", 1, LoweringOperandI64Const),
+		plainOperandInstr(InstrLocalGet, "local.get", 1, LoweringOperandLocalIndex),
+		plainOperandInstr(InstrLocalSet, "local.set", 1, LoweringOperandLocalSet),
+		plainOperandInstr(InstrLocalTee, "local.tee", 1, LoweringOperandLocalTee),
+		plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex),
+		plainOperandInstr(InstrRefFunc, "ref.func", 1, LoweringOperandRefFunc),
+		plainOperandInstr(InstrRefNull, "ref.null", 1, LoweringOperandRefNull),
+		plainOperandInstr(InstrV128Const, "v128.const", -1, LoweringOperandV128Const),
 	}
 	instructionByKind   map[InstrKind]InstructionDef
 	instructionByName   map[string]InstructionDef
@@ -611,14 +611,14 @@ func specialInstr(kind InstrKind, name string) InstructionDef {
 	}
 }
 
-func plainDecodedInstr(kind InstrKind, name string, operandCount int8, decoder LoweringDecoderKind) InstructionDef {
+func plainOperandInstr(kind InstrKind, name string, operandCount int8, operands LoweringOperandKind) InstructionDef {
 	return InstructionDef{
 		Kind:     kind,
 		TextName: name,
 		Text: InstructionTextDef{
-			SyntaxClass:     InstrSyntaxPlain,
-			OperandCount:    operandCount,
-			LoweringDecoder: decoder,
+			SyntaxClass:      InstrSyntaxPlain,
+			OperandCount:     operandCount,
+			LoweringOperands: operands,
 		},
 	}
 }
