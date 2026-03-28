@@ -317,6 +317,19 @@ const (
 	InstrV128Or
 	InstrV128Xor
 	InstrI8x16Swizzle
+	InstrI8x16Eq
+	InstrI8x16Ne
+	InstrI8x16LtS
+	InstrI8x16LtU
+	InstrI8x16GtS
+	InstrI8x16GtU
+	InstrI8x16LeS
+	InstrI8x16LeU
+	InstrI8x16GeS
+	InstrI8x16GeU
+	InstrI8x16Abs
+	InstrI8x16Popcnt
+	InstrI8x16Neg
 	InstrI8x16AllTrue
 	InstrI8x16Bitmask
 	InstrI8x16NarrowI16x8S
@@ -324,6 +337,17 @@ const (
 	InstrI8x16Shl
 	InstrI8x16ShrS
 	InstrI8x16ShrU
+	InstrI8x16Add
+	InstrI8x16AddSatS
+	InstrI8x16AddSatU
+	InstrI8x16Sub
+	InstrI8x16SubSatS
+	InstrI8x16SubSatU
+	InstrI8x16MinS
+	InstrI8x16MinU
+	InstrI8x16MaxS
+	InstrI8x16MaxU
+	InstrI8x16AvgrU
 	InstrI16x8Eq
 	InstrI16x8Ne
 	InstrI16x8LtS
