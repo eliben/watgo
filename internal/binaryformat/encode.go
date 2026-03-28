@@ -1039,11 +1039,28 @@ func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment
 	out.WriteByte(opEndCode)
 }
 
+// encodeSimpleInstruction emits one no-immediate instruction that is described
+// in wasmir's shared instruction catalog.
+func encodeSimpleInstruction(out *bytes.Buffer, instr wasmir.Instruction) bool {
+	def, ok := wasmir.LookupInstructionByKind(instr.Kind)
+	if !ok || !def.Binary.HasEncoding {
+		return false
+	}
+	if def.Binary.Prefix == 0 {
+		out.WriteByte(byte(def.Binary.Opcode))
+		return true
+	}
+	out.WriteByte(def.Binary.Prefix)
+	writeULEB128(out, def.Binary.Opcode)
+	return true
+}
+
 // encodeInstr maps semantic instruction kinds to binary opcodes.
 func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Instruction, diags *diag.ErrorList) {
+	if encodeSimpleInstruction(out, instr) {
+		return
+	}
 	switch instr.Kind {
-	case wasmir.InstrNop:
-		out.WriteByte(opNopCode)
 	case wasmir.InstrBlock:
 		out.WriteByte(opBlockCode)
 		encodeBlockType(out, funcIdx, instrIdx, "block", instr, diags)

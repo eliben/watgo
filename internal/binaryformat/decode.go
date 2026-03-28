@@ -1073,6 +1073,11 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			diags.Addf("code[%d]: failed reading opcode: %v", funcIdx, err)
 			return out
 		}
+		if def, ok := wasmir.LookupInstructionByBinary(0, uint32(op)); ok &&
+			def.Kind != wasmir.InstrElse && def.Kind != wasmir.InstrEnd {
+			out = append(out, wasmir.Instruction{Kind: def.Kind})
+			continue
+		}
 
 		switch op {
 		case opUnreachableCode:
@@ -1367,6 +1372,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			if err != nil {
 				diags.Addf("code[%d]: 0xfb prefixed op missing/invalid subopcode: %v", funcIdx, err)
 				return out
+			}
+			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFBCode, subop); ok {
+				out = append(out, wasmir.Instruction{Kind: def.Kind})
+				continue
 			}
 			switch subop {
 			case subopStructNewCode:
@@ -1683,6 +1692,10 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			if err != nil {
 				diags.Addf("code[%d]: 0xfd prefixed op missing/invalid subopcode: %v", funcIdx, err)
 				return out
+			}
+			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFDCode, subop); ok {
+				out = append(out, wasmir.Instruction{Kind: def.Kind})
+				continue
 			}
 			switch subop {
 			case subopV128LoadCode:

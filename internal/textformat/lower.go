@@ -1756,272 +1756,65 @@ type loweringSpec struct {
 // It returns true on success and false when operands are invalid.
 type loweringOperandDecoder func(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool
 
-// loweringSpecs maps plain instruction names to table-driven lowering rules.
-var loweringSpecs = map[string]loweringSpec{
-	"any.convert_extern":            {operandCount: 0},
-	"extern.convert_any":            {operandCount: 0},
-	"nop":                           {operandCount: 0},
-	"else":                          {operandCount: 0},
-	"end":                           {operandCount: 0},
-	"drop":                          {operandCount: 0},
-	"select":                        {operandCount: 0},
-	"i32.add":                       {operandCount: 0},
-	"i32.sub":                       {operandCount: 0},
-	"i32.mul":                       {operandCount: 0},
-	"i32.or":                        {operandCount: 0},
-	"i32.xor":                       {operandCount: 0},
-	"i32.div_s":                     {operandCount: 0},
-	"i32.div_u":                     {operandCount: 0},
-	"i32.rem_s":                     {operandCount: 0},
-	"i32.rem_u":                     {operandCount: 0},
-	"i32.shl":                       {operandCount: 0},
-	"i32.shr_s":                     {operandCount: 0},
-	"i32.shr_u":                     {operandCount: 0},
-	"i32.rotl":                      {operandCount: 0},
-	"i32.rotr":                      {operandCount: 0},
-	"i32.clz":                       {operandCount: 0},
-	"i32.popcnt":                    {operandCount: 0},
-	"i32.extend8_s":                 {operandCount: 0},
-	"i32.extend16_s":                {operandCount: 0},
-	"i32.eqz":                       {operandCount: 0},
-	"i32.ne":                        {operandCount: 0},
-	"i32.lt_s":                      {operandCount: 0},
-	"i32.lt_u":                      {operandCount: 0},
-	"i32.le_s":                      {operandCount: 0},
-	"i32.le_u":                      {operandCount: 0},
-	"i32.gt_s":                      {operandCount: 0},
-	"i32.gt_u":                      {operandCount: 0},
-	"i32.ge_s":                      {operandCount: 0},
-	"i32.ge_u":                      {operandCount: 0},
-	"i32.and":                       {operandCount: 0},
-	"i64.add":                       {operandCount: 0},
-	"i64.and":                       {operandCount: 0},
-	"i64.or":                        {operandCount: 0},
-	"i64.xor":                       {operandCount: 0},
-	"i64.eq":                        {operandCount: 0},
-	"i64.ne":                        {operandCount: 0},
-	"i64.eqz":                       {operandCount: 0},
-	"i64.gt_s":                      {operandCount: 0},
-	"i64.gt_u":                      {operandCount: 0},
-	"i64.ge_s":                      {operandCount: 0},
-	"i64.ge_u":                      {operandCount: 0},
-	"i64.le_s":                      {operandCount: 0},
-	"i64.le_u":                      {operandCount: 0},
-	"i64.sub":                       {operandCount: 0},
-	"i64.mul":                       {operandCount: 0},
-	"i64.div_s":                     {operandCount: 0},
-	"i64.div_u":                     {operandCount: 0},
-	"i64.rem_s":                     {operandCount: 0},
-	"i64.rem_u":                     {operandCount: 0},
-	"i64.shl":                       {operandCount: 0},
-	"i64.shr_s":                     {operandCount: 0},
-	"i64.shr_u":                     {operandCount: 0},
-	"i64.rotl":                      {operandCount: 0},
-	"i64.rotr":                      {operandCount: 0},
-	"i64.lt_s":                      {operandCount: 0},
-	"i64.lt_u":                      {operandCount: 0},
-	"i64.clz":                       {operandCount: 0},
-	"i64.ctz":                       {operandCount: 0},
-	"i64.popcnt":                    {operandCount: 0},
-	"i64.extend8_s":                 {operandCount: 0},
-	"i64.extend16_s":                {operandCount: 0},
-	"i64.extend32_s":                {operandCount: 0},
-	"i32.wrap_i64":                  {operandCount: 0},
-	"i64.extend_i32_s":              {operandCount: 0},
-	"i64.extend_i32_u":              {operandCount: 0},
-	"f32.convert_i32_s":             {operandCount: 0},
-	"f64.convert_i64_s":             {operandCount: 0},
-	"f32.add":                       {operandCount: 0},
-	"f32.sub":                       {operandCount: 0},
-	"f32.mul":                       {operandCount: 0},
-	"f32.div":                       {operandCount: 0},
-	"f32.sqrt":                      {operandCount: 0},
-	"f32.neg":                       {operandCount: 0},
-	"f32.eq":                        {operandCount: 0},
-	"f32.lt":                        {operandCount: 0},
-	"f32.min":                       {operandCount: 0},
-	"f32.max":                       {operandCount: 0},
-	"f32.ne":                        {operandCount: 0},
-	"f32.ceil":                      {operandCount: 0},
-	"f32.floor":                     {operandCount: 0},
-	"f32.trunc":                     {operandCount: 0},
-	"f32.nearest":                   {operandCount: 0},
-	"f64.add":                       {operandCount: 0},
-	"f64.sub":                       {operandCount: 0},
-	"f64.mul":                       {operandCount: 0},
-	"f64.div":                       {operandCount: 0},
-	"f64.sqrt":                      {operandCount: 0},
-	"f64.neg":                       {operandCount: 0},
-	"f64.min":                       {operandCount: 0},
-	"f64.max":                       {operandCount: 0},
-	"f64.ceil":                      {operandCount: 0},
-	"f64.floor":                     {operandCount: 0},
-	"f64.trunc":                     {operandCount: 0},
-	"f64.nearest":                   {operandCount: 0},
-	"f64.eq":                        {operandCount: 0},
-	"f64.le":                        {operandCount: 0},
-	"i32.reinterpret_f32":           {operandCount: 0},
-	"i64.reinterpret_f64":           {operandCount: 0},
-	"f32.reinterpret_i32":           {operandCount: 0},
-	"f64.reinterpret_i64":           {operandCount: 0},
-	"local.get":                     {operandCount: 1, decode: decodeLocalGetOperands},
-	"local.set":                     {operandCount: 1, decode: decodeLocalSetOperands},
-	"local.tee":                     {operandCount: 1, decode: decodeLocalTeeOperands},
-	"call":                          {operandCount: 1, decode: decodeCallOperands},
-	"call_ref":                      {operandCount: 1, decode: decodeCallRefOperands},
-	"br":                            {operandCount: 1, decode: decodeBrOperands},
-	"br_if":                         {operandCount: 1, decode: decodeBrOperands},
-	"br_on_null":                    {operandCount: 1, decode: decodeBrOperands},
-	"br_on_non_null":                {operandCount: 1, decode: decodeBrOperands},
-	"global.get":                    {operandCount: 1, decode: decodeGlobalGetOperands},
-	"global.set":                    {operandCount: 1, decode: decodeGlobalSetOperands},
-	"unreachable":                   {operandCount: 0},
-	"return":                        {operandCount: 0},
-	"i32.eq":                        {operandCount: 0},
-	"i32.ctz":                       {operandCount: 0},
-	"f32.gt":                        {operandCount: 0},
-	"v128.any_true":                 {operandCount: 0},
-	"v128.not":                      {operandCount: 0},
-	"v128.and":                      {operandCount: 0},
-	"v128.andnot":                   {operandCount: 0},
-	"v128.or":                       {operandCount: 0},
-	"v128.xor":                      {operandCount: 0},
-	"i8x16.swizzle":                 {operandCount: 0},
-	"i8x16.all_true":                {operandCount: 0},
-	"i8x16.bitmask":                 {operandCount: 0},
-	"i8x16.narrow_i16x8_s":          {operandCount: 0},
-	"i8x16.narrow_i16x8_u":          {operandCount: 0},
-	"i8x16.shl":                     {operandCount: 0},
-	"i8x16.shr_s":                   {operandCount: 0},
-	"i8x16.shr_u":                   {operandCount: 0},
-	"i16x8.eq":                      {operandCount: 0},
-	"i16x8.ne":                      {operandCount: 0},
-	"i16x8.lt_s":                    {operandCount: 0},
-	"i16x8.lt_u":                    {operandCount: 0},
-	"i16x8.gt_s":                    {operandCount: 0},
-	"i16x8.gt_u":                    {operandCount: 0},
-	"i16x8.le_s":                    {operandCount: 0},
-	"i16x8.le_u":                    {operandCount: 0},
-	"i16x8.ge_s":                    {operandCount: 0},
-	"i16x8.ge_u":                    {operandCount: 0},
-	"i16x8.extadd_pairwise_i8x16_s": {operandCount: 0},
-	"i16x8.extadd_pairwise_i8x16_u": {operandCount: 0},
-	"i16x8.abs":                     {operandCount: 0},
-	"i16x8.neg":                     {operandCount: 0},
-	"i16x8.q15mulr_sat_s":           {operandCount: 0},
-	"i16x8.all_true":                {operandCount: 0},
-	"i16x8.bitmask":                 {operandCount: 0},
-	"i16x8.narrow_i32x4_s":          {operandCount: 0},
-	"i16x8.narrow_i32x4_u":          {operandCount: 0},
-	"i16x8.extend_low_i8x16_s":      {operandCount: 0},
-	"i16x8.extend_low_i8x16_u":      {operandCount: 0},
-	"i16x8.shl":                     {operandCount: 0},
-	"i16x8.shr_s":                   {operandCount: 0},
-	"i16x8.shr_u":                   {operandCount: 0},
-	"i16x8.add":                     {operandCount: 0},
-	"i16x8.add_sat_s":               {operandCount: 0},
-	"i16x8.add_sat_u":               {operandCount: 0},
-	"i16x8.sub":                     {operandCount: 0},
-	"i16x8.sub_sat_s":               {operandCount: 0},
-	"i16x8.sub_sat_u":               {operandCount: 0},
-	"i16x8.mul":                     {operandCount: 0},
-	"i16x8.min_s":                   {operandCount: 0},
-	"i16x8.min_u":                   {operandCount: 0},
-	"i16x8.max_s":                   {operandCount: 0},
-	"i16x8.max_u":                   {operandCount: 0},
-	"i16x8.avgr_u":                  {operandCount: 0},
-	"i16x8.extmul_low_i8x16_s":      {operandCount: 0},
-	"i16x8.extmul_high_i8x16_s":     {operandCount: 0},
-	"i16x8.extmul_low_i8x16_u":      {operandCount: 0},
-	"i16x8.extmul_high_i8x16_u":     {operandCount: 0},
-	"i32x4.eq":                      {operandCount: 0},
-	"i32x4.lt_s":                    {operandCount: 0},
-	"i32x4.all_true":                {operandCount: 0},
-	"i32x4.bitmask":                 {operandCount: 0},
-	"i32x4.extend_low_i16x8_s":      {operandCount: 0},
-	"i32x4.extend_low_i16x8_u":      {operandCount: 0},
-	"i32x4.shl":                     {operandCount: 0},
-	"i32x4.shr_s":                   {operandCount: 0},
-	"i32x4.shr_u":                   {operandCount: 0},
-	"i32x4.add":                     {operandCount: 0},
-	"i32x4.sub":                     {operandCount: 0},
-	"i32x4.mul":                     {operandCount: 0},
-	"i32x4.neg":                     {operandCount: 0},
-	"i32x4.min_s":                   {operandCount: 0},
-	"i64x2.all_true":                {operandCount: 0},
-	"i64x2.bitmask":                 {operandCount: 0},
-	"i64x2.shl":                     {operandCount: 0},
-	"i64x2.shr_s":                   {operandCount: 0},
-	"i64x2.shr_u":                   {operandCount: 0},
-	"i64x2.add":                     {operandCount: 0},
-	"f32x4.eq":                      {operandCount: 0},
-	"f32x4.ne":                      {operandCount: 0},
-	"f32x4.lt":                      {operandCount: 0},
-	"f32x4.gt":                      {operandCount: 0},
-	"f32x4.le":                      {operandCount: 0},
-	"f32x4.ge":                      {operandCount: 0},
-	"f32x4.ceil":                    {operandCount: 0},
-	"f32x4.floor":                   {operandCount: 0},
-	"f32x4.trunc":                   {operandCount: 0},
-	"f32x4.nearest":                 {operandCount: 0},
-	"f32x4.abs":                     {operandCount: 0},
-	"f32x4.neg":                     {operandCount: 0},
-	"f32x4.sqrt":                    {operandCount: 0},
-	"f32x4.convert_i32x4_s":         {operandCount: 0},
-	"f32x4.convert_i32x4_u":         {operandCount: 0},
-	"f32x4.add":                     {operandCount: 0},
-	"f32x4.sub":                     {operandCount: 0},
-	"f32x4.mul":                     {operandCount: 0},
-	"f32x4.div":                     {operandCount: 0},
-	"f32x4.min":                     {operandCount: 0},
-	"f32x4.max":                     {operandCount: 0},
-	"f32x4.pmin":                    {operandCount: 0},
-	"f32x4.pmax":                    {operandCount: 0},
-	"f64x2.eq":                      {operandCount: 0},
-	"f64x2.ne":                      {operandCount: 0},
-	"f64x2.lt":                      {operandCount: 0},
-	"f64x2.gt":                      {operandCount: 0},
-	"f64x2.le":                      {operandCount: 0},
-	"f64x2.ge":                      {operandCount: 0},
-	"f64x2.ceil":                    {operandCount: 0},
-	"f64x2.floor":                   {operandCount: 0},
-	"f64x2.trunc":                   {operandCount: 0},
-	"f64x2.nearest":                 {operandCount: 0},
-	"f64x2.abs":                     {operandCount: 0},
-	"f64x2.neg":                     {operandCount: 0},
-	"f64x2.sqrt":                    {operandCount: 0},
-	"f64x2.add":                     {operandCount: 0},
-	"f64x2.sub":                     {operandCount: 0},
-	"f64x2.mul":                     {operandCount: 0},
-	"f64x2.div":                     {operandCount: 0},
-	"f64x2.min":                     {operandCount: 0},
-	"f64x2.max":                     {operandCount: 0},
-	"f64x2.pmin":                    {operandCount: 0},
-	"f64x2.pmax":                    {operandCount: 0},
-	"f64x2.convert_low_i32x4_s":     {operandCount: 0},
-	"f64x2.convert_low_i32x4_u":     {operandCount: 0},
-	"f32x4.demote_f64x2_zero":       {operandCount: 0},
-	"f64x2.promote_low_f32x4":       {operandCount: 0},
-	"v128.bitselect":                {operandCount: 0},
-	"i32.const":                     {operandCount: 1, decode: decodeI32ConstOperands},
-	"i64.const":                     {operandCount: 1, decode: decodeI64ConstOperands},
-	"f32.const":                     {operandCount: 1, decode: decodeF32ConstOperands},
-	"f64.const":                     {operandCount: 1, decode: decodeF64ConstOperands},
-	"v128.const":                    {operandCount: -1, decode: decodeV128ConstOperands},
-	"i32x4.splat":                   {operandCount: 0},
-	"i32x4.extract_lane":            {operandCount: 1, decode: decodeLaneIndexOperands},
-	"ref.null":                      {operandCount: 1, decode: decodeRefNullOperands},
-	"ref.eq":                        {operandCount: 0},
-	"ref.is_null":                   {operandCount: 0},
-	"ref.as_non_null":               {operandCount: 0},
-	"ref.func":                      {operandCount: 1, decode: decodeRefFuncOperands},
-	"ref.i31":                       {operandCount: 0},
-	"i31.get_s":                     {operandCount: 0},
-	"i31.get_u":                     {operandCount: 0},
-	"memory.init":                   {operandCount: 1, decode: decodeDataIndexOperands},
-	"data.drop":                     {operandCount: 1, decode: decodeDataIndexOperands},
-	"elem.drop":                     {operandCount: 1, decode: decodeElemIndexOperands},
+func loweringOperandDecoderFor(kind wasmir.LoweringDecoderKind) loweringOperandDecoder {
+	switch kind {
+	case wasmir.LoweringDecodeNone:
+		return nil
+	case wasmir.LoweringDecodeLocalIndex:
+		return decodeLocalGetOperands
+	case wasmir.LoweringDecodeLocalSet:
+		return decodeLocalSetOperands
+	case wasmir.LoweringDecodeLocalTee:
+		return decodeLocalTeeOperands
+	case wasmir.LoweringDecodeCall:
+		return decodeCallOperands
+	case wasmir.LoweringDecodeCallRef:
+		return decodeCallRefOperands
+	case wasmir.LoweringDecodeBranchDepth:
+		return decodeBrOperands
+	case wasmir.LoweringDecodeGlobalIndex:
+		return decodeGlobalGetOperands
+	case wasmir.LoweringDecodeGlobalSet:
+		return decodeGlobalSetOperands
+	case wasmir.LoweringDecodeI32Const:
+		return decodeI32ConstOperands
+	case wasmir.LoweringDecodeI64Const:
+		return decodeI64ConstOperands
+	case wasmir.LoweringDecodeF32Const:
+		return decodeF32ConstOperands
+	case wasmir.LoweringDecodeF64Const:
+		return decodeF64ConstOperands
+	case wasmir.LoweringDecodeV128Const:
+		return decodeV128ConstOperands
+	case wasmir.LoweringDecodeLaneIndex:
+		return decodeLaneIndexOperands
+	case wasmir.LoweringDecodeRefNull:
+		return decodeRefNullOperands
+	case wasmir.LoweringDecodeRefFunc:
+		return decodeRefFuncOperands
+	case wasmir.LoweringDecodeDataIndex:
+		return decodeDataIndexOperands
+	case wasmir.LoweringDecodeElemIndex:
+		return decodeElemIndexOperands
+	default:
+		return nil
+	}
 }
+
+// loweringSpecs maps plain instruction names to table-driven lowering rules.
+var loweringSpecs = func() map[string]loweringSpec {
+	specs := make(map[string]loweringSpec)
+	for _, def := range wasmir.InstructionDefs() {
+		if def.Text.SyntaxClass != wasmir.InstrSyntaxPlain {
+			continue
+		}
+		specs[def.TextName] = loweringSpec{
+			operandCount: int(def.Text.OperandCount),
+			decode:       loweringOperandDecoderFor(def.Text.LoweringDecoder),
+		}
+	}
+	return specs
+}()
 
 // lowerBySpec lowers pi using loweringSpecs when pi.Name is table-driven.
 // It returns true when a table entry exists, including validation failures that
@@ -2461,7 +2254,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 // lowerMemoryInstr lowers load/store instructions with optional memarg
 // keywords (for example align=1 offset=8).
 func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) bool {
-	if !instructionHasSyntaxClass(pi.Name, instrSyntaxMemory) {
+	if !instructionHasSyntaxClass(pi.Name, wasmir.InstrSyntaxMemory) {
 		return false
 	}
 	kind, ok := instructionKind(pi.Name)

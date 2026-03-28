@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/wasmir"
 )
 
 type Parser struct {
@@ -1300,7 +1301,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	}
 
 	name := elem.tok.value
-	if instructionHasSyntaxClass(name, instrSyntaxStructured) && cursor+1 < len(elems) {
+	if instructionHasSyntaxClass(name, wasmir.InstrSyntaxStructured) && cursor+1 < len(elems) {
 		if typeOp, ok := p.parsePlainControlTypeOperand(elems[cursor+1]); ok {
 			return &PlainInstr{Name: name, Operands: []Operand{typeOp}, loc: elem.loc}, cursor + 2
 		}
@@ -1482,7 +1483,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{labelOp, srcTy, dstTy}, loc: elem.loc}, cursor + 4
 	default:
-		if instructionHasSyntaxClass(name, instrSyntaxMemory) {
+		if instructionHasSyntaxClass(name, wasmir.InstrSyntaxMemory) {
 			operands := make([]Operand, 0, 3)
 			next := cursor + 1
 			for next < len(elems) {
