@@ -369,7 +369,18 @@ const (
 	InstrI32x4AllTrue
 	InstrI32x4Bitmask
 	InstrI32x4Eq
+	InstrI32x4Ne
 	InstrI32x4LtS
+	InstrI32x4LtU
+	InstrI32x4GtS
+	InstrI32x4GtU
+	InstrI32x4LeS
+	InstrI32x4LeU
+	InstrI32x4GeS
+	InstrI32x4GeU
+	InstrI32x4ExtaddPairwiseI16x8S
+	InstrI32x4ExtaddPairwiseI16x8U
+	InstrI32x4Abs
 	InstrI32x4ExtendLowI16x8S
 	InstrI32x4ExtendLowI16x8U
 	InstrI32x4Shl
@@ -380,6 +391,14 @@ const (
 	InstrI32x4Mul
 	InstrI32x4Neg
 	InstrI32x4MinS
+	InstrI32x4MinU
+	InstrI32x4MaxS
+	InstrI32x4MaxU
+	InstrI32x4DotI16x8S
+	InstrI32x4ExtmulLowI16x8S
+	InstrI32x4ExtmulHighI16x8S
+	InstrI32x4ExtmulLowI16x8U
+	InstrI32x4ExtmulHighI16x8U
 	InstrI64x2AllTrue
 	InstrI64x2Bitmask
 	InstrI64x2Shl
@@ -399,6 +418,8 @@ const (
 	InstrF32x4Abs
 	InstrF32x4Neg
 	InstrF32x4Sqrt
+	InstrI32x4TruncSatF32x4S
+	InstrI32x4TruncSatF32x4U
 	InstrF32x4ConvertI32x4S
 	InstrF32x4ConvertI32x4U
 	InstrF32x4Add
@@ -430,6 +451,8 @@ const (
 	InstrF64x2Max
 	InstrF64x2Pmin
 	InstrF64x2Pmax
+	InstrI32x4TruncSatF64x2SZero
+	InstrI32x4TruncSatF64x2UZero
 	InstrF64x2ConvertLowI32x4S
 	InstrF64x2ConvertLowI32x4U
 	InstrF32x4DemoteF64x2Zero
