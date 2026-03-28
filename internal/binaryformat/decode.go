@@ -1063,6 +1063,8 @@ func decodeLocals(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasm
 	return locals
 }
 
+// decodeInstructionExpr decodes one function body instruction sequence using
+// the shared instruction catalog for opcode dispatch.
 func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorList) []wasmir.Instruction {
 	var out []wasmir.Instruction
 	depth := 0
@@ -1073,1371 +1075,431 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			diags.Addf("code[%d]: failed reading opcode: %v", funcIdx, err)
 			return out
 		}
-		if def, ok := wasmir.LookupInstructionByBinary(0, uint32(op)); ok &&
-			def.Binary.Encoding == wasmir.BinaryEncodingSimple &&
-			def.Kind != wasmir.InstrElse && def.Kind != wasmir.InstrEnd {
-			out = append(out, wasmir.Instruction{Kind: def.Kind})
-			continue
+		ins, err := decodeInstructionFromOpcode(r, op)
+		if err != nil {
+			diags.Addf("code[%d]: %v", funcIdx, err)
+			return out
 		}
 
-		switch op {
-		case opUnreachableCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrUnreachable})
-		case opNopCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrNop})
-		case opBlockCode:
-			ins, err := readControlBlockType(r, wasmir.InstrBlock)
-			if err != nil {
-				diags.Addf("code[%d]: block missing/invalid block type: %v", funcIdx, err)
-				return out
-			}
+		switch ins.Kind {
+		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 			out = append(out, ins)
 			depth++
-		case opLoopCode:
-			ins, err := readControlBlockType(r, wasmir.InstrLoop)
-			if err != nil {
-				diags.Addf("code[%d]: loop missing/invalid block type: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-			depth++
-		case opIfCode:
-			ins, err := readControlBlockType(r, wasmir.InstrIf)
-			if err != nil {
-				diags.Addf("code[%d]: if missing/invalid block type: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-			depth++
-		case opElseCode:
+		case wasmir.InstrElse:
 			if depth == 0 {
 				diags.Addf("code[%d]: unexpected else", funcIdx)
 				return out
 			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrElse})
-		case opBrCode:
-			depthImm, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBr, BranchDepth: depthImm})
-		case opBrIfCode:
-			depthImm, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br_if missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrIf, BranchDepth: depthImm})
-		case opBrOnNullCode:
-			depthImm, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br_on_null missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrOnNull, BranchDepth: depthImm})
-		case opBrOnNonNullCode:
-			depthImm, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br_on_non_null missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrBrOnNonNull, BranchDepth: depthImm})
-		case opBrTableCode:
-			n, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br_table missing/invalid vector length: %v", funcIdx, err)
-				return out
-			}
-			table := make([]uint32, 0, n)
-			for i := uint32(0); i < n; i++ {
-				depth, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: br_table invalid depth[%d]: %v", funcIdx, i, err)
-					return out
-				}
-				table = append(table, depth)
-			}
-			def, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: br_table missing/invalid default depth: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{
-				Kind:          wasmir.InstrBrTable,
-				BranchTable:   table,
-				BranchDefault: def,
-			})
-		case opReturnCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrReturn})
-		case opI32ConstCode:
-			value, err := readS32(r)
-			if err != nil {
-				diags.Addf("code[%d]: read i32 immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: value})
-		case opI64ConstCode:
-			value, err := readS64(r)
-			if err != nil {
-				diags.Addf("code[%d]: read i64 immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: value})
-		case opF32ConstCode:
-			value, err := readU32LE(r)
-			if err != nil {
-				diags.Addf("code[%d]: read f32 immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: value})
-		case opF64ConstCode:
-			value, err := readU64LE(r)
-			if err != nil {
-				diags.Addf("code[%d]: read f64 immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: value})
-		case opDropCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrDrop})
-		case opSelectCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrSelect})
-		case opLocalGetCode:
-			localIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: local.get missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: localIndex})
-		case opLocalSetCode:
-			localIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: local.set missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalSet, LocalIndex: localIndex})
-		case opLocalTeeCode:
-			localIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: local.tee missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrLocalTee, LocalIndex: localIndex})
-		case opGlobalGetCode:
-			globalIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: global.get missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIndex})
-		case opGlobalSetCode:
-			globalIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: global.set missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrGlobalSet, GlobalIndex: globalIndex})
-		case opTableGetCode:
-			tableIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: table.get missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableGet, TableIndex: tableIndex})
-		case opTableSetCode:
-			tableIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: table.set missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableSet, TableIndex: tableIndex})
-		case opPrefixFCCode:
-			subop, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: 0xfc prefixed op missing/invalid subopcode: %v", funcIdx, err)
-				return out
-			}
-			switch subop {
-			case subopMemoryInitCode:
-				dataIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: memory.init missing/invalid data immediate: %v", funcIdx, err)
-					return out
-				}
-				memIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: memory.init missing/invalid memory immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:        wasmir.InstrMemoryInit,
-					DataIndex:   dataIndex,
-					MemoryIndex: memIndex,
-				})
-			case subopDataDropCode:
-				dataIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: data.drop missing/invalid data immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrDataDrop, DataIndex: dataIndex})
-			case subopMemoryCopyCode:
-				dstMemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: memory.copy missing/invalid destination memory immediate: %v", funcIdx, err)
-					return out
-				}
-				srcMemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: memory.copy missing/invalid source memory immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:              wasmir.InstrMemoryCopy,
-					MemoryIndex:       dstMemIndex,
-					SourceMemoryIndex: srcMemIndex,
-				})
-			case subopMemoryFillCode:
-				memIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: memory.fill missing/invalid memory immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemoryFill, MemoryIndex: memIndex})
-			case subopTableInitCode:
-				elemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.init missing/invalid element immediate: %v", funcIdx, err)
-					return out
-				}
-				tableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.init missing/invalid table immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:       wasmir.InstrTableInit,
-					TableIndex: tableIndex,
-					ElemIndex:  elemIndex,
-				})
-			case subopElemDropCode:
-				elemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: elem.drop missing/invalid element immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrElemDrop, ElemIndex: elemIndex})
-			case subopTableCopyCode:
-				dstTableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.copy missing/invalid destination table immediate: %v", funcIdx, err)
-					return out
-				}
-				srcTableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.copy missing/invalid source table immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:             wasmir.InstrTableCopy,
-					TableIndex:       dstTableIndex,
-					SourceTableIndex: srcTableIndex,
-				})
-			case subopTableGrowCode:
-				tableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.grow missing/invalid immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableGrow, TableIndex: tableIndex})
-			case subopTableSizeCode:
-				tableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.size missing/invalid immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableSize, TableIndex: tableIndex})
-			case subopTableFillCode:
-				tableIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: table.fill missing/invalid immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrTableFill, TableIndex: tableIndex})
-			default:
-				diags.Addf("code[%d]: unsupported 0xfc subopcode 0x%x", funcIdx, subop)
-				return out
-			}
-		case opPrefixFBCode:
-			subop, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: 0xfb prefixed op missing/invalid subopcode: %v", funcIdx, err)
-				return out
-			}
-			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFBCode, subop); ok &&
-				def.Binary.Encoding == wasmir.BinaryEncodingSimple {
-				out = append(out, wasmir.Instruction{Kind: def.Kind})
-				continue
-			}
-			switch subop {
-			case subopStructNewCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.new missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIndex})
-			case subopStructNewDefaultCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.new_default missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructNewDefault, TypeIndex: typeIndex})
-			case subopStructGetCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				fieldIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get missing/invalid field immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGet, TypeIndex: typeIndex, FieldIndex: fieldIndex})
-			case subopStructGetSCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get_s missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				fieldIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get_s missing/invalid field immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGetS, TypeIndex: typeIndex, FieldIndex: fieldIndex})
-			case subopStructGetUCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get_u missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				fieldIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.get_u missing/invalid field immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructGetU, TypeIndex: typeIndex, FieldIndex: fieldIndex})
-			case subopStructSetCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.set missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				fieldIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: struct.set missing/invalid field immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrStructSet, TypeIndex: typeIndex, FieldIndex: fieldIndex})
-			case subopArrayNewCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIndex})
-			case subopArrayNewDefaultCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_default missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIndex})
-			case subopArrayNewDataCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_data missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				dataIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_data missing/invalid data immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewData, TypeIndex: typeIndex, DataIndex: dataIndex})
-			case subopArrayNewFixedCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_fixed missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				fixedCount, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_fixed missing/invalid length immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIndex, FixedCount: fixedCount})
-			case subopArrayNewElemCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_elem missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				elemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.new_elem missing/invalid element immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayNewElem, TypeIndex: typeIndex, ElemIndex: elemIndex})
-			case subopArrayInitDataCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.init_data missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				dataIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.init_data missing/invalid data immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayInitData, TypeIndex: typeIndex, DataIndex: dataIndex})
-			case subopArrayInitElemCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.init_elem missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				elemIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.init_elem missing/invalid element immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayInitElem, TypeIndex: typeIndex, ElemIndex: elemIndex})
-			case subopArrayLenCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayLen})
-			case subopArrayGetCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.get missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGet, TypeIndex: typeIndex})
-			case subopArrayGetUCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.get_u missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetU, TypeIndex: typeIndex})
-			case subopArrayGetSCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.get_s missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayGetS, TypeIndex: typeIndex})
-			case subopArraySetCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.set missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArraySet, TypeIndex: typeIndex})
-			case subopArrayFillCode:
-				typeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.fill missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrArrayFill, TypeIndex: typeIndex})
-			case subopArrayCopyCode:
-				dstTypeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.copy missing/invalid destination type immediate: %v", funcIdx, err)
-					return out
-				}
-				srcTypeIndex, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: array.copy missing/invalid source type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:            wasmir.InstrArrayCopy,
-					TypeIndex:       dstTypeIndex,
-					SourceTypeIndex: srcTypeIndex,
-				})
-			case subopRefTestCode, subopRefTestNullCode:
-				refType, err := decodeHeapTypeImmediateFromReader(r, subop == subopRefTestNullCode)
-				if err != nil {
-					diags.Addf("code[%d]: ref.test missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefTest, RefType: refType})
-			case subopRefCastCode, subopRefCastNullCode:
-				refType, err := decodeHeapTypeImmediateFromReader(r, subop == subopRefCastNullCode)
-				if err != nil {
-					diags.Addf("code[%d]: ref.cast missing/invalid type immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefCast, RefType: refType})
-			case subopBrOnCastCode, subopBrOnCastFailCode:
-				flags, err := readByte(r)
-				if err != nil {
-					diags.Addf("code[%d]: br_on_cast missing/invalid cast flags: %v", funcIdx, err)
-					return out
-				}
-				depthImm, err := readU32(r)
-				if err != nil {
-					diags.Addf("code[%d]: br_on_cast missing/invalid label immediate: %v", funcIdx, err)
-					return out
-				}
-				srcType, err := decodeHeapTypeImmediateFromReader(r, flags&0x01 != 0)
-				if err != nil {
-					diags.Addf("code[%d]: br_on_cast missing/invalid source type: %v", funcIdx, err)
-					return out
-				}
-				dstType, err := decodeHeapTypeImmediateFromReader(r, flags&0x02 != 0)
-				if err != nil {
-					diags.Addf("code[%d]: br_on_cast missing/invalid destination type: %v", funcIdx, err)
-					return out
-				}
-				kind := wasmir.InstrBrOnCast
-				if subop == subopBrOnCastFailCode {
-					kind = wasmir.InstrBrOnCastFail
-				}
-				out = append(out, wasmir.Instruction{
-					Kind:          kind,
-					BranchDepth:   depthImm,
-					SourceRefType: srcType,
-					RefType:       dstType,
-				})
-			case subopAnyConvertExternCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern})
-			case subopExternConvertAnyCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrExternConvertAny})
-			case subopRefI31Code:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefI31})
-			case subopI31GetSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI31GetS})
-			case subopI31GetUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI31GetU})
-			default:
-				diags.Addf("code[%d]: unsupported 0xfb subopcode 0x%x", funcIdx, subop)
-				return out
-			}
-		case opCallCode:
-			funcIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: call missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrCall, FuncIndex: funcIndex})
-		case opCallIndirectCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: call_indirect missing/invalid type immediate: %v", funcIdx, err)
-				return out
-			}
-			tableIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: call_indirect missing/invalid table immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{
-				Kind:          wasmir.InstrCallIndirect,
-				CallTypeIndex: typeIndex,
-				TableIndex:    tableIndex,
-			})
-		case opCallRefCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: call_ref missing/invalid type immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{
-				Kind:          wasmir.InstrCallRef,
-				CallTypeIndex: typeIndex,
-			})
-		case opI32LoadCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Load)
-			if err != nil {
-				diags.Addf("code[%d]: i32.load invalid memarg: %v", funcIdx, err)
-				return out
-			}
 			out = append(out, ins)
-		case opI64LoadCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load invalid memarg: %v", funcIdx, err)
-				return out
-			}
+		case wasmir.InstrEnd:
 			out = append(out, ins)
-		case opF32LoadCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrF32Load)
-			if err != nil {
-				diags.Addf("code[%d]: f32.load invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opF64LoadCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrF64Load)
-			if err != nil {
-				diags.Addf("code[%d]: f64.load invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opPrefixFDCode:
-			subop, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: 0xfd prefixed op missing/invalid subopcode: %v", funcIdx, err)
-				return out
-			}
-			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFDCode, subop); ok &&
-				def.Binary.Encoding == wasmir.BinaryEncodingSimple {
-				out = append(out, wasmir.Instruction{Kind: def.Kind})
-				continue
-			}
-			switch subop {
-			case subopV128LoadCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load8x8SCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8x8S)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load8x8_s invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load8x8UCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8x8U)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load8x8_u invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load16x4SCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16x4S)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load16x4_s invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load16x4UCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16x4U)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load16x4_u invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load32x2SCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32x2S)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load32x2_s invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load32x2UCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32x2U)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load32x2_u invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load8SplatCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load8Splat)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load8_splat invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load16SplatCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load16Splat)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load16_splat invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load32SplatCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load32Splat)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load32_splat invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128Load64SplatCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Load64Splat)
-				if err != nil {
-					diags.Addf("code[%d]: v128.load64_splat invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128StoreCode:
-				ins, err := decodeMemInstr(r, wasmir.InstrV128Store)
-				if err != nil {
-					diags.Addf("code[%d]: v128.store invalid memarg: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, ins)
-			case subopV128ConstCode:
-				bytes, err := readN(r, 16)
-				if err != nil {
-					diags.Addf("code[%d]: v128.const missing/invalid immediate: %v", funcIdx, err)
-					return out
-				}
-				var lanes [16]byte
-				copy(lanes[:], bytes)
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Const, V128Const: lanes})
-			case subopV128AnyTrueCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128AnyTrue})
-			case subopV128NotCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Not})
-			case subopV128AndCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128And})
-			case subopV128AndNotCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128AndNot})
-			case subopV128OrCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Or})
-			case subopV128XorCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Xor})
-			case subopI8x16SwizzleCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Swizzle})
-			case subopI8x16AllTrueCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16AllTrue})
-			case subopI8x16BitmaskCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Bitmask})
-			case subopI8x16NarrowI16x8SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16NarrowI16x8S})
-			case subopI8x16NarrowI16x8UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16NarrowI16x8U})
-			case subopI8x16ShlCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16Shl})
-			case subopI8x16ShrSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrS})
-			case subopI8x16ShrUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI8x16ShrU})
-			case subopI16x8EqCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Eq})
-			case subopI16x8NeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Ne})
-			case subopI16x8LtSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LtS})
-			case subopI16x8LtUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LtU})
-			case subopI16x8GtSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GtS})
-			case subopI16x8GtUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GtU})
-			case subopI16x8LeSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LeS})
-			case subopI16x8LeUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8LeU})
-			case subopI16x8GeSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GeS})
-			case subopI16x8GeUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8GeU})
-			case subopI16x8ExtaddPairwiseI8x16SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtaddPairwiseI8x16S})
-			case subopI16x8ExtaddPairwiseI8x16UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtaddPairwiseI8x16U})
-			case subopI16x8AbsCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Abs})
-			case subopI16x8NegCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Neg})
-			case subopI16x8Q15mulrSatSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Q15mulrSatS})
-			case subopI16x8ShlCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Shl})
-			case subopI16x8AllTrueCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AllTrue})
-			case subopI16x8BitmaskCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Bitmask})
-			case subopI16x8NarrowI32x4SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8NarrowI32x4S})
-			case subopI16x8NarrowI32x4UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8NarrowI32x4U})
-			case subopI16x8ExtendLowI8x16SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtendLowI8x16S})
-			case subopI16x8ExtendLowI8x16UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtendLowI8x16U})
-			case subopI16x8ShrSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrS})
-			case subopI16x8ShrUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ShrU})
-			case subopI16x8AddCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Add})
-			case subopI16x8AddSatSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AddSatS})
-			case subopI16x8AddSatUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AddSatU})
-			case subopI16x8SubCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Sub})
-			case subopI16x8SubSatSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8SubSatS})
-			case subopI16x8SubSatUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8SubSatU})
-			case subopI16x8MulCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8Mul})
-			case subopI16x8MinSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MinS})
-			case subopI16x8MinUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MinU})
-			case subopI16x8MaxSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MaxS})
-			case subopI16x8MaxUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8MaxU})
-			case subopI16x8AvgrUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8AvgrU})
-			case subopI16x8ExtmulLowI8x16SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulLowI8x16S})
-			case subopI16x8ExtmulHighI8x16SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulHighI8x16S})
-			case subopI16x8ExtmulLowI8x16UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulLowI8x16U})
-			case subopI16x8ExtmulHighI8x16UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI16x8ExtmulHighI8x16U})
-			case subopI32x4SplatCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Splat})
-			case subopI32x4ExtractLaneCode:
-				lane, err := readByte(r)
-				if err != nil {
-					diags.Addf("code[%d]: i32x4.extract_lane missing/invalid lane immediate: %v", funcIdx, err)
-					return out
-				}
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtractLane, LaneIndex: uint32(lane)})
-			case subopI32x4AllTrueCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4AllTrue})
-			case subopI32x4BitmaskCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Bitmask})
-			case subopI32x4EqCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Eq})
-			case subopI32x4LtSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4LtS})
-			case subopI32x4ExtendLowI16x8SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtendLowI16x8S})
-			case subopI32x4ExtendLowI16x8UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ExtendLowI16x8U})
-			case subopI32x4ShlCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Shl})
-			case subopI32x4ShrSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ShrS})
-			case subopI32x4ShrUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4ShrU})
-			case subopI32x4AddCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Add})
-			case subopI32x4SubCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Sub})
-			case subopI32x4MulCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Mul})
-			case subopI32x4NegCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4Neg})
-			case subopI32x4MinSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32x4MinS})
-			case subopI64x2ShlCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Shl})
-			case subopI64x2AllTrueCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2AllTrue})
-			case subopI64x2BitmaskCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Bitmask})
-			case subopI64x2ShrSCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrS})
-			case subopI64x2ShrUCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2ShrU})
-			case subopI64x2AddCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64x2Add})
-			case subopF32x4EqCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Eq})
-			case subopF32x4NeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ne})
-			case subopF32x4LtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Lt})
-			case subopF32x4GtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Gt})
-			case subopF32x4LeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Le})
-			case subopF32x4GeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ge})
-			case subopF32x4CeilCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Ceil})
-			case subopF32x4FloorCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Floor})
-			case subopF32x4TruncCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Trunc})
-			case subopF32x4NearestCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Nearest})
-			case subopF32x4AbsCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Abs})
-			case subopF32x4NegCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Neg})
-			case subopF32x4SqrtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Sqrt})
-			case subopF32x4ConvertI32x4SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4S})
-			case subopF32x4ConvertI32x4UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4ConvertI32x4U})
-			case subopF32x4AddCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Add})
-			case subopF32x4SubCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Sub})
-			case subopF32x4MulCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Mul})
-			case subopF32x4DivCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Div})
-			case subopF32x4MinCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Min})
-			case subopF32x4MaxCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Max})
-			case subopF32x4PminCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Pmin})
-			case subopF32x4PmaxCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4Pmax})
-			case subopF64x2EqCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Eq})
-			case subopF64x2NeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Ne})
-			case subopF64x2LtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Lt})
-			case subopF64x2GtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Gt})
-			case subopF64x2LeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Le})
-			case subopF64x2GeCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Ge})
-			case subopF64x2CeilCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Ceil})
-			case subopF64x2FloorCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Floor})
-			case subopF64x2TruncCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Trunc})
-			case subopF64x2NearestCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Nearest})
-			case subopF64x2AbsCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Abs})
-			case subopF64x2NegCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Neg})
-			case subopF64x2SqrtCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Sqrt})
-			case subopF64x2AddCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Add})
-			case subopF64x2SubCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Sub})
-			case subopF64x2MulCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Mul})
-			case subopF64x2DivCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Div})
-			case subopF64x2MinCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Min})
-			case subopF64x2MaxCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Max})
-			case subopF64x2PminCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Pmin})
-			case subopF64x2PmaxCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2Pmax})
-			case subopF64x2ConvertLowI32x4SCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2ConvertLowI32x4S})
-			case subopF64x2ConvertLowI32x4UCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2ConvertLowI32x4U})
-			case subopF32x4DemoteF64x2ZeroCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32x4DemoteF64x2Zero})
-			case subopF64x2PromoteLowF32x4Code:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64x2PromoteLowF32x4})
-			case subopV128BitselectCode:
-				out = append(out, wasmir.Instruction{Kind: wasmir.InstrV128Bitselect})
-			default:
-				diags.Addf("code[%d]: unsupported 0xfd subopcode 0x%x", funcIdx, subop)
-				return out
-			}
-		case opI32Load8SCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Load8S)
-			if err != nil {
-				diags.Addf("code[%d]: i32.load8_s invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32Load8UCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Load8U)
-			if err != nil {
-				diags.Addf("code[%d]: i32.load8_u invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32Load16SCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Load16S)
-			if err != nil {
-				diags.Addf("code[%d]: i32.load16_s invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32Load16UCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Load16U)
-			if err != nil {
-				diags.Addf("code[%d]: i32.load16_u invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load8SCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load8S)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load8_s invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load8UCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load8U)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load8_u invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load16SCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load16S)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load16_s invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load16UCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load16U)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load16_u invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load32SCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load32S)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load32_s invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Load32UCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Load32U)
-			if err != nil {
-				diags.Addf("code[%d]: i64.load32_u invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32StoreCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Store)
-			if err != nil {
-				diags.Addf("code[%d]: i32.store invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64StoreCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Store)
-			if err != nil {
-				diags.Addf("code[%d]: i64.store invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32Store8Code:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Store8)
-			if err != nil {
-				diags.Addf("code[%d]: i32.store8 invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI32Store16Code:
-			ins, err := decodeMemInstr(r, wasmir.InstrI32Store16)
-			if err != nil {
-				diags.Addf("code[%d]: i32.store16 invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Store8Code:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Store8)
-			if err != nil {
-				diags.Addf("code[%d]: i64.store8 invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Store16Code:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Store16)
-			if err != nil {
-				diags.Addf("code[%d]: i64.store16 invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opI64Store32Code:
-			ins, err := decodeMemInstr(r, wasmir.InstrI64Store32)
-			if err != nil {
-				diags.Addf("code[%d]: i64.store32 invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opF32StoreCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrF32Store)
-			if err != nil {
-				diags.Addf("code[%d]: f32.store invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opF64StoreCode:
-			ins, err := decodeMemInstr(r, wasmir.InstrF64Store)
-			if err != nil {
-				diags.Addf("code[%d]: f64.store invalid memarg: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, ins)
-		case opMemorySizeCode:
-			memIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: memory.size missing/invalid memory immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemorySize, MemoryIndex: memIndex})
-		case opMemoryGrowCode:
-			memIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: memory.grow missing/invalid memory immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrMemoryGrow, MemoryIndex: memIndex})
-		case opI32EqCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Eq})
-		case opI32NeCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ne})
-		case opI32GtSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GtS})
-		case opI32GtUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GtU})
-		case opI32GeSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeS})
-		case opI32ClzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Clz})
-		case opI32CtzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Ctz})
-		case opI32PopcntCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Popcnt})
-		case opI32AddCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Add})
-		case opI32SubCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Sub})
-		case opI32MulCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Mul})
-		case opI32OrCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Or})
-		case opI32XorCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Xor})
-		case opI32DivSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivS})
-		case opI32DivUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32DivU})
-		case opI32RemSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32RemS})
-		case opI32RemUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32RemU})
-		case opI32ShlCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Shl})
-		case opI32ShrSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ShrS})
-		case opI32ShrUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ShrU})
-		case opI32RotlCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Rotl})
-		case opI32RotrCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Rotr})
-		case opI32EqzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Eqz})
-		case opI32LtSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtS})
-		case opI32LtUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LtU})
-		case opI32LeSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeS})
-		case opI32LeUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32LeU})
-		case opI32GeUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32GeU})
-		case opI32AndCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32And})
-		case opI32Extend8SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Extend8S})
-		case opI32Extend16SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32Extend16S})
-		case opI64AddCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Add})
-		case opI64AndCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64And})
-		case opI64OrCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Or})
-		case opI64XorCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Xor})
-		case opI64EqCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Eq})
-		case opI64NeCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Ne})
-		case opI64EqzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Eqz})
-		case opI64GtSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GtS})
-		case opI64GtUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GtU})
-		case opI64GeSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GeS})
-		case opI64GeUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64GeU})
-		case opI64LeSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64LeS})
-		case opI64LeUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64LeU})
-		case opI64ClzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Clz})
-		case opI64CtzCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Ctz})
-		case opI64PopcntCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Popcnt})
-		case opI64SubCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Sub})
-		case opI64MulCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Mul})
-		case opI64DivSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivS})
-		case opI64DivUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64DivU})
-		case opI64RemSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64RemS})
-		case opI64RemUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64RemU})
-		case opI64ShlCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Shl})
-		case opI64ShrSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ShrS})
-		case opI64ShrUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ShrU})
-		case opI64RotlCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Rotl})
-		case opI64RotrCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Rotr})
-		case opI64LtSCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64LtS})
-		case opI64LtUCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64LtU})
-		case opI64Extend8SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Extend8S})
-		case opI64Extend16SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Extend16S})
-		case opI64Extend32SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64Extend32S})
-		case opI32WrapI64Code:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32WrapI64})
-		case opI64ExtendI32SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ExtendI32S})
-		case opI64ExtendI32UCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ExtendI32U})
-		case opF32ConvertI32SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32ConvertI32S})
-		case opF64ConvertI64SCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ConvertI64S})
-		case opF32AddCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Add})
-		case opF32SubCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sub})
-		case opF32MulCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Mul})
-		case opF32DivCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Div})
-		case opF32SqrtCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Sqrt})
-		case opF32NegCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Neg})
-		case opF32EqCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Eq})
-		case opF32LtCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Lt})
-		case opF32GtCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Gt})
-		case opF32NeCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ne})
-		case opF32MinCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Min})
-		case opF32MaxCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Max})
-		case opF32CeilCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Ceil})
-		case opF32FloorCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Floor})
-		case opF32TruncCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Trunc})
-		case opF32NearestCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32Nearest})
-		case opF64AddCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Add})
-		case opF64SubCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Sub})
-		case opF64MulCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Mul})
-		case opF64DivCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Div})
-		case opF64SqrtCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Sqrt})
-		case opF64NegCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Neg})
-		case opF64MinCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Min})
-		case opF64MaxCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Max})
-		case opF64CeilCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Ceil})
-		case opF64FloorCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Floor})
-		case opF64TruncCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Trunc})
-		case opF64NearestCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Nearest})
-		case opF64EqCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Eq})
-		case opF64LeCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64Le})
-		case opI32ReinterpretF32Code:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI32ReinterpretF32})
-		case opI64ReinterpretF64Code:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrI64ReinterpretF64})
-		case opF32ReinterpretI32Code:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF32ReinterpretI32})
-		case opF64ReinterpretI64Code:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrF64ReinterpretI64})
-		case opRefNullCode:
-			refType, err := decodeRefNullImmediate(r)
-			if err != nil {
-				diags.Addf("code[%d]: ref.null missing/invalid type immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType})
-		case opRefIsNullCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefIsNull})
-		case opRefAsNonNullCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefAsNonNull})
-		case opRefFuncCode:
-			funcIndex, err := readU32(r)
-			if err != nil {
-				diags.Addf("code[%d]: ref.func missing/invalid immediate: %v", funcIdx, err)
-				return out
-			}
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIndex})
-		case opRefEqCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrRefEq})
-		case opEndCode:
-			out = append(out, wasmir.Instruction{Kind: wasmir.InstrEnd})
 			if depth == 0 {
 				return out
 			}
 			depth--
 		default:
-			diags.Addf("code[%d]: unsupported opcode 0x%x", funcIdx, op)
-			return out
+			out = append(out, ins)
 		}
 	}
 
 	diags.Addf("code[%d]: unterminated instruction expression (missing end)", funcIdx)
 	return out
+}
+
+func decodeInstructionFromOpcode(r *bytes.Reader, op byte) (wasmir.Instruction, error) {
+	switch op {
+	case 0xfb, 0xfc, 0xfd:
+		subop, err := readU32(r)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("0x%x prefixed op missing/invalid subopcode: %w", op, err)
+		}
+		switch op {
+		case 0xfb:
+			switch subop {
+			case 0x14, 0x15:
+				refType, err := decodeHeapTypeImmediateFromReader(r, subop == 0x15)
+				if err != nil {
+					return wasmir.Instruction{}, fmt.Errorf("ref.test missing/invalid type immediate: %w", err)
+				}
+				return wasmir.Instruction{Kind: wasmir.InstrRefTest, RefType: refType}, nil
+			case 0x16, 0x17:
+				refType, err := decodeHeapTypeImmediateFromReader(r, subop == 0x17)
+				if err != nil {
+					return wasmir.Instruction{}, fmt.Errorf("ref.cast missing/invalid type immediate: %w", err)
+				}
+				return wasmir.Instruction{Kind: wasmir.InstrRefCast, RefType: refType}, nil
+			}
+		}
+		def, ok := wasmir.LookupInstructionByBinary(op, subop)
+		if !ok {
+			return wasmir.Instruction{}, fmt.Errorf("unsupported 0x%x subopcode 0x%x", op, subop)
+		}
+		return decodeInstructionFromDef(r, def)
+	default:
+		def, ok := wasmir.LookupInstructionByBinary(0, uint32(op))
+		if !ok {
+			return wasmir.Instruction{}, fmt.Errorf("unsupported opcode 0x%x", op)
+		}
+		return decodeInstructionFromDef(r, def)
+	}
+}
+
+func decodeInstructionFromDef(r *bytes.Reader, def wasmir.InstructionDef) (wasmir.Instruction, error) {
+	if def.Binary.Encoding == wasmir.BinaryEncodingSimple {
+		return wasmir.Instruction{Kind: def.Kind}, nil
+	}
+
+	switch def.Kind {
+	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
+		ins, err := readControlBlockType(r, def.Kind)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid block type: %w", def.TextName, err)
+		}
+		return ins, nil
+	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
+		depthImm, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, BranchDepth: depthImm}, nil
+	case wasmir.InstrBrTable:
+		n, err := readU32Immediate(r, def.TextName, "vector length")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		table := make([]uint32, 0, n)
+		for i := uint32(0); i < n; i++ {
+			depth, err := readU32(r)
+			if err != nil {
+				return wasmir.Instruction{}, fmt.Errorf("%s invalid depth[%d]: %w", def.TextName, i, err)
+			}
+			table = append(table, depth)
+		}
+		fallback, err := readU32Immediate(r, def.TextName, "default depth")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{
+			Kind:          def.Kind,
+			BranchTable:   table,
+			BranchDefault: fallback,
+		}, nil
+	case wasmir.InstrI32Const:
+		value, err := readS32Immediate(r, def.TextName)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, I32Const: value}, nil
+	case wasmir.InstrI64Const:
+		value, err := readS64Immediate(r, def.TextName)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, I64Const: value}, nil
+	case wasmir.InstrF32Const:
+		value, err := readF32Immediate(r, def.TextName)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, F32Const: value}, nil
+	case wasmir.InstrF64Const:
+		value, err := readF64Immediate(r, def.TextName)
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, F64Const: value}, nil
+	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
+		localIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, LocalIndex: localIndex}, nil
+	case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
+		globalIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, GlobalIndex: globalIndex}, nil
+	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
+		tableIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TableIndex: tableIndex}, nil
+	case wasmir.InstrCall:
+		funcIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, FuncIndex: funcIndex}, nil
+	case wasmir.InstrCallIndirect:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		tableIndex, err := readU32Immediate(r, def.TextName, "table")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex, TableIndex: tableIndex}, nil
+	case wasmir.InstrCallRef:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex}, nil
+	case wasmir.InstrRefNull:
+		refType, err := decodeRefNullImmediate(r)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid type immediate: %w", def.TextName, err)
+		}
+		return wasmir.Instruction{Kind: def.Kind, RefType: refType}, nil
+	case wasmir.InstrRefFunc:
+		funcIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, FuncIndex: funcIndex}, nil
+	case wasmir.InstrMemoryInit:
+		dataIndex, err := readU32Immediate(r, def.TextName, "data")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		memIndex, err := readU32Immediate(r, def.TextName, "memory")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, DataIndex: dataIndex, MemoryIndex: memIndex}, nil
+	case wasmir.InstrDataDrop:
+		dataIndex, err := readU32Immediate(r, def.TextName, "data")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, DataIndex: dataIndex}, nil
+	case wasmir.InstrMemoryCopy:
+		dstMemIndex, err := readU32Immediate(r, def.TextName, "destination memory")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		srcMemIndex, err := readU32Immediate(r, def.TextName, "source memory")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{
+			Kind:              def.Kind,
+			MemoryIndex:       dstMemIndex,
+			SourceMemoryIndex: srcMemIndex,
+		}, nil
+	case wasmir.InstrMemoryFill, wasmir.InstrMemorySize, wasmir.InstrMemoryGrow:
+		memIndex, err := readU32Immediate(r, def.TextName, "memory")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, MemoryIndex: memIndex}, nil
+	case wasmir.InstrTableInit:
+		elemIndex, err := readU32Immediate(r, def.TextName, "element")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		tableIndex, err := readU32Immediate(r, def.TextName, "table")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TableIndex: tableIndex, ElemIndex: elemIndex}, nil
+	case wasmir.InstrElemDrop:
+		elemIndex, err := readU32Immediate(r, def.TextName, "element")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, ElemIndex: elemIndex}, nil
+	case wasmir.InstrTableCopy:
+		dstTableIndex, err := readU32Immediate(r, def.TextName, "destination table")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		srcTableIndex, err := readU32Immediate(r, def.TextName, "source table")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{
+			Kind:             def.Kind,
+			TableIndex:       dstTableIndex,
+			SourceTableIndex: srcTableIndex,
+		}, nil
+	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew, wasmir.InstrArrayNewDefault:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex}, nil
+	case wasmir.InstrStructGet, wasmir.InstrStructGetS, wasmir.InstrStructGetU, wasmir.InstrStructSet:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		fieldIndex, err := readU32Immediate(r, def.TextName, "field")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex, FieldIndex: fieldIndex}, nil
+	case wasmir.InstrArrayNewData, wasmir.InstrArrayInitData:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		dataIndex, err := readU32Immediate(r, def.TextName, "data")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex, DataIndex: dataIndex}, nil
+	case wasmir.InstrArrayNewElem, wasmir.InstrArrayInitElem:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		elemIndex, err := readU32Immediate(r, def.TextName, "element")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex, ElemIndex: elemIndex}, nil
+	case wasmir.InstrArrayNewFixed:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		fixedCount, err := readU32Immediate(r, def.TextName, "length")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex, FixedCount: fixedCount}, nil
+	case wasmir.InstrArrayGet, wasmir.InstrArrayGetS, wasmir.InstrArrayGetU, wasmir.InstrArraySet, wasmir.InstrArrayFill:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TypeIndex: typeIndex}, nil
+	case wasmir.InstrArrayCopy:
+		dstTypeIndex, err := readU32Immediate(r, def.TextName, "destination type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		srcTypeIndex, err := readU32Immediate(r, def.TextName, "source type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{
+			Kind:            def.Kind,
+			TypeIndex:       dstTypeIndex,
+			SourceTypeIndex: srcTypeIndex,
+		}, nil
+	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
+		flags, err := readByteImmediate(r, def.TextName, "cast flags")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		depthImm, err := readU32Immediate(r, def.TextName, "label")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		srcType, err := decodeHeapTypeImmediateFromReader(r, flags&0x01 != 0)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid source type: %w", def.TextName, err)
+		}
+		dstType, err := decodeHeapTypeImmediateFromReader(r, flags&0x02 != 0)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid destination type: %w", def.TextName, err)
+		}
+		return wasmir.Instruction{
+			Kind:          def.Kind,
+			BranchDepth:   depthImm,
+			SourceRefType: srcType,
+			RefType:       dstType,
+		}, nil
+	case wasmir.InstrI32Load, wasmir.InstrI64Load, wasmir.InstrF32Load, wasmir.InstrF64Load,
+		wasmir.InstrV128Load, wasmir.InstrV128Load8x8S, wasmir.InstrV128Load8x8U,
+		wasmir.InstrV128Load16x4S, wasmir.InstrV128Load16x4U, wasmir.InstrV128Load32x2S,
+		wasmir.InstrV128Load32x2U, wasmir.InstrV128Load8Splat, wasmir.InstrV128Load16Splat,
+		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat, wasmir.InstrI32Load8S,
+		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
+		wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI64Load16S,
+		wasmir.InstrI64Load16U, wasmir.InstrI64Load32S, wasmir.InstrI64Load32U,
+		wasmir.InstrI32Store, wasmir.InstrI64Store, wasmir.InstrF32Store, wasmir.InstrF64Store,
+		wasmir.InstrV128Store, wasmir.InstrI32Store8, wasmir.InstrI32Store16,
+		wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32:
+		return decodeMemInstruction(r, def.Kind, def.TextName)
+	case wasmir.InstrV128Const:
+		bytes, err := readN(r, 16)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid immediate: %w", def.TextName, err)
+		}
+		var value [16]byte
+		copy(value[:], bytes)
+		return wasmir.Instruction{Kind: def.Kind, V128Const: value}, nil
+	case wasmir.InstrI32x4ExtractLane:
+		lane, err := readByteImmediate(r, def.TextName, "lane")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, LaneIndex: uint32(lane)}, nil
+	default:
+		return wasmir.Instruction{}, fmt.Errorf("%s does not have a generic binary decoder", def.TextName)
+	}
+}
+
+func decodeMemInstruction(r *bytes.Reader, kind wasmir.InstrKind, name string) (wasmir.Instruction, error) {
+	ins, err := decodeMemInstr(r, kind)
+	if err != nil {
+		return wasmir.Instruction{}, fmt.Errorf("%s invalid memarg: %w", name, err)
+	}
+	return ins, nil
+}
+
+func readU32Immediate(r *bytes.Reader, instrName string, what string) (uint32, error) {
+	value, err := readU32(r)
+	if err != nil {
+		return 0, fmt.Errorf("%s missing/invalid %s immediate: %w", instrName, what, err)
+	}
+	return value, nil
+}
+
+func readByteImmediate(r *bytes.Reader, instrName string, what string) (byte, error) {
+	value, err := readByte(r)
+	if err != nil {
+		return 0, fmt.Errorf("%s missing/invalid %s immediate: %w", instrName, what, err)
+	}
+	return value, nil
+}
+
+func readS32Immediate(r *bytes.Reader, instrName string) (int32, error) {
+	value, err := readS32(r)
+	if err != nil {
+		return 0, fmt.Errorf("read i32 immediate: %w", err)
+	}
+	return value, nil
+}
+
+func readS64Immediate(r *bytes.Reader, instrName string) (int64, error) {
+	value, err := readS64(r)
+	if err != nil {
+		return 0, fmt.Errorf("read i64 immediate: %w", err)
+	}
+	return value, nil
+}
+
+func readF32Immediate(r *bytes.Reader, instrName string) (uint32, error) {
+	value, err := readU32LE(r)
+	if err != nil {
+		return 0, fmt.Errorf("read f32 immediate: %w", err)
+	}
+	return value, nil
+}
+
+func readF64Immediate(r *bytes.Reader, instrName string) (uint64, error) {
+	value, err := readU64LE(r)
+	if err != nil {
+		return 0, fmt.Errorf("read f64 immediate: %w", err)
+	}
+	return value, nil
 }
 
 func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
@@ -2494,7 +1556,7 @@ func decodeConstExprInstrs(r *bytes.Reader) ([]wasmir.Instruction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if op == opEndCode {
+		if def, ok := wasmir.LookupInstructionByBinary(0, uint32(op)); ok && def.Kind == wasmir.InstrEnd {
 			return out, nil
 		}
 		ins, err := decodeConstExprInstr(r, op)
@@ -2506,119 +1568,38 @@ func decodeConstExprInstrs(r *bytes.Reader) ([]wasmir.Instruction, error) {
 }
 
 func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) {
-	var ins wasmir.Instruction
-	switch op {
-	case opI32ConstCode:
-		v, err := readS32(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrI32Const, I32Const: v}
-	case opI64ConstCode:
-		v, err := readS64(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrI64Const, I64Const: v}
-	case opF32ConstCode:
-		v, err := readU32LE(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrF32Const, F32Const: v}
-	case opF64ConstCode:
-		v, err := readU64LE(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrF64Const, F64Const: v}
-	case opRefNullCode:
-		refType, err := decodeRefNullImmediate(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrRefNull, RefType: refType}
-	case opRefFuncCode:
-		funcIndex, err := readU32(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrRefFunc, FuncIndex: funcIndex}
-	case opGlobalGetCode:
-		globalIndex, err := readU32(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		ins = wasmir.Instruction{Kind: wasmir.InstrGlobalGet, GlobalIndex: globalIndex}
-	case opPrefixFDCode:
-		subop, err := readU32(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		switch subop {
-		case subopV128ConstCode:
-			bytes, err := readN(r, 16)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins.Kind = wasmir.InstrV128Const
-			copy(ins.V128Const[:], bytes)
-		default:
-			return wasmir.Instruction{}, fmt.Errorf("unsupported const expr 0xfd subopcode 0x%x", subop)
-		}
-	case opPrefixFBCode:
-		subop, err := readU32(r)
-		if err != nil {
-			return wasmir.Instruction{}, err
-		}
-		switch subop {
-		case subopStructNewCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins = wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIndex}
-		case subopStructNewDefaultCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins = wasmir.Instruction{Kind: wasmir.InstrStructNewDefault, TypeIndex: typeIndex}
-		case subopArrayNewCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIndex}
-		case subopArrayNewDefaultCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIndex}
-		case subopArrayNewFixedCode:
-			typeIndex, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			fixedCount, err := readU32(r)
-			if err != nil {
-				return wasmir.Instruction{}, err
-			}
-			ins = wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIndex, FixedCount: fixedCount}
-		case subopExternConvertAnyCode:
-			ins = wasmir.Instruction{Kind: wasmir.InstrExternConvertAny}
-		case subopAnyConvertExternCode:
-			ins = wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern}
-		case subopRefI31Code:
-			ins = wasmir.Instruction{Kind: wasmir.InstrRefI31}
-		default:
-			return wasmir.Instruction{}, fmt.Errorf("unsupported const expr 0xfb subopcode 0x%x", subop)
-		}
-	default:
-		return wasmir.Instruction{}, fmt.Errorf("unsupported const expr opcode 0x%x", op)
+	ins, err := decodeInstructionFromOpcode(r, op)
+	if err != nil {
+		return wasmir.Instruction{}, err
 	}
-	return ins, nil
+	switch ins.Kind {
+	case wasmir.InstrI32Const,
+		wasmir.InstrI64Const,
+		wasmir.InstrF32Const,
+		wasmir.InstrF64Const,
+		wasmir.InstrRefNull,
+		wasmir.InstrRefFunc,
+		wasmir.InstrGlobalGet,
+		wasmir.InstrV128Const,
+		wasmir.InstrStructNew,
+		wasmir.InstrStructNewDefault,
+		wasmir.InstrArrayNew,
+		wasmir.InstrArrayNewDefault,
+		wasmir.InstrArrayNewFixed,
+		wasmir.InstrExternConvertAny,
+		wasmir.InstrAnyConvertExtern,
+		wasmir.InstrRefI31:
+		return ins, nil
+	default:
+		return wasmir.Instruction{}, fmt.Errorf("unsupported const expr instruction %s", instructionName(ins.Kind))
+	}
+}
+
+func instructionName(kind wasmir.InstrKind) string {
+	if def, ok := wasmir.LookupInstructionByKind(kind); ok {
+		return def.TextName
+	}
+	return fmt.Sprintf("instruction %d", kind)
 }
 
 func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) []wasmir.ValueType {

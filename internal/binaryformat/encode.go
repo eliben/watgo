@@ -527,15 +527,15 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 func encodeElemOffsetExpr(out *bytes.Buffer, elemIdx int, elem wasmir.ElementSegment, diags *diag.ErrorList) {
 	switch elem.OffsetType {
 	case wasmir.ValueTypeI32:
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI32Const)
 	case wasmir.ValueTypeI64:
-		out.WriteByte(opI64ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI64Const)
 	default:
 		diags.Addf("element[%d]: unsupported offset type %s", elemIdx, elem.OffsetType)
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI32Const)
 	}
 	writeSLEB128(out, elem.OffsetI64)
-	out.WriteByte(opEndCode)
+	writeInstructionOpcode(out, wasmir.InstrEnd)
 }
 
 // encodeDataSection emits section 11 as active or passive data segments.
@@ -678,17 +678,17 @@ func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
 func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment, diags *diag.ErrorList) {
 	switch seg.OffsetType {
 	case wasmir.ValueTypeI32:
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI32Const)
 		writeSLEB128(out, seg.OffsetI64)
 	case wasmir.ValueTypeI64:
-		out.WriteByte(opI64ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI64Const)
 		writeSLEB128(out, seg.OffsetI64)
 	default:
 		diags.Addf("data[%d]: unsupported offset type %s", dataIdx, seg.OffsetType)
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI32Const)
 		writeSLEB128(out, 0)
 	}
-	out.WriteByte(opEndCode)
+	writeInstructionOpcode(out, wasmir.InstrEnd)
 }
 
 // encodeSimpleInstruction emits one no-immediate instruction that is described
@@ -730,36 +730,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		return
 	}
 	switch instr.Kind {
-	case wasmir.InstrBlock:
+	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 		writeInstructionOpcode(out, instr.Kind)
-		encodeBlockType(out, funcIdx, instrIdx, "block", instr, diags)
-	case wasmir.InstrLoop:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeBlockType(out, funcIdx, instrIdx, "loop", instr, diags)
-	case wasmir.InstrIf:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeBlockType(out, funcIdx, instrIdx, "if", instr, diags)
-	case wasmir.InstrElse:
-		out.WriteByte(opElseCode)
-	case wasmir.InstrBr:
+		encodeBlockType(out, funcIdx, instrIdx, instructionName(instr.Kind), instr, diags)
+	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.BranchDepth)
-	case wasmir.InstrBrIf:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.BranchDepth)
-	case wasmir.InstrBrOnNull:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.BranchDepth)
-	case wasmir.InstrBrOnNonNull:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.BranchDepth)
-	case wasmir.InstrBrOnCast:
-		writeInstructionOpcode(out, instr.Kind)
-		out.WriteByte(castFlags(instr.SourceRefType, instr.RefType))
-		writeULEB128(out, instr.BranchDepth)
-		writeHeapTypeImmediate(out, instr.SourceRefType)
-		writeHeapTypeImmediate(out, instr.RefType)
-	case wasmir.InstrBrOnCastFail:
+	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
 		writeInstructionOpcode(out, instr.Kind)
 		out.WriteByte(castFlags(instr.SourceRefType, instr.RefType))
 		writeULEB128(out, instr.BranchDepth)
@@ -772,10 +749,6 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 			writeULEB128(out, depth)
 		}
 		writeULEB128(out, instr.BranchDefault)
-	case wasmir.InstrUnreachable:
-		out.WriteByte(opUnreachableCode)
-	case wasmir.InstrReturn:
-		out.WriteByte(opReturnCode)
 	case wasmir.InstrI32Const:
 		writeInstructionOpcode(out, instr.Kind)
 		writeSLEB128(out, int64(instr.I32Const))
@@ -788,38 +761,19 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrF64Const:
 		writeInstructionOpcode(out, instr.Kind)
 		writeU64LE(out, instr.F64Const)
-	case wasmir.InstrDrop:
-		out.WriteByte(opDropCode)
-	case wasmir.InstrSelect:
-		out.WriteByte(opSelectCode)
-	case wasmir.InstrLocalGet:
+	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.LocalIndex)
-	case wasmir.InstrLocalSet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.LocalIndex)
-	case wasmir.InstrLocalTee:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.LocalIndex)
-	case wasmir.InstrGlobalGet:
+	case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.GlobalIndex)
-	case wasmir.InstrGlobalSet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.GlobalIndex)
-	case wasmir.InstrTableGet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TableIndex)
-	case wasmir.InstrTableSet:
+	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrTableCopy:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TableIndex)
 		writeULEB128(out, instr.SourceTableIndex)
-	case wasmir.InstrTableFill:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrTableInit:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.ElemIndex)
@@ -827,12 +781,6 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrElemDrop:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.ElemIndex)
-	case wasmir.InstrTableGrow:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TableIndex)
-	case wasmir.InstrTableSize:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TableIndex)
 	case wasmir.InstrCall:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.FuncIndex)
@@ -843,49 +791,18 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrCallRef:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.CallTypeIndex)
-	case wasmir.InstrStructNew:
+	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew, wasmir.InstrArrayNewDefault:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrStructNewDefault:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrStructGet:
+	case wasmir.InstrStructGet, wasmir.InstrStructGetS, wasmir.InstrStructGetU, wasmir.InstrStructSet:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.FieldIndex)
-	case wasmir.InstrStructGetS:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-		writeULEB128(out, instr.FieldIndex)
-	case wasmir.InstrStructGetU:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-		writeULEB128(out, instr.FieldIndex)
-	case wasmir.InstrStructSet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-		writeULEB128(out, instr.FieldIndex)
-	case wasmir.InstrArrayNew:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArrayLen:
-		writeInstructionOpcode(out, instr.Kind)
-	case wasmir.InstrArrayNewDefault:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArrayNewData:
+	case wasmir.InstrArrayNewData, wasmir.InstrArrayInitData:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.DataIndex)
-	case wasmir.InstrArrayNewElem:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-		writeULEB128(out, instr.ElemIndex)
-	case wasmir.InstrArrayInitData:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-		writeULEB128(out, instr.DataIndex)
-	case wasmir.InstrArrayInitElem:
+	case wasmir.InstrArrayNewElem, wasmir.InstrArrayInitElem:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.ElemIndex)
@@ -893,19 +810,7 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.FixedCount)
-	case wasmir.InstrArrayGet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArrayGetS:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArrayGetU:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArraySet:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.TypeIndex)
-	case wasmir.InstrArrayFill:
+	case wasmir.InstrArrayGet, wasmir.InstrArrayGetS, wasmir.InstrArrayGetU, wasmir.InstrArraySet, wasmir.InstrArrayFill:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
 	case wasmir.InstrArrayCopy:
@@ -913,145 +818,35 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeULEB128(out, instr.TypeIndex)
 		writeULEB128(out, instr.SourceTypeIndex)
 	case wasmir.InstrRefTest:
-		out.WriteByte(opPrefixFBCode)
+		out.WriteByte(0xfb)
 		if instr.RefType.Nullable {
-			writeULEB128(out, subopRefTestNullCode)
+			writeULEB128(out, 0x15)
 		} else {
-			writeULEB128(out, subopRefTestCode)
+			writeULEB128(out, 0x14)
 		}
 		writeHeapTypeImmediate(out, instr.RefType)
 	case wasmir.InstrRefCast:
-		out.WriteByte(opPrefixFBCode)
+		out.WriteByte(0xfb)
 		if instr.RefType.Nullable {
-			writeULEB128(out, subopRefCastNullCode)
+			writeULEB128(out, 0x17)
 		} else {
-			writeULEB128(out, subopRefCastCode)
+			writeULEB128(out, 0x16)
 		}
 		writeHeapTypeImmediate(out, instr.RefType)
-	case wasmir.InstrAnyConvertExtern:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopAnyConvertExternCode)
-	case wasmir.InstrExternConvertAny:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopExternConvertAnyCode)
-	case wasmir.InstrRefI31:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopRefI31Code)
-	case wasmir.InstrI31GetS:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopI31GetSCode)
-	case wasmir.InstrI31GetU:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopI31GetUCode)
-	case wasmir.InstrI32Load:
+	case wasmir.InstrI32Load, wasmir.InstrI64Load, wasmir.InstrF32Load, wasmir.InstrF64Load,
+		wasmir.InstrV128Load, wasmir.InstrV128Load8x8S, wasmir.InstrV128Load8x8U,
+		wasmir.InstrV128Load16x4S, wasmir.InstrV128Load16x4U, wasmir.InstrV128Load32x2S,
+		wasmir.InstrV128Load32x2U, wasmir.InstrV128Load8Splat, wasmir.InstrV128Load16Splat,
+		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat, wasmir.InstrI32Load8S,
+		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
+		wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI64Load16S,
+		wasmir.InstrI64Load16U, wasmir.InstrI64Load32S, wasmir.InstrI64Load32U,
+		wasmir.InstrI32Store, wasmir.InstrI64Store, wasmir.InstrF32Store, wasmir.InstrF64Store,
+		wasmir.InstrV128Store, wasmir.InstrI32Store8, wasmir.InstrI32Store16,
+		wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32:
 		writeInstructionOpcode(out, instr.Kind)
 		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrF32Load:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrF64Load:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Load8S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Load8U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Load16S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Load16U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load8S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load8U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load16S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load16U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load32S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Load32U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Store:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Store:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Store8:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI32Store16:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Store8:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Store16:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrI64Store32:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrF32Store:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrF64Store:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load8x8S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load8x8U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load16x4S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load16x4U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load32x2S:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load32x2U:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load8Splat:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load16Splat:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load32Splat:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Load64Splat:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrV128Store:
-		writeInstructionOpcode(out, instr.Kind)
-		encodeMemArg(out, instr)
-	case wasmir.InstrMemorySize:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.MemoryIndex)
-	case wasmir.InstrMemoryGrow:
+	case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.MemoryIndex)
 	case wasmir.InstrMemoryCopy:
@@ -1065,218 +860,11 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrDataDrop:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.DataIndex)
-	case wasmir.InstrMemoryFill:
-		writeInstructionOpcode(out, instr.Kind)
-		writeULEB128(out, instr.MemoryIndex)
-	case wasmir.InstrI32Eq:
-		out.WriteByte(opI32EqCode)
-	case wasmir.InstrI32Ne:
-		out.WriteByte(opI32NeCode)
-	case wasmir.InstrI32GtS:
-		out.WriteByte(opI32GtSCode)
-	case wasmir.InstrI32GtU:
-		out.WriteByte(opI32GtUCode)
-	case wasmir.InstrI32GeS:
-		out.WriteByte(opI32GeSCode)
-	case wasmir.InstrI32Clz:
-		out.WriteByte(opI32ClzCode)
-	case wasmir.InstrI32Ctz:
-		out.WriteByte(opI32CtzCode)
-	case wasmir.InstrI32Popcnt:
-		out.WriteByte(opI32PopcntCode)
-	case wasmir.InstrI32Add:
-		out.WriteByte(opI32AddCode)
-	case wasmir.InstrI32Sub:
-		out.WriteByte(opI32SubCode)
-	case wasmir.InstrI32Mul:
-		out.WriteByte(opI32MulCode)
-	case wasmir.InstrI32Or:
-		out.WriteByte(opI32OrCode)
-	case wasmir.InstrI32Xor:
-		out.WriteByte(opI32XorCode)
-	case wasmir.InstrI32DivS:
-		out.WriteByte(opI32DivSCode)
-	case wasmir.InstrI32DivU:
-		out.WriteByte(opI32DivUCode)
-	case wasmir.InstrI32RemS:
-		out.WriteByte(opI32RemSCode)
-	case wasmir.InstrI32RemU:
-		out.WriteByte(opI32RemUCode)
-	case wasmir.InstrI32Shl:
-		out.WriteByte(opI32ShlCode)
-	case wasmir.InstrI32ShrS:
-		out.WriteByte(opI32ShrSCode)
-	case wasmir.InstrI32ShrU:
-		out.WriteByte(opI32ShrUCode)
-	case wasmir.InstrI32Rotl:
-		out.WriteByte(opI32RotlCode)
-	case wasmir.InstrI32Rotr:
-		out.WriteByte(opI32RotrCode)
-	case wasmir.InstrI32Eqz:
-		out.WriteByte(opI32EqzCode)
-	case wasmir.InstrI32LtS:
-		out.WriteByte(opI32LtSCode)
-	case wasmir.InstrI32LtU:
-		out.WriteByte(opI32LtUCode)
-	case wasmir.InstrI32LeS:
-		out.WriteByte(opI32LeSCode)
-	case wasmir.InstrI32LeU:
-		out.WriteByte(opI32LeUCode)
-	case wasmir.InstrI32GeU:
-		out.WriteByte(opI32GeUCode)
-	case wasmir.InstrI32And:
-		out.WriteByte(opI32AndCode)
-	case wasmir.InstrI32Extend8S:
-		out.WriteByte(opI32Extend8SCode)
-	case wasmir.InstrI32Extend16S:
-		out.WriteByte(opI32Extend16SCode)
-	case wasmir.InstrI64Add:
-		out.WriteByte(opI64AddCode)
-	case wasmir.InstrI64And:
-		out.WriteByte(opI64AndCode)
-	case wasmir.InstrI64Or:
-		out.WriteByte(opI64OrCode)
-	case wasmir.InstrI64Xor:
-		out.WriteByte(opI64XorCode)
-	case wasmir.InstrI64Eq:
-		out.WriteByte(opI64EqCode)
-	case wasmir.InstrI64Ne:
-		out.WriteByte(opI64NeCode)
-	case wasmir.InstrI64Eqz:
-		out.WriteByte(opI64EqzCode)
-	case wasmir.InstrI64GtS:
-		out.WriteByte(opI64GtSCode)
-	case wasmir.InstrI64GtU:
-		out.WriteByte(opI64GtUCode)
-	case wasmir.InstrI64GeS:
-		out.WriteByte(opI64GeSCode)
-	case wasmir.InstrI64GeU:
-		out.WriteByte(opI64GeUCode)
-	case wasmir.InstrI64LeS:
-		out.WriteByte(opI64LeSCode)
-	case wasmir.InstrI64LeU:
-		out.WriteByte(opI64LeUCode)
-	case wasmir.InstrI64Clz:
-		out.WriteByte(opI64ClzCode)
-	case wasmir.InstrI64Ctz:
-		out.WriteByte(opI64CtzCode)
-	case wasmir.InstrI64Popcnt:
-		out.WriteByte(opI64PopcntCode)
-	case wasmir.InstrI64Sub:
-		out.WriteByte(opI64SubCode)
-	case wasmir.InstrI64Mul:
-		out.WriteByte(opI64MulCode)
-	case wasmir.InstrI64DivS:
-		out.WriteByte(opI64DivSCode)
-	case wasmir.InstrI64DivU:
-		out.WriteByte(opI64DivUCode)
-	case wasmir.InstrI64RemS:
-		out.WriteByte(opI64RemSCode)
-	case wasmir.InstrI64RemU:
-		out.WriteByte(opI64RemUCode)
-	case wasmir.InstrI64Shl:
-		out.WriteByte(opI64ShlCode)
-	case wasmir.InstrI64ShrS:
-		out.WriteByte(opI64ShrSCode)
-	case wasmir.InstrI64ShrU:
-		out.WriteByte(opI64ShrUCode)
-	case wasmir.InstrI64Rotl:
-		out.WriteByte(opI64RotlCode)
-	case wasmir.InstrI64Rotr:
-		out.WriteByte(opI64RotrCode)
-	case wasmir.InstrI64LtS:
-		out.WriteByte(opI64LtSCode)
-	case wasmir.InstrI64LtU:
-		out.WriteByte(opI64LtUCode)
-	case wasmir.InstrI64Extend8S:
-		out.WriteByte(opI64Extend8SCode)
-	case wasmir.InstrI64Extend16S:
-		out.WriteByte(opI64Extend16SCode)
-	case wasmir.InstrI64Extend32S:
-		out.WriteByte(opI64Extend32SCode)
-	case wasmir.InstrI32WrapI64:
-		out.WriteByte(opI32WrapI64Code)
-	case wasmir.InstrI64ExtendI32S:
-		out.WriteByte(opI64ExtendI32SCode)
-	case wasmir.InstrI64ExtendI32U:
-		out.WriteByte(opI64ExtendI32UCode)
-	case wasmir.InstrF32ConvertI32S:
-		out.WriteByte(opF32ConvertI32SCode)
-	case wasmir.InstrF64ConvertI64S:
-		out.WriteByte(opF64ConvertI64SCode)
-	case wasmir.InstrF32Add:
-		out.WriteByte(opF32AddCode)
-	case wasmir.InstrF32Sub:
-		out.WriteByte(opF32SubCode)
-	case wasmir.InstrF32Mul:
-		out.WriteByte(opF32MulCode)
-	case wasmir.InstrF32Div:
-		out.WriteByte(opF32DivCode)
-	case wasmir.InstrF32Sqrt:
-		out.WriteByte(opF32SqrtCode)
-	case wasmir.InstrF32Neg:
-		out.WriteByte(opF32NegCode)
-	case wasmir.InstrF32Eq:
-		out.WriteByte(opF32EqCode)
-	case wasmir.InstrF32Lt:
-		out.WriteByte(opF32LtCode)
-	case wasmir.InstrF32Gt:
-		out.WriteByte(opF32GtCode)
-	case wasmir.InstrF32Ne:
-		out.WriteByte(opF32NeCode)
-	case wasmir.InstrF32Min:
-		out.WriteByte(opF32MinCode)
-	case wasmir.InstrF32Max:
-		out.WriteByte(opF32MaxCode)
-	case wasmir.InstrF32Ceil:
-		out.WriteByte(opF32CeilCode)
-	case wasmir.InstrF32Floor:
-		out.WriteByte(opF32FloorCode)
-	case wasmir.InstrF32Trunc:
-		out.WriteByte(opF32TruncCode)
-	case wasmir.InstrF32Nearest:
-		out.WriteByte(opF32NearestCode)
-	case wasmir.InstrF64Add:
-		out.WriteByte(opF64AddCode)
-	case wasmir.InstrF64Sub:
-		out.WriteByte(opF64SubCode)
-	case wasmir.InstrF64Mul:
-		out.WriteByte(opF64MulCode)
-	case wasmir.InstrF64Div:
-		out.WriteByte(opF64DivCode)
-	case wasmir.InstrF64Sqrt:
-		out.WriteByte(opF64SqrtCode)
-	case wasmir.InstrF64Neg:
-		out.WriteByte(opF64NegCode)
-	case wasmir.InstrF64Min:
-		out.WriteByte(opF64MinCode)
-	case wasmir.InstrF64Max:
-		out.WriteByte(opF64MaxCode)
-	case wasmir.InstrF64Ceil:
-		out.WriteByte(opF64CeilCode)
-	case wasmir.InstrF64Floor:
-		out.WriteByte(opF64FloorCode)
-	case wasmir.InstrF64Trunc:
-		out.WriteByte(opF64TruncCode)
-	case wasmir.InstrF64Nearest:
-		out.WriteByte(opF64NearestCode)
-	case wasmir.InstrF64Eq:
-		out.WriteByte(opF64EqCode)
-	case wasmir.InstrF64Le:
-		out.WriteByte(opF64LeCode)
-	case wasmir.InstrI32ReinterpretF32:
-		out.WriteByte(opI32ReinterpretF32Code)
-	case wasmir.InstrI64ReinterpretF64:
-		out.WriteByte(opI64ReinterpretF64Code)
-	case wasmir.InstrF32ReinterpretI32:
-		out.WriteByte(opF32ReinterpretI32Code)
-	case wasmir.InstrF64ReinterpretI64:
-		out.WriteByte(opF64ReinterpretI64Code)
 	case wasmir.InstrRefNull:
-		out.WriteByte(opRefNullCode)
+		writeInstructionOpcode(out, instr.Kind)
 		if instr.RefType.UsesTypeIndex() {
 			writeSLEB128(out, int64(instr.RefType.HeapType.TypeIndex))
-			break
+			return
 		}
 		refCode, ok := refTypeCode(instr.RefType)
 		if !ok {
@@ -1284,403 +872,20 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 			refCode = refTypeFuncRefCode
 		}
 		out.WriteByte(refCode)
-	case wasmir.InstrRefIsNull:
-		out.WriteByte(opRefIsNullCode)
-	case wasmir.InstrRefAsNonNull:
-		out.WriteByte(opRefAsNonNullCode)
 	case wasmir.InstrRefFunc:
-		out.WriteByte(opRefFuncCode)
+		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.FuncIndex)
-	case wasmir.InstrRefEq:
-		out.WriteByte(opRefEqCode)
 	case wasmir.InstrV128Const:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128ConstCode)
+		writeInstructionOpcode(out, instr.Kind)
 		out.Write(instr.V128Const[:])
-	case wasmir.InstrV128AnyTrue:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128AnyTrueCode)
-	case wasmir.InstrV128Not:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128NotCode)
-	case wasmir.InstrV128And:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128AndCode)
-	case wasmir.InstrV128AndNot:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128AndNotCode)
-	case wasmir.InstrV128Or:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128OrCode)
-	case wasmir.InstrV128Xor:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128XorCode)
-	case wasmir.InstrI8x16Swizzle:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16SwizzleCode)
-	case wasmir.InstrI8x16AllTrue:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16AllTrueCode)
-	case wasmir.InstrI8x16Bitmask:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16BitmaskCode)
-	case wasmir.InstrI8x16NarrowI16x8S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16NarrowI16x8SCode)
-	case wasmir.InstrI8x16NarrowI16x8U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16NarrowI16x8UCode)
-	case wasmir.InstrI8x16Shl:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16ShlCode)
-	case wasmir.InstrI8x16ShrS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16ShrSCode)
-	case wasmir.InstrI8x16ShrU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI8x16ShrUCode)
-	case wasmir.InstrI16x8Eq:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8EqCode)
-	case wasmir.InstrI16x8Ne:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8NeCode)
-	case wasmir.InstrI16x8LtS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8LtSCode)
-	case wasmir.InstrI16x8LtU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8LtUCode)
-	case wasmir.InstrI16x8GtS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8GtSCode)
-	case wasmir.InstrI16x8GtU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8GtUCode)
-	case wasmir.InstrI16x8LeS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8LeSCode)
-	case wasmir.InstrI16x8LeU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8LeUCode)
-	case wasmir.InstrI16x8GeS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8GeSCode)
-	case wasmir.InstrI16x8GeU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8GeUCode)
-	case wasmir.InstrI16x8ExtaddPairwiseI8x16S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtaddPairwiseI8x16SCode)
-	case wasmir.InstrI16x8ExtaddPairwiseI8x16U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtaddPairwiseI8x16UCode)
-	case wasmir.InstrI16x8Abs:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AbsCode)
-	case wasmir.InstrI16x8Neg:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8NegCode)
-	case wasmir.InstrI16x8Q15mulrSatS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8Q15mulrSatSCode)
-	case wasmir.InstrI16x8Shl:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ShlCode)
-	case wasmir.InstrI16x8AllTrue:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AllTrueCode)
-	case wasmir.InstrI16x8Bitmask:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8BitmaskCode)
-	case wasmir.InstrI16x8NarrowI32x4S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8NarrowI32x4SCode)
-	case wasmir.InstrI16x8NarrowI32x4U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8NarrowI32x4UCode)
-	case wasmir.InstrI16x8ExtendLowI8x16S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtendLowI8x16SCode)
-	case wasmir.InstrI16x8ExtendLowI8x16U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtendLowI8x16UCode)
-	case wasmir.InstrI16x8ShrS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ShrSCode)
-	case wasmir.InstrI16x8ShrU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ShrUCode)
-	case wasmir.InstrI16x8Add:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AddCode)
-	case wasmir.InstrI16x8AddSatS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AddSatSCode)
-	case wasmir.InstrI16x8AddSatU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AddSatUCode)
-	case wasmir.InstrI16x8Sub:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8SubCode)
-	case wasmir.InstrI16x8SubSatS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8SubSatSCode)
-	case wasmir.InstrI16x8SubSatU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8SubSatUCode)
-	case wasmir.InstrI16x8Mul:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8MulCode)
-	case wasmir.InstrI16x8MinS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8MinSCode)
-	case wasmir.InstrI16x8MinU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8MinUCode)
-	case wasmir.InstrI16x8MaxS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8MaxSCode)
-	case wasmir.InstrI16x8MaxU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8MaxUCode)
-	case wasmir.InstrI16x8AvgrU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8AvgrUCode)
-	case wasmir.InstrI16x8ExtmulLowI8x16S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtmulLowI8x16SCode)
-	case wasmir.InstrI16x8ExtmulHighI8x16S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtmulHighI8x16SCode)
-	case wasmir.InstrI16x8ExtmulLowI8x16U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtmulLowI8x16UCode)
-	case wasmir.InstrI16x8ExtmulHighI8x16U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI16x8ExtmulHighI8x16UCode)
-	case wasmir.InstrI32x4Splat:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4SplatCode)
 	case wasmir.InstrI32x4ExtractLane:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ExtractLaneCode)
+		writeInstructionOpcode(out, instr.Kind)
 		out.WriteByte(byte(instr.LaneIndex))
-	case wasmir.InstrI32x4AllTrue:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4AllTrueCode)
-	case wasmir.InstrI32x4Bitmask:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4BitmaskCode)
-	case wasmir.InstrI32x4Eq:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4EqCode)
-	case wasmir.InstrI32x4LtS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4LtSCode)
-	case wasmir.InstrI32x4ExtendLowI16x8S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ExtendLowI16x8SCode)
-	case wasmir.InstrI32x4ExtendLowI16x8U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ExtendLowI16x8UCode)
-	case wasmir.InstrI32x4Shl:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ShlCode)
-	case wasmir.InstrI32x4ShrS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ShrSCode)
-	case wasmir.InstrI32x4ShrU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4ShrUCode)
-	case wasmir.InstrI32x4Add:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4AddCode)
-	case wasmir.InstrI32x4Sub:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4SubCode)
-	case wasmir.InstrI32x4Mul:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4MulCode)
-	case wasmir.InstrI32x4Neg:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4NegCode)
-	case wasmir.InstrI32x4MinS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI32x4MinSCode)
-	case wasmir.InstrI64x2Shl:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2ShlCode)
-	case wasmir.InstrI64x2AllTrue:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2AllTrueCode)
-	case wasmir.InstrI64x2Bitmask:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2BitmaskCode)
-	case wasmir.InstrI64x2ShrS:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2ShrSCode)
-	case wasmir.InstrI64x2ShrU:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2ShrUCode)
-	case wasmir.InstrI64x2Add:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopI64x2AddCode)
-	case wasmir.InstrF32x4Eq:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4EqCode)
-	case wasmir.InstrF32x4Ne:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4NeCode)
-	case wasmir.InstrF32x4Lt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4LtCode)
-	case wasmir.InstrF32x4Gt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4GtCode)
-	case wasmir.InstrF32x4Le:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4LeCode)
-	case wasmir.InstrF32x4Ge:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4GeCode)
-	case wasmir.InstrF32x4Ceil:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4CeilCode)
-	case wasmir.InstrF32x4Floor:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4FloorCode)
-	case wasmir.InstrF32x4Trunc:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4TruncCode)
-	case wasmir.InstrF32x4Nearest:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4NearestCode)
-	case wasmir.InstrF32x4Abs:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4AbsCode)
-	case wasmir.InstrF32x4Neg:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4NegCode)
-	case wasmir.InstrF32x4Sqrt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4SqrtCode)
-	case wasmir.InstrF32x4ConvertI32x4S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4ConvertI32x4SCode)
-	case wasmir.InstrF32x4ConvertI32x4U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4ConvertI32x4UCode)
-	case wasmir.InstrF32x4Add:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4AddCode)
-	case wasmir.InstrF32x4Sub:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4SubCode)
-	case wasmir.InstrF32x4Mul:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4MulCode)
-	case wasmir.InstrF32x4Div:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4DivCode)
-	case wasmir.InstrF32x4Min:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4MinCode)
-	case wasmir.InstrF32x4Max:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4MaxCode)
-	case wasmir.InstrF32x4Pmin:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4PminCode)
-	case wasmir.InstrF32x4Pmax:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4PmaxCode)
-	case wasmir.InstrF64x2Eq:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2EqCode)
-	case wasmir.InstrF64x2Ne:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2NeCode)
-	case wasmir.InstrF64x2Lt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2LtCode)
-	case wasmir.InstrF64x2Gt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2GtCode)
-	case wasmir.InstrF64x2Le:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2LeCode)
-	case wasmir.InstrF64x2Ge:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2GeCode)
-	case wasmir.InstrF64x2Ceil:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2CeilCode)
-	case wasmir.InstrF64x2Floor:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2FloorCode)
-	case wasmir.InstrF64x2Trunc:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2TruncCode)
-	case wasmir.InstrF64x2Nearest:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2NearestCode)
-	case wasmir.InstrF64x2Abs:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2AbsCode)
-	case wasmir.InstrF64x2Neg:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2NegCode)
-	case wasmir.InstrF64x2Sqrt:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2SqrtCode)
-	case wasmir.InstrF64x2Add:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2AddCode)
-	case wasmir.InstrF64x2Sub:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2SubCode)
-	case wasmir.InstrF64x2Mul:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2MulCode)
-	case wasmir.InstrF64x2Div:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2DivCode)
-	case wasmir.InstrF64x2Min:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2MinCode)
-	case wasmir.InstrF64x2Max:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2MaxCode)
-	case wasmir.InstrF64x2Pmin:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2PminCode)
-	case wasmir.InstrF64x2Pmax:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2PmaxCode)
-	case wasmir.InstrF64x2ConvertLowI32x4S:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2ConvertLowI32x4SCode)
-	case wasmir.InstrF64x2ConvertLowI32x4U:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2ConvertLowI32x4UCode)
-	case wasmir.InstrF32x4DemoteF64x2Zero:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF32x4DemoteF64x2ZeroCode)
-	case wasmir.InstrF64x2PromoteLowF32x4:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopF64x2PromoteLowF32x4Code)
-	case wasmir.InstrV128Bitselect:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128BitselectCode)
-	case wasmir.InstrEnd:
-		out.WriteByte(opEndCode)
 	default:
 		diags.Addf("func[%d] instruction[%d]: unsupported instruction kind %d", funcIdx, instrIdx, instr.Kind)
 	}
 }
 
-// encodeConstExpr emits a single-instruction constant expression terminated by end.
 func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
 	encodeConstExprInstrs(out, where, []wasmir.Instruction{init}, diags)
 }
@@ -1689,32 +894,31 @@ func encodeConstExprInstrs(out *bytes.Buffer, where string, instrs []wasmir.Inst
 	for _, init := range instrs {
 		encodeConstExprInstr(out, where, init, diags)
 	}
-	out.WriteByte(opEndCode)
+	writeInstructionOpcode(out, wasmir.InstrEnd)
 }
 
 func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
 	switch init.Kind {
 	case wasmir.InstrI32Const:
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeSLEB128(out, int64(init.I32Const))
 	case wasmir.InstrI64Const:
-		out.WriteByte(opI64ConstCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeSLEB128(out, init.I64Const)
 	case wasmir.InstrF32Const:
-		out.WriteByte(opF32ConstCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeU32LE(out, init.F32Const)
 	case wasmir.InstrF64Const:
-		out.WriteByte(opF64ConstCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeU64LE(out, init.F64Const)
 	case wasmir.InstrV128Const:
-		out.WriteByte(opPrefixFDCode)
-		writeULEB128(out, subopV128ConstCode)
+		writeInstructionOpcode(out, init.Kind)
 		out.Write(init.V128Const[:])
 	case wasmir.InstrRefNull:
-		out.WriteByte(opRefNullCode)
+		writeInstructionOpcode(out, init.Kind)
 		if init.RefType.UsesTypeIndex() {
 			writeSLEB128(out, int64(init.RefType.HeapType.TypeIndex))
-			break
+			return
 		}
 		refCode, ok := refTypeCode(init.RefType)
 		if !ok {
@@ -1723,44 +927,23 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 		}
 		out.WriteByte(refCode)
 	case wasmir.InstrRefFunc:
-		out.WriteByte(opRefFuncCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeULEB128(out, init.FuncIndex)
 	case wasmir.InstrGlobalGet:
-		out.WriteByte(opGlobalGetCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeULEB128(out, init.GlobalIndex)
-	case wasmir.InstrArrayNew:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopArrayNewCode)
-		writeULEB128(out, init.TypeIndex)
-	case wasmir.InstrStructNew:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopStructNewCode)
-		writeULEB128(out, init.TypeIndex)
-	case wasmir.InstrStructNewDefault:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopStructNewDefaultCode)
-		writeULEB128(out, init.TypeIndex)
-	case wasmir.InstrArrayNewDefault:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopArrayNewDefaultCode)
+	case wasmir.InstrArrayNew, wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNewDefault:
+		writeInstructionOpcode(out, init.Kind)
 		writeULEB128(out, init.TypeIndex)
 	case wasmir.InstrArrayNewFixed:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopArrayNewFixedCode)
+		writeInstructionOpcode(out, init.Kind)
 		writeULEB128(out, init.TypeIndex)
 		writeULEB128(out, init.FixedCount)
-	case wasmir.InstrExternConvertAny:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopExternConvertAnyCode)
-	case wasmir.InstrAnyConvertExtern:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopAnyConvertExternCode)
-	case wasmir.InstrRefI31:
-		out.WriteByte(opPrefixFBCode)
-		writeULEB128(out, subopRefI31Code)
+	case wasmir.InstrExternConvertAny, wasmir.InstrAnyConvertExtern, wasmir.InstrRefI31:
+		writeInstructionOpcode(out, init.Kind)
 	default:
 		diags.Addf("%s: unsupported initializer instruction kind %d", where, init.Kind)
-		out.WriteByte(opI32ConstCode)
+		writeInstructionOpcode(out, wasmir.InstrI32Const)
 		writeSLEB128(out, 0)
 	}
 }
