@@ -476,6 +476,8 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(memoryInstr(InstrV128Load16Splat, "v128.load16_splat"), 0xfd, 0x08),
 	withBinaryOpcode(memoryInstr(InstrV128Load32Splat, "v128.load32_splat"), 0xfd, 0x09),
 	withBinaryOpcode(memoryInstr(InstrV128Load64Splat, "v128.load64_splat"), 0xfd, 0x0a),
+	withBinaryOpcode(memoryInstr(InstrV128Load32Zero, "v128.load32_zero"), 0xfd, 0x5c),
+	withBinaryOpcode(memoryInstr(InstrV128Load64Zero, "v128.load64_zero"), 0xfd, 0x5d),
 	withBinaryOpcode(memoryInstr(InstrV128Load8Lane, "v128.load8_lane"), 0xfd, 0x54),
 	withBinaryOpcode(memoryInstr(InstrV128Load16Lane, "v128.load16_lane"), 0xfd, 0x55),
 	withBinaryOpcode(memoryInstr(InstrV128Load32Lane, "v128.load32_lane"), 0xfd, 0x56),

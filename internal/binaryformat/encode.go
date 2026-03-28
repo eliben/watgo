@@ -839,6 +839,7 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		wasmir.InstrV128Load16x4S, wasmir.InstrV128Load16x4U, wasmir.InstrV128Load32x2S,
 		wasmir.InstrV128Load32x2U, wasmir.InstrV128Load8Splat, wasmir.InstrV128Load16Splat,
 		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat,
+		wasmir.InstrV128Load32Zero, wasmir.InstrV128Load64Zero,
 		wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
 		wasmir.InstrI32Load8S,
 		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,

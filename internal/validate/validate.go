@@ -647,11 +647,15 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 		return 2, true
 	case InstrV128Load32Splat:
 		return 2, true
+	case InstrV128Load32Zero:
+		return 2, true
 	case InstrV128Load32Lane:
 		return 2, true
 	case InstrI64Load, InstrF64Load, InstrI64Store, InstrF64Store:
 		return 3, true
 	case InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load64Splat:
+		return 3, true
+	case InstrV128Load64Zero:
 		return 3, true
 	case InstrV128Load64Lane:
 		return 3, true
@@ -2406,7 +2410,7 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF64))
-		case InstrV128Load, InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load8Splat, InstrV128Load16Splat, InstrV128Load32Splat, InstrV128Load64Splat:
+		case InstrV128Load, InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load8Splat, InstrV128Load16Splat, InstrV128Load32Splat, InstrV128Load64Splat, InstrV128Load32Zero, InstrV128Load64Zero:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
 				continue

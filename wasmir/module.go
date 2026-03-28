@@ -281,6 +281,8 @@ const (
 	InstrV128Load16Splat
 	InstrV128Load32Splat
 	InstrV128Load64Splat
+	InstrV128Load32Zero
+	InstrV128Load64Zero
 	InstrV128Load8Lane
 	InstrV128Load16Lane
 	InstrV128Load32Lane
