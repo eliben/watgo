@@ -1074,6 +1074,7 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 			return out
 		}
 		if def, ok := wasmir.LookupInstructionByBinary(0, uint32(op)); ok &&
+			def.Binary.Encoding == wasmir.BinaryEncodingSimple &&
 			def.Kind != wasmir.InstrElse && def.Kind != wasmir.InstrEnd {
 			out = append(out, wasmir.Instruction{Kind: def.Kind})
 			continue
@@ -1373,7 +1374,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				diags.Addf("code[%d]: 0xfb prefixed op missing/invalid subopcode: %v", funcIdx, err)
 				return out
 			}
-			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFBCode, subop); ok {
+			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFBCode, subop); ok &&
+				def.Binary.Encoding == wasmir.BinaryEncodingSimple {
 				out = append(out, wasmir.Instruction{Kind: def.Kind})
 				continue
 			}
@@ -1693,7 +1695,8 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 				diags.Addf("code[%d]: 0xfd prefixed op missing/invalid subopcode: %v", funcIdx, err)
 				return out
 			}
-			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFDCode, subop); ok {
+			if def, ok := wasmir.LookupInstructionByBinary(opPrefixFDCode, subop); ok &&
+				def.Binary.Encoding == wasmir.BinaryEncodingSimple {
 				out = append(out, wasmir.Instruction{Kind: def.Kind})
 				continue
 			}

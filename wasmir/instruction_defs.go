@@ -67,12 +67,32 @@ type InstructionTextDef struct {
 	LoweringOperands LoweringOperandKind
 }
 
+// BinaryEncodingKind describes how much of an instruction's binary encoding is
+// covered by the shared instruction catalog.
+type BinaryEncodingKind uint8
+
+const (
+	// BinaryEncodingNone means the instruction stays fully on handwritten
+	// encode/decode paths.
+	BinaryEncodingNone BinaryEncodingKind = iota
+
+	// BinaryEncodingOpcodeOnly means the catalog provides the opcode or
+	// prefixed subopcode, while immediates are still emitted/parsed by
+	// handwritten code.
+	BinaryEncodingOpcodeOnly
+
+	// BinaryEncodingSimple means the instruction is fully handled by the
+	// generic no-immediate encode/decode path.
+	BinaryEncodingSimple
+)
+
 // InstructionBinaryDef contains generic binary encoding metadata for
-// instructions that can be encoded/decoded without a handwritten special case.
+// instructions that expose at least their opcode layout through the shared
+// catalog.
 type InstructionBinaryDef struct {
-	HasEncoding bool
-	Prefix      byte
-	Opcode      uint32
+	Encoding BinaryEncodingKind
+	Prefix   byte
+	Opcode   uint32
 }
 
 // InstructionValidateDef contains generic validation metadata for
@@ -359,109 +379,109 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrF64x2PromoteLowF32x4, "f64x2.promote_low_f32x4", 0xfd, 0x5f, unarySig(ValueTypeV128, ValueTypeV128)),
 
 	// Structured text instructions.
-	structuredInstr(InstrBlock, "block"),
-	structuredInstr(InstrIf, "if"),
-	structuredInstr(InstrLoop, "loop"),
+	withBinaryOpcode(structuredInstr(InstrBlock, "block"), 0, 0x02),
+	withBinaryOpcode(structuredInstr(InstrIf, "if"), 0, 0x04),
+	withBinaryOpcode(structuredInstr(InstrLoop, "loop"), 0, 0x03),
 
 	// Memory memarg instructions.
-	memoryInstr(InstrI32Load, "i32.load"),
-	memoryInstr(InstrI64Load, "i64.load"),
-	memoryInstr(InstrF32Load, "f32.load"),
-	memoryInstr(InstrF64Load, "f64.load"),
-	memoryInstr(InstrV128Load, "v128.load"),
-	memoryInstr(InstrV128Load8x8S, "v128.load8x8_s"),
-	memoryInstr(InstrV128Load8x8U, "v128.load8x8_u"),
-	memoryInstr(InstrV128Load16x4S, "v128.load16x4_s"),
-	memoryInstr(InstrV128Load16x4U, "v128.load16x4_u"),
-	memoryInstr(InstrV128Load32x2S, "v128.load32x2_s"),
-	memoryInstr(InstrV128Load32x2U, "v128.load32x2_u"),
-	memoryInstr(InstrV128Load8Splat, "v128.load8_splat"),
-	memoryInstr(InstrV128Load16Splat, "v128.load16_splat"),
-	memoryInstr(InstrV128Load32Splat, "v128.load32_splat"),
-	memoryInstr(InstrV128Load64Splat, "v128.load64_splat"),
-	memoryInstr(InstrI32Load8S, "i32.load8_s"),
-	memoryInstr(InstrI32Load8U, "i32.load8_u"),
-	memoryInstr(InstrI32Load16S, "i32.load16_s"),
-	memoryInstr(InstrI32Load16U, "i32.load16_u"),
-	memoryInstr(InstrI64Load8S, "i64.load8_s"),
-	memoryInstr(InstrI64Load8U, "i64.load8_u"),
-	memoryInstr(InstrI64Load16S, "i64.load16_s"),
-	memoryInstr(InstrI64Load16U, "i64.load16_u"),
-	memoryInstr(InstrI64Load32S, "i64.load32_s"),
-	memoryInstr(InstrI64Load32U, "i64.load32_u"),
-	memoryInstr(InstrI32Store, "i32.store"),
-	memoryInstr(InstrI64Store, "i64.store"),
-	memoryInstr(InstrI32Store8, "i32.store8"),
-	memoryInstr(InstrI32Store16, "i32.store16"),
-	memoryInstr(InstrI64Store8, "i64.store8"),
-	memoryInstr(InstrI64Store16, "i64.store16"),
-	memoryInstr(InstrI64Store32, "i64.store32"),
-	memoryInstr(InstrF32Store, "f32.store"),
-	memoryInstr(InstrF64Store, "f64.store"),
-	memoryInstr(InstrV128Store, "v128.store"),
+	withBinaryOpcode(memoryInstr(InstrI32Load, "i32.load"), 0, 0x28),
+	withBinaryOpcode(memoryInstr(InstrI64Load, "i64.load"), 0, 0x29),
+	withBinaryOpcode(memoryInstr(InstrF32Load, "f32.load"), 0, 0x2a),
+	withBinaryOpcode(memoryInstr(InstrF64Load, "f64.load"), 0, 0x2b),
+	withBinaryOpcode(memoryInstr(InstrV128Load, "v128.load"), 0xfd, 0x00),
+	withBinaryOpcode(memoryInstr(InstrV128Load8x8S, "v128.load8x8_s"), 0xfd, 0x01),
+	withBinaryOpcode(memoryInstr(InstrV128Load8x8U, "v128.load8x8_u"), 0xfd, 0x02),
+	withBinaryOpcode(memoryInstr(InstrV128Load16x4S, "v128.load16x4_s"), 0xfd, 0x03),
+	withBinaryOpcode(memoryInstr(InstrV128Load16x4U, "v128.load16x4_u"), 0xfd, 0x04),
+	withBinaryOpcode(memoryInstr(InstrV128Load32x2S, "v128.load32x2_s"), 0xfd, 0x05),
+	withBinaryOpcode(memoryInstr(InstrV128Load32x2U, "v128.load32x2_u"), 0xfd, 0x06),
+	withBinaryOpcode(memoryInstr(InstrV128Load8Splat, "v128.load8_splat"), 0xfd, 0x07),
+	withBinaryOpcode(memoryInstr(InstrV128Load16Splat, "v128.load16_splat"), 0xfd, 0x08),
+	withBinaryOpcode(memoryInstr(InstrV128Load32Splat, "v128.load32_splat"), 0xfd, 0x09),
+	withBinaryOpcode(memoryInstr(InstrV128Load64Splat, "v128.load64_splat"), 0xfd, 0x0a),
+	withBinaryOpcode(memoryInstr(InstrI32Load8S, "i32.load8_s"), 0, 0x2c),
+	withBinaryOpcode(memoryInstr(InstrI32Load8U, "i32.load8_u"), 0, 0x2d),
+	withBinaryOpcode(memoryInstr(InstrI32Load16S, "i32.load16_s"), 0, 0x2e),
+	withBinaryOpcode(memoryInstr(InstrI32Load16U, "i32.load16_u"), 0, 0x2f),
+	withBinaryOpcode(memoryInstr(InstrI64Load8S, "i64.load8_s"), 0, 0x30),
+	withBinaryOpcode(memoryInstr(InstrI64Load8U, "i64.load8_u"), 0, 0x31),
+	withBinaryOpcode(memoryInstr(InstrI64Load16S, "i64.load16_s"), 0, 0x32),
+	withBinaryOpcode(memoryInstr(InstrI64Load16U, "i64.load16_u"), 0, 0x33),
+	withBinaryOpcode(memoryInstr(InstrI64Load32S, "i64.load32_s"), 0, 0x34),
+	withBinaryOpcode(memoryInstr(InstrI64Load32U, "i64.load32_u"), 0, 0x35),
+	withBinaryOpcode(memoryInstr(InstrI32Store, "i32.store"), 0, 0x36),
+	withBinaryOpcode(memoryInstr(InstrI64Store, "i64.store"), 0, 0x37),
+	withBinaryOpcode(memoryInstr(InstrI32Store8, "i32.store8"), 0, 0x3a),
+	withBinaryOpcode(memoryInstr(InstrI32Store16, "i32.store16"), 0, 0x3b),
+	withBinaryOpcode(memoryInstr(InstrI64Store8, "i64.store8"), 0, 0x3c),
+	withBinaryOpcode(memoryInstr(InstrI64Store16, "i64.store16"), 0, 0x3d),
+	withBinaryOpcode(memoryInstr(InstrI64Store32, "i64.store32"), 0, 0x3e),
+	withBinaryOpcode(memoryInstr(InstrF32Store, "f32.store"), 0, 0x38),
+	withBinaryOpcode(memoryInstr(InstrF64Store, "f64.store"), 0, 0x39),
+	withBinaryOpcode(memoryInstr(InstrV128Store, "v128.store"), 0xfd, 0x0b),
 
 	// Special text instructions with handwritten parsing/lowering and/or
 	// binary handling.
-	specialInstr(InstrArrayGet, "array.get"),
-	specialInstr(InstrArrayGetS, "array.get_s"),
-	specialInstr(InstrArrayGetU, "array.get_u"),
-	specialInstr(InstrArrayNew, "array.new"),
-	specialInstr(InstrArrayNewData, "array.new_data"),
-	specialInstr(InstrArrayNewElem, "array.new_elem"),
-	specialInstr(InstrArrayNewDefault, "array.new_default"),
-	specialInstr(InstrArrayNewFixed, "array.new_fixed"),
-	specialInstr(InstrArrayInitData, "array.init_data"),
-	specialInstr(InstrArrayInitElem, "array.init_elem"),
-	specialInstr(InstrArrayFill, "array.fill"),
-	specialInstr(InstrArrayCopy, "array.copy"),
-	specialInstr(InstrArraySet, "array.set"),
-	specialInstr(InstrBrOnCast, "br_on_cast"),
-	specialInstr(InstrBrOnCastFail, "br_on_cast_fail"),
-	specialInstr(InstrBrTable, "br_table"),
-	specialInstr(InstrCallIndirect, "call_indirect"),
-	specialInstr(InstrMemoryCopy, "memory.copy"),
-	specialInstr(InstrMemoryFill, "memory.fill"),
-	specialInstr(InstrMemoryGrow, "memory.grow"),
-	specialInstr(InstrMemorySize, "memory.size"),
+	withBinaryOpcode(specialInstr(InstrArrayGet, "array.get"), 0xfb, 0x0b),
+	withBinaryOpcode(specialInstr(InstrArrayGetS, "array.get_s"), 0xfb, 0x0c),
+	withBinaryOpcode(specialInstr(InstrArrayGetU, "array.get_u"), 0xfb, 0x0d),
+	withBinaryOpcode(specialInstr(InstrArrayNew, "array.new"), 0xfb, 0x06),
+	withBinaryOpcode(specialInstr(InstrArrayNewData, "array.new_data"), 0xfb, 0x09),
+	withBinaryOpcode(specialInstr(InstrArrayNewElem, "array.new_elem"), 0xfb, 0x0a),
+	withBinaryOpcode(specialInstr(InstrArrayNewDefault, "array.new_default"), 0xfb, 0x07),
+	withBinaryOpcode(specialInstr(InstrArrayNewFixed, "array.new_fixed"), 0xfb, 0x08),
+	withBinaryOpcode(specialInstr(InstrArrayInitData, "array.init_data"), 0xfb, 0x12),
+	withBinaryOpcode(specialInstr(InstrArrayInitElem, "array.init_elem"), 0xfb, 0x13),
+	withBinaryOpcode(specialInstr(InstrArrayFill, "array.fill"), 0xfb, 0x10),
+	withBinaryOpcode(specialInstr(InstrArrayCopy, "array.copy"), 0xfb, 0x11),
+	withBinaryOpcode(specialInstr(InstrArraySet, "array.set"), 0xfb, 0x0e),
+	withBinaryOpcode(specialInstr(InstrBrOnCast, "br_on_cast"), 0xfb, 0x18),
+	withBinaryOpcode(specialInstr(InstrBrOnCastFail, "br_on_cast_fail"), 0xfb, 0x19),
+	withBinaryOpcode(specialInstr(InstrBrTable, "br_table"), 0, 0x0e),
+	withBinaryOpcode(specialInstr(InstrCallIndirect, "call_indirect"), 0, 0x11),
+	withBinaryOpcode(specialInstr(InstrMemoryCopy, "memory.copy"), 0xfc, 0x0a),
+	withBinaryOpcode(specialInstr(InstrMemoryFill, "memory.fill"), 0xfc, 0x0b),
+	withBinaryOpcode(specialInstr(InstrMemoryGrow, "memory.grow"), 0, 0x40),
+	withBinaryOpcode(specialInstr(InstrMemorySize, "memory.size"), 0, 0x3f),
 	specialInstr(InstrRefCast, "ref.cast"),
 	specialInstr(InstrRefTest, "ref.test"),
-	specialInstr(InstrStructGet, "struct.get"),
-	specialInstr(InstrStructGetS, "struct.get_s"),
-	specialInstr(InstrStructGetU, "struct.get_u"),
-	specialInstr(InstrStructNew, "struct.new"),
-	specialInstr(InstrStructNewDefault, "struct.new_default"),
-	specialInstr(InstrStructSet, "struct.set"),
-	specialInstr(InstrTableCopy, "table.copy"),
-	specialInstr(InstrTableFill, "table.fill"),
-	specialInstr(InstrTableGet, "table.get"),
-	specialInstr(InstrTableGrow, "table.grow"),
-	specialInstr(InstrTableInit, "table.init"),
-	specialInstr(InstrTableSet, "table.set"),
-	specialInstr(InstrTableSize, "table.size"),
+	withBinaryOpcode(specialInstr(InstrStructGet, "struct.get"), 0xfb, 0x02),
+	withBinaryOpcode(specialInstr(InstrStructGetS, "struct.get_s"), 0xfb, 0x03),
+	withBinaryOpcode(specialInstr(InstrStructGetU, "struct.get_u"), 0xfb, 0x04),
+	withBinaryOpcode(specialInstr(InstrStructNew, "struct.new"), 0xfb, 0x00),
+	withBinaryOpcode(specialInstr(InstrStructNewDefault, "struct.new_default"), 0xfb, 0x01),
+	withBinaryOpcode(specialInstr(InstrStructSet, "struct.set"), 0xfb, 0x05),
+	withBinaryOpcode(specialInstr(InstrTableCopy, "table.copy"), 0xfc, 0x0e),
+	withBinaryOpcode(specialInstr(InstrTableFill, "table.fill"), 0xfc, 0x11),
+	withBinaryOpcode(specialInstr(InstrTableGet, "table.get"), 0, 0x25),
+	withBinaryOpcode(specialInstr(InstrTableGrow, "table.grow"), 0xfc, 0x0f),
+	withBinaryOpcode(specialInstr(InstrTableInit, "table.init"), 0xfc, 0x0c),
+	withBinaryOpcode(specialInstr(InstrTableSet, "table.set"), 0, 0x26),
+	withBinaryOpcode(specialInstr(InstrTableSize, "table.size"), 0xfc, 0x10),
 
 	// Plain instructions with shared lowering operand handling.
-	plainOperandInstr(InstrBr, "br", 1, LoweringOperandBranchDepth),
-	plainOperandInstr(InstrBrIf, "br_if", 1, LoweringOperandBranchDepth),
-	plainOperandInstr(InstrBrOnNonNull, "br_on_non_null", 1, LoweringOperandBranchDepth),
-	plainOperandInstr(InstrBrOnNull, "br_on_null", 1, LoweringOperandBranchDepth),
-	plainOperandInstr(InstrCall, "call", 1, LoweringOperandCall),
-	plainOperandInstr(InstrCallRef, "call_ref", 1, LoweringOperandCallRef),
-	plainOperandInstr(InstrDataDrop, "data.drop", 1, LoweringOperandDataIndex),
-	plainOperandInstr(InstrElemDrop, "elem.drop", 1, LoweringOperandElemIndex),
-	plainOperandInstr(InstrF32Const, "f32.const", 1, LoweringOperandF32Const),
-	plainOperandInstr(InstrF64Const, "f64.const", 1, LoweringOperandF64Const),
-	plainOperandInstr(InstrGlobalGet, "global.get", 1, LoweringOperandGlobalIndex),
-	plainOperandInstr(InstrGlobalSet, "global.set", 1, LoweringOperandGlobalSet),
-	plainOperandInstr(InstrI32Const, "i32.const", 1, LoweringOperandI32Const),
-	plainOperandInstr(InstrI32x4ExtractLane, "i32x4.extract_lane", 1, LoweringOperandLaneIndex),
-	plainOperandInstr(InstrI64Const, "i64.const", 1, LoweringOperandI64Const),
-	plainOperandInstr(InstrLocalGet, "local.get", 1, LoweringOperandLocalIndex),
-	plainOperandInstr(InstrLocalSet, "local.set", 1, LoweringOperandLocalSet),
-	plainOperandInstr(InstrLocalTee, "local.tee", 1, LoweringOperandLocalTee),
-	plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex),
-	plainOperandInstr(InstrRefFunc, "ref.func", 1, LoweringOperandRefFunc),
-	plainOperandInstr(InstrRefNull, "ref.null", 1, LoweringOperandRefNull),
-	plainOperandInstr(InstrV128Const, "v128.const", -1, LoweringOperandV128Const),
+	withBinaryOpcode(plainOperandInstr(InstrBr, "br", 1, LoweringOperandBranchDepth), 0, 0x0c),
+	withBinaryOpcode(plainOperandInstr(InstrBrIf, "br_if", 1, LoweringOperandBranchDepth), 0, 0x0d),
+	withBinaryOpcode(plainOperandInstr(InstrBrOnNonNull, "br_on_non_null", 1, LoweringOperandBranchDepth), 0, 0xd6),
+	withBinaryOpcode(plainOperandInstr(InstrBrOnNull, "br_on_null", 1, LoweringOperandBranchDepth), 0, 0xd5),
+	withBinaryOpcode(plainOperandInstr(InstrCall, "call", 1, LoweringOperandCall), 0, 0x10),
+	withBinaryOpcode(plainOperandInstr(InstrCallRef, "call_ref", 1, LoweringOperandCallRef), 0, 0x14),
+	withBinaryOpcode(plainOperandInstr(InstrDataDrop, "data.drop", 1, LoweringOperandDataIndex), 0xfc, 0x09),
+	withBinaryOpcode(plainOperandInstr(InstrElemDrop, "elem.drop", 1, LoweringOperandElemIndex), 0xfc, 0x0d),
+	withBinaryOpcode(plainOperandInstr(InstrF32Const, "f32.const", 1, LoweringOperandF32Const), 0, 0x43),
+	withBinaryOpcode(plainOperandInstr(InstrF64Const, "f64.const", 1, LoweringOperandF64Const), 0, 0x44),
+	withBinaryOpcode(plainOperandInstr(InstrGlobalGet, "global.get", 1, LoweringOperandGlobalIndex), 0, 0x23),
+	withBinaryOpcode(plainOperandInstr(InstrGlobalSet, "global.set", 1, LoweringOperandGlobalSet), 0, 0x24),
+	withBinaryOpcode(plainOperandInstr(InstrI32Const, "i32.const", 1, LoweringOperandI32Const), 0, 0x41),
+	withBinaryOpcode(plainOperandInstr(InstrI32x4ExtractLane, "i32x4.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1b),
+	withBinaryOpcode(plainOperandInstr(InstrI64Const, "i64.const", 1, LoweringOperandI64Const), 0, 0x42),
+	withBinaryOpcode(plainOperandInstr(InstrLocalGet, "local.get", 1, LoweringOperandLocalIndex), 0, 0x20),
+	withBinaryOpcode(plainOperandInstr(InstrLocalSet, "local.set", 1, LoweringOperandLocalSet), 0, 0x21),
+	withBinaryOpcode(plainOperandInstr(InstrLocalTee, "local.tee", 1, LoweringOperandLocalTee), 0, 0x22),
+	withBinaryOpcode(plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex), 0xfc, 0x08),
+	withBinaryOpcode(plainOperandInstr(InstrRefFunc, "ref.func", 1, LoweringOperandRefFunc), 0, 0xd2),
+	withBinaryOpcode(plainOperandInstr(InstrRefNull, "ref.null", 1, LoweringOperandRefNull), 0, 0xd0),
+	withBinaryOpcode(plainOperandInstr(InstrV128Const, "v128.const", -1, LoweringOperandV128Const), 0xfd, 0x0c),
 }
 
 var instructionByKind map[InstrKind]InstructionDef
@@ -475,7 +495,7 @@ func init() {
 	for _, def := range instructionDefs {
 		instructionByKind[def.Kind] = def
 		instructionByName[def.TextName] = def
-		if def.Binary.HasEncoding {
+		if def.Binary.Encoding != BinaryEncodingNone {
 			instructionByBinary[instructionBinaryKey{prefix: def.Binary.Prefix, opcode: def.Binary.Opcode}] = def
 		}
 	}
@@ -555,8 +575,8 @@ func directOp(kind InstrKind, name string, opcode byte, sig FixedStackSig) Instr
 			SyntaxClass: InstrSyntaxPlain,
 		},
 		Binary: InstructionBinaryDef{
-			HasEncoding: true,
-			Opcode:      uint32(opcode),
+			Encoding: BinaryEncodingSimple,
+			Opcode:   uint32(opcode),
 		},
 		Validate: InstructionValidateDef{
 			StackSig: sig,
@@ -572,9 +592,9 @@ func prefixedOp(kind InstrKind, name string, prefix byte, opcode uint32, sig Fix
 			SyntaxClass: InstrSyntaxPlain,
 		},
 		Binary: InstructionBinaryDef{
-			HasEncoding: true,
-			Prefix:      prefix,
-			Opcode:      opcode,
+			Encoding: BinaryEncodingSimple,
+			Prefix:   prefix,
+			Opcode:   opcode,
 		},
 		Validate: InstructionValidateDef{
 			StackSig: sig,
@@ -622,4 +642,15 @@ func plainOperandInstr(kind InstrKind, name string, operandCount int8, operands 
 			LoweringOperands: operands,
 		},
 	}
+}
+
+// withBinaryOpcode annotates a catalog entry with an opcode/subopcode while
+// leaving any immediates on the handwritten binary path.
+func withBinaryOpcode(def InstructionDef, prefix byte, opcode uint32) InstructionDef {
+	def.Binary = InstructionBinaryDef{
+		Encoding: BinaryEncodingOpcodeOnly,
+		Prefix:   prefix,
+		Opcode:   opcode,
+	}
+	return def
 }
