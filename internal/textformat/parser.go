@@ -1515,9 +1515,6 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 				}
 				switch operand := op.(type) {
 				case *IdOperand, *IntOperand:
-					if len(operands) > 0 {
-						return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
-					}
 					operands = append(operands, operand)
 					next++
 				case *KeywordOperand:

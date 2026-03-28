@@ -281,6 +281,10 @@ const (
 	InstrV128Load16Splat
 	InstrV128Load32Splat
 	InstrV128Load64Splat
+	InstrV128Load8Lane
+	InstrV128Load16Lane
+	InstrV128Load32Lane
+	InstrV128Load64Lane
 	InstrI32Load8S
 	InstrI32Load8U
 	InstrI32Load16S
@@ -988,7 +992,7 @@ type Instruction struct {
 	FieldIndex uint32
 
 	// LaneIndex is the single-byte lane immediate used by SIMD lane
-	// extract/replace instructions.
+	// extract/replace and lane-load instructions.
 	LaneIndex uint32
 
 	// ShuffleLanes is the 16-byte lane immediate used by i8x16.shuffle.

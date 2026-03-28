@@ -1420,7 +1420,9 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 		wasmir.InstrV128Load, wasmir.InstrV128Load8x8S, wasmir.InstrV128Load8x8U,
 		wasmir.InstrV128Load16x4S, wasmir.InstrV128Load16x4U, wasmir.InstrV128Load32x2S,
 		wasmir.InstrV128Load32x2U, wasmir.InstrV128Load8Splat, wasmir.InstrV128Load16Splat,
-		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat, wasmir.InstrI32Load8S,
+		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat,
+		wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
+		wasmir.InstrI32Load8S,
 		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
 		wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI64Load16S,
 		wasmir.InstrI64Load16U, wasmir.InstrI64Load32S, wasmir.InstrI64Load32U,
@@ -1464,6 +1466,14 @@ func decodeMemInstruction(r *bytes.Reader, kind wasmir.InstrKind, name string) (
 	ins, err := decodeMemInstr(r, kind)
 	if err != nil {
 		return wasmir.Instruction{}, fmt.Errorf("%s invalid memarg: %w", name, err)
+	}
+	switch kind {
+	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane:
+		lane, err := readByteImmediate(r, name, "lane")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		ins.LaneIndex = uint32(lane)
 	}
 	return ins, nil
 }

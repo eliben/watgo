@@ -838,7 +838,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		wasmir.InstrV128Load, wasmir.InstrV128Load8x8S, wasmir.InstrV128Load8x8U,
 		wasmir.InstrV128Load16x4S, wasmir.InstrV128Load16x4U, wasmir.InstrV128Load32x2S,
 		wasmir.InstrV128Load32x2U, wasmir.InstrV128Load8Splat, wasmir.InstrV128Load16Splat,
-		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat, wasmir.InstrI32Load8S,
+		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat,
+		wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
+		wasmir.InstrI32Load8S,
 		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
 		wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI64Load16S,
 		wasmir.InstrI64Load16U, wasmir.InstrI64Load32S, wasmir.InstrI64Load32U,
@@ -847,6 +849,10 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32:
 		writeInstructionOpcode(out, instr.Kind)
 		encodeMemArg(out, instr)
+		if instr.Kind == wasmir.InstrV128Load8Lane || instr.Kind == wasmir.InstrV128Load16Lane ||
+			instr.Kind == wasmir.InstrV128Load32Lane || instr.Kind == wasmir.InstrV128Load64Lane {
+			out.WriteByte(byte(instr.LaneIndex))
+		}
 	case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.MemoryIndex)
@@ -893,10 +899,6 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	default:
 		diags.Addf("func[%d] instruction[%d]: unsupported instruction kind %d", funcIdx, instrIdx, instr.Kind)
 	}
-}
-
-func encodeConstExpr(out *bytes.Buffer, where string, init wasmir.Instruction, diags *diag.ErrorList) {
-	encodeConstExprInstrs(out, where, []wasmir.Instruction{init}, diags)
 }
 
 func encodeConstExprInstrs(out *bytes.Buffer, where string, instrs []wasmir.Instruction, diags *diag.ErrorList) {

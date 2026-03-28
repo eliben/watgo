@@ -2272,19 +2272,30 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 	if !ok {
 		return false
 	}
-	align, offset, memoryIndex, ok := parseMemArgOperands(pi.Operands, fl.mod.memoriesByName)
-	if !ok {
+	ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
+	var parseOK bool
+	if isSIMDLoadLaneInstr(kind) {
+		ins.MemoryAlign, ins.MemoryOffset, ins.MemoryIndex, ins.LaneIndex, parseOK = parseMemArgLaneOperands(pi.Operands, fl.mod.memoriesByName)
+	} else {
+		ins.MemoryAlign, ins.MemoryOffset, ins.MemoryIndex, parseOK = parseMemArgOperands(pi.Operands, fl.mod.memoriesByName)
+	}
+	if !parseOK {
 		fl.diagf(instrLoc, "invalid %s memory operands", pi.Name)
 		return true
 	}
-	fl.emitInstr(wasmir.Instruction{
-		Kind:         kind,
-		MemoryAlign:  align,
-		MemoryOffset: offset,
-		MemoryIndex:  memoryIndex,
-		SourceLoc:    instrLoc,
-	})
+	fl.emitInstr(ins)
 	return true
+}
+
+// isSIMDLoadLaneInstr reports whether kind is one of the SIMD lane-load
+// instructions that carry both a memarg and a lane immediate.
+func isSIMDLoadLaneInstr(kind wasmir.InstrKind) bool {
+	switch kind {
+	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane:
+		return true
+	default:
+		return false
+	}
 }
 
 // parseMemArgOperands parses optional memory-immediate operands from a plain
@@ -2365,6 +2376,56 @@ func parseMemArgOperands(operands []Operand, memoriesByName map[string]uint32) (
 		}
 	}
 	return align, offset, memoryIndex, true
+}
+
+// parseMemArgLaneOperands parses memory operands for SIMD lane-load
+// instructions.
+//
+// The explicit operands may contain:
+// - an optional memory index, followed by
+// - zero or more memarg keywords like align=/offset=, and
+// - one required lane immediate.
+func parseMemArgLaneOperands(operands []Operand, memoriesByName map[string]uint32) (uint32, uint64, uint32, uint32, bool) {
+	alignOperands := make([]Operand, 0, len(operands))
+	nonKeyword := make([]Operand, 0, 2)
+	for _, op := range operands {
+		if _, ok := op.(*KeywordOperand); ok {
+			alignOperands = append(alignOperands, op)
+			continue
+		}
+		switch op.(type) {
+		case *IdOperand, *IntOperand:
+			nonKeyword = append(nonKeyword, op)
+		default:
+			return 0, 0, 0, 0, false
+		}
+	}
+
+	var memoryIndex uint32
+	var laneOp Operand
+	switch len(nonKeyword) {
+	case 1:
+		laneOp = nonKeyword[0]
+	case 2:
+		idx, ok := lowerMemoryIndexOperand(nonKeyword[0], memoriesByName)
+		if !ok {
+			return 0, 0, 0, 0, false
+		}
+		memoryIndex = idx
+		laneOp = nonKeyword[1]
+	default:
+		return 0, 0, 0, 0, false
+	}
+
+	lane, ok := lowerFieldIndexOperand(laneOp)
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+	align, offset, memFromKeywords, ok := parseMemArgOperands(alignOperands, memoriesByName)
+	if !ok || memFromKeywords != 0 {
+		return 0, 0, 0, 0, false
+	}
+	return align, offset, memoryIndex, lane, true
 }
 
 func alignToExponent(alignBytes uint32) (uint32, bool) {
