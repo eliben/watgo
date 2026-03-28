@@ -1,9 +1,10 @@
-package wasmir
+package validate
 
 import (
 	"fmt"
 
 	"github.com/eliben/watgo/diag"
+	. "github.com/eliben/watgo/wasmir"
 )
 
 const (
@@ -34,63 +35,6 @@ func equalValueTypeSlices(a, b []ValueType) bool {
 	}
 	for i := range a {
 		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func matchesExpectedValue(got, want validatedValue) bool {
-	if got.Type == want.Type {
-		return true
-	}
-	if !got.Type.IsRef() || !want.Type.IsRef() {
-		return false
-	}
-	if got.Type.Nullable && !want.Type.Nullable {
-		return false
-	}
-	switch want.Type.HeapType.Kind {
-	case HeapKindAny:
-		switch got.Type.HeapType.Kind {
-		case HeapKindNone, HeapKindAny, HeapKindEq, HeapKindI31, HeapKindArray, HeapKindStruct:
-			return true
-		case HeapKindTypeIndex:
-			return true
-		default:
-			return false
-		}
-	case HeapKindNone:
-		return got.Type.HeapType.Kind == HeapKindNone
-	}
-	if want.Type.UsesTypeIndex() {
-		if !got.Type.UsesTypeIndex() {
-			return got.Type.HeapType.Kind == HeapKindNoFunc && want.Type.Nullable
-		}
-		if got.Type.HeapType.TypeIndex != want.Type.HeapType.TypeIndex {
-			return false
-		}
-	} else {
-		switch want.Type.HeapType.Kind {
-		case HeapKindFunc:
-			if got.Type.HeapType.Kind != HeapKindFunc &&
-				got.Type.HeapType.Kind != HeapKindTypeIndex &&
-				got.Type.HeapType.Kind != HeapKindNoFunc {
-				return false
-			}
-		case HeapKindExtern:
-			if got.Type.HeapType.Kind != HeapKindExtern && got.Type.HeapType.Kind != HeapKindNoExtern {
-				return false
-			}
-		case HeapKindNoFunc:
-			if got.Type.HeapType.Kind != HeapKindNoFunc {
-				return false
-			}
-		case HeapKindNoExtern:
-			if got.Type.HeapType.Kind != HeapKindNoExtern {
-				return false
-			}
-		default:
 			return false
 		}
 	}

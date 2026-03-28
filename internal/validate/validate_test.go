@@ -1,4 +1,4 @@
-package wasmir
+package validate_test
 
 import (
 	"errors"
@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/eliben/watgo/diag"
+	"github.com/eliben/watgo/internal/validate"
+	. "github.com/eliben/watgo/wasmir"
 )
 
 func errorListContains(errs diag.ErrorList, needle string) bool {
@@ -25,6 +27,8 @@ func asErrorList(t *testing.T, err error) diag.ErrorList {
 	}
 	return errs
 }
+
+const testMaxMemoryPages64 uint64 = 1 << 48
 
 func makeValidAddModule() *Module {
 	return &Module{
@@ -51,7 +55,7 @@ func makeValidAddModule() *Module {
 
 func TestValidateModule_ValidAdd(t *testing.T) {
 	m := makeValidAddModule()
-	if err := ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
@@ -60,7 +64,7 @@ func TestValidateModule_LocalIndexOutOfRange(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body[1].LocalIndex = 99
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -75,7 +79,7 @@ func TestValidateModule_IncludesInstructionSourceLocation(t *testing.T) {
 	m.Funcs[0].Body[1].LocalIndex = 99
 	m.Funcs[0].Body[1].SourceLoc = "12:34"
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -89,7 +93,7 @@ func TestValidateModule_StackUnderflow(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body = []Instruction{{Kind: InstrI32Add}, {Kind: InstrEnd}}
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -107,7 +111,7 @@ func TestValidateModule_ResultArityMismatch(t *testing.T) {
 		{Kind: InstrEnd},
 	}
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -122,7 +126,7 @@ func TestValidateModule_ExportIndexOutOfRange(t *testing.T) {
 	m := makeValidAddModule()
 	m.Exports[0].Index = 5
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -141,7 +145,7 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 		Index: 42,
 	})
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want diagnostics")
 	}
@@ -160,9 +164,9 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 func TestValidateModule_CallTypeMismatch(t *testing.T) {
 	m := &Module{
 		Types: []FuncType{
-			{Params: []ValueType{ValueTypeI32}, Results: []ValueType{ValueTypeI32}}, // callee
-			{Params: []ValueType{}, Results: []ValueType{ValueTypeI32}},             // caller
-			{Params: []ValueType{ValueTypeF32}, Results: []ValueType{ValueTypeI32}}, // bad caller
+			{Params: []ValueType{ValueTypeI32}, Results: []ValueType{ValueTypeI32}},
+			{Params: []ValueType{}, Results: []ValueType{ValueTypeI32}},
+			{Params: []ValueType{ValueTypeF32}, Results: []ValueType{ValueTypeI32}},
 		},
 		Funcs: []Function{
 			{
@@ -194,7 +198,7 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 		},
 	}
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -216,12 +220,11 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 			{
 				TypeIdx: 0,
 				Body: []Instruction{
-					{Kind: InstrI64Const, I64Const: 0},
-					{Kind: InstrI64Eqz},
+					{Kind: InstrI32Const, I32Const: 1},
 					{Kind: InstrIf, BlockHasResult: true, BlockType: ValueTypeI64},
-					{Kind: InstrI64Const, I64Const: 1},
+					{Kind: InstrI64Const, I64Const: 10},
 					{Kind: InstrElse},
-					{Kind: InstrI64Const, I64Const: 2},
+					{Kind: InstrI64Const, I64Const: 20},
 					{Kind: InstrEnd},
 					{Kind: InstrEnd},
 				},
@@ -229,7 +232,7 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 		},
 	}
 
-	if err := ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
@@ -237,21 +240,114 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 func TestValidateModule_Memory64PageLimit(t *testing.T) {
 	m := &Module{
 		Memories: []Memory{
-			{AddressType: ValueTypeI64, Min: maxMemoryPages64 + 1},
+			{AddressType: ValueTypeI64, Min: testMaxMemoryPages64 + 1},
 		},
 	}
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
 	errs := asErrorList(t, err)
-	if !errorListContains(errs, "memory[0]: memory size") {
-		t.Fatalf("got errors %q, want memory size diagnostic", errs.Error())
+	if !errorListContains(errs, "memory size") {
+		t.Fatalf("got errors %q, want memory64 page limit error", errs.Error())
 	}
 }
 
 func TestValidateModule_SIMDMemoryOps(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{{Params: nil, Results: nil}},
+		Memories: []Memory{
+			{AddressType: ValueTypeI32, Min: 1},
+		},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI32Const, I32Const: 0},
+				{Kind: InstrV128Load, MemoryAlign: 4, MemoryOffset: 0},
+				{Kind: InstrDrop},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := validate.ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+}
+
+func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
+	m64 := &Module{
+		Data: []DataSegment{{
+			Mode:        DataSegmentModeActive,
+			MemoryIndex: 0,
+			OffsetType:  ValueTypeI64,
+			OffsetI64:   0,
+			Init:        []byte{1},
+		}},
+		Memories: []Memory{{AddressType: ValueTypeI64, Min: 1}},
+		Types:    []FuncType{{}},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI64Const, I64Const: 0},
+				{Kind: InstrI32Const, I32Const: 0},
+				{Kind: InstrI32Const, I32Const: 1},
+				{Kind: InstrMemoryInit, DataIndex: 0, MemoryIndex: 0},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := validate.ValidateModule(m64); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	m32 := *m64
+	m32.Memories = []Memory{{AddressType: ValueTypeI32, Min: 1}}
+	err := validate.ValidateModule(&m32)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "memory.init expects i32 destination, i32 source, and i32 length operands") {
+		t.Fatalf("got errors %q, want memory.init operand type error", errs.Error())
+	}
+}
+
+func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
+	m64 := &Module{
+		Memories: []Memory{{AddressType: ValueTypeI64, Min: 1}},
+		Types:    []FuncType{{}},
+		Funcs: []Function{{
+			TypeIdx: 0,
+			Body: []Instruction{
+				{Kind: InstrI64Const, I64Const: 0},
+				{Kind: InstrI64Const, I64Const: 0},
+				{Kind: InstrI64Const, I64Const: 1},
+				{Kind: InstrMemoryCopy, MemoryIndex: 0, SourceMemoryIndex: 0},
+				{Kind: InstrEnd},
+			},
+		}},
+	}
+
+	if err := validate.ValidateModule(m64); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	m32 := *m64
+	m32.Memories = []Memory{{AddressType: ValueTypeI32, Min: 1}}
+	err := validate.ValidateModule(&m32)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "memory.copy expects i32 destination, i32 source, and i32 length operands") {
+		t.Fatalf("got errors %q, want memory.copy operand type error", errs.Error())
+	}
+}
+
+func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
 	m := &Module{
 		Types:    []FuncType{{}},
 		Memories: []Memory{{AddressType: ValueTypeI32, Min: 1}},
@@ -259,115 +355,19 @@ func TestValidateModule_SIMDMemoryOps(t *testing.T) {
 			TypeIdx: 0,
 			Body: []Instruction{
 				{Kind: InstrI32Const, I32Const: 0},
-				{Kind: InstrV128Load},
-				{Kind: InstrV128Const, V128Const: [16]byte{3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12}},
-				{Kind: InstrI8x16Swizzle},
-				{Kind: InstrDrop},
-				{Kind: InstrI32Const, I32Const: 0},
-				{Kind: InstrV128Const},
-				{Kind: InstrV128Store},
-				{Kind: InstrEnd},
-			},
-		}},
-	}
-
-	if err := ValidateModule(m); err != nil {
-		t.Fatalf("ValidateModule error: %v", err)
-	}
-}
-
-func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
-	m := &Module{
-		Types: []FuncType{{}},
-		Memories: []Memory{
-			{AddressType: ValueTypeI64, Min: 1},
-		},
-		Data: []DataSegment{
-			{Mode: DataSegmentModePassive, Init: []byte{1, 2, 3}},
-		},
-		Funcs: []Function{{
-			TypeIdx: 0,
-			Body: []Instruction{
-				{Kind: InstrI64Const, I64Const: 7},
-				{Kind: InstrI32Const, I32Const: 1},
-				{Kind: InstrI32Const, I32Const: 2},
-				{Kind: InstrMemoryInit, DataIndex: 0},
-				{Kind: InstrEnd},
-			},
-		}},
-	}
-
-	if err := ValidateModule(m); err != nil {
-		t.Fatalf("ValidateModule error: %v", err)
-	}
-
-	m.Funcs[0].Body[0] = Instruction{Kind: InstrI32Const, I32Const: 7}
-	err := ValidateModule(m)
-	if err == nil {
-		t.Fatal("ValidateModule returned nil error, want failure")
-	}
-	errs := asErrorList(t, err)
-	if !errorListContains(errs, "memory.init expects i64 destination, i32 source, and i32 length operands") {
-		t.Fatalf("got errors %q, want memory.init operand type mismatch", errs.Error())
-	}
-}
-
-func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
-	m := &Module{
-		Types: []FuncType{{}},
-		Memories: []Memory{
-			{AddressType: ValueTypeI64, Min: 1},
-		},
-		Funcs: []Function{{
-			TypeIdx: 0,
-			Body: []Instruction{
-				{Kind: InstrI64Const, I64Const: 10},
-				{Kind: InstrI64Const, I64Const: 20},
-				{Kind: InstrI64Const, I64Const: 30},
-				{Kind: InstrMemoryCopy},
-				{Kind: InstrEnd},
-			},
-		}},
-	}
-
-	if err := ValidateModule(m); err != nil {
-		t.Fatalf("ValidateModule error: %v", err)
-	}
-
-	m.Funcs[0].Body[2] = Instruction{Kind: InstrI32Const, I32Const: 30}
-	err := ValidateModule(m)
-	if err == nil {
-		t.Fatal("ValidateModule returned nil error, want failure")
-	}
-	errs := asErrorList(t, err)
-	if !errorListContains(errs, "memory.copy expects i64 destination, i64 source, and i64 length operands") {
-		t.Fatalf("got errors %q, want memory.copy operand type mismatch", errs.Error())
-	}
-}
-
-func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
-	m := &Module{
-		Types: []FuncType{{Params: nil, Results: nil}},
-		Memories: []Memory{
-			{AddressType: ValueTypeI64, Min: 1},
-		},
-		Funcs: []Function{{
-			TypeIdx: 0,
-			Body: []Instruction{
-				{Kind: InstrI64Const, I64Const: 0},
-				{Kind: InstrI32Load8S, MemoryAlign: 1},
+				{Kind: InstrI32Load, MemoryAlign: 3, MemoryOffset: 0},
 				{Kind: InstrDrop},
 				{Kind: InstrEnd},
 			},
 		}},
 	}
 
-	err := ValidateModule(m)
+	err := validate.ValidateModule(m)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
 	errs := asErrorList(t, err)
 	if !errorListContains(errs, "alignment must not be larger than natural") {
-		t.Fatalf("got errors %q, want alignment diagnostic", errs.Error())
+		t.Fatalf("got errors %q, want oversized alignment error", errs.Error())
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/eliben/watgo/internal/binaryformat"
 	"github.com/eliben/watgo/internal/numlit"
 	"github.com/eliben/watgo/internal/textformat"
+	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -2563,7 +2564,7 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 			var m *wasmir.Module
 			m, err = binaryformat.DecodeModule(wasmBytes)
 			if err == nil {
-				err = wasmir.ValidateModule(m)
+				err = validate.ValidateModule(m)
 			}
 		}
 	} else {

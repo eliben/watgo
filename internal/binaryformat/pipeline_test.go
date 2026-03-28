@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/eliben/watgo/internal/textformat"
+	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -27,7 +28,7 @@ func TestPipelineEncodeAddModule(t *testing.T) {
 		t.Fatalf("LowerModule error: %v", lowerErr)
 	}
 
-	validateErr := wasmir.ValidateModule(m)
+	validateErr := validate.ValidateModule(m)
 	if validateErr != nil {
 		t.Fatalf("ValidateModule error: %v", validateErr)
 	}
@@ -71,7 +72,7 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
-	if err := wasmir.ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 
@@ -84,7 +85,7 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeModule error: %v", err)
 	}
-	if err := wasmir.ValidateModule(decoded); err != nil {
+	if err := validate.ValidateModule(decoded); err != nil {
 		t.Fatalf("ValidateModule(decoded) error: %v", err)
 	}
 

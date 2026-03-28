@@ -3,6 +3,7 @@ package watgo
 import (
 	"github.com/eliben/watgo/internal/binaryformat"
 	"github.com/eliben/watgo/internal/textformat"
+	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -42,7 +43,7 @@ func DecodeWASM(src []byte) (*wasmir.Module, error) {
 // instruction sequences. Validation errors are typically returned as
 // diag.ErrorList values.
 func ValidateModule(m *wasmir.Module) error {
-	return wasmir.ValidateModule(m)
+	return validate.ValidateModule(m)
 }
 
 // EncodeWASM encodes semantic IR as binary WebAssembly.
