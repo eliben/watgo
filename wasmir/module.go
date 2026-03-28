@@ -316,7 +316,12 @@ const (
 	InstrV128AndNot
 	InstrV128Or
 	InstrV128Xor
+	InstrI8x16Splat
+	InstrI8x16Shuffle
 	InstrI8x16Swizzle
+	InstrI8x16ExtractLaneS
+	InstrI8x16ExtractLaneU
+	InstrI8x16ReplaceLane
 	InstrI8x16Eq
 	InstrI8x16Ne
 	InstrI8x16LtS
@@ -350,6 +355,9 @@ const (
 	InstrI8x16AvgrU
 	InstrI16x8Eq
 	InstrI16x8Ne
+	InstrI16x8ExtractLaneS
+	InstrI16x8ExtractLaneU
+	InstrI16x8ReplaceLane
 	InstrI16x8LtS
 	InstrI16x8LtU
 	InstrI16x8GtS
@@ -369,6 +377,8 @@ const (
 	InstrI16x8NarrowI32x4U
 	InstrI16x8ExtendLowI8x16S
 	InstrI16x8ExtendLowI8x16U
+	InstrI16x8ExtendHighI8x16S
+	InstrI16x8ExtendHighI8x16U
 	InstrI16x8Shl
 	InstrI16x8ShrS
 	InstrI16x8ShrU
@@ -388,8 +398,10 @@ const (
 	InstrI16x8ExtmulHighI8x16S
 	InstrI16x8ExtmulLowI8x16U
 	InstrI16x8ExtmulHighI8x16U
+	InstrI16x8Splat
 	InstrI32x4Splat
 	InstrI32x4ExtractLane
+	InstrI32x4ReplaceLane
 	InstrI32x4AllTrue
 	InstrI32x4Bitmask
 	InstrI32x4Eq
@@ -407,6 +419,8 @@ const (
 	InstrI32x4Abs
 	InstrI32x4ExtendLowI16x8S
 	InstrI32x4ExtendLowI16x8U
+	InstrI32x4ExtendHighI16x8S
+	InstrI32x4ExtendHighI16x8U
 	InstrI32x4Shl
 	InstrI32x4ShrS
 	InstrI32x4ShrU
@@ -431,6 +445,10 @@ const (
 	InstrI64x2GeS
 	InstrI64x2Abs
 	InstrI64x2Neg
+	InstrI64x2ExtendLowI32x4S
+	InstrI64x2ExtendLowI32x4U
+	InstrI64x2ExtendHighI32x4S
+	InstrI64x2ExtendHighI32x4U
 	InstrI64x2AllTrue
 	InstrI64x2Bitmask
 	InstrI64x2Shl
@@ -443,6 +461,12 @@ const (
 	InstrI64x2ExtmulHighI32x4S
 	InstrI64x2ExtmulLowI32x4U
 	InstrI64x2ExtmulHighI32x4U
+	InstrI64x2Splat
+	InstrF32x4Splat
+	InstrI64x2ExtractLane
+	InstrI64x2ReplaceLane
+	InstrF32x4ExtractLane
+	InstrF32x4ReplaceLane
 	InstrF32x4Eq
 	InstrF32x4Ne
 	InstrF32x4Lt
@@ -495,6 +519,9 @@ const (
 	InstrF64x2ConvertLowI32x4U
 	InstrF32x4DemoteF64x2Zero
 	InstrF64x2PromoteLowF32x4
+	InstrF64x2Splat
+	InstrF64x2ExtractLane
+	InstrF64x2ReplaceLane
 	InstrV128Bitselect
 	InstrI32Add
 	InstrI32Sub
@@ -960,8 +987,12 @@ type Instruction struct {
 	// FieldIndex is the field index immediate used by struct.get and struct.set.
 	FieldIndex uint32
 
-	// LaneIndex is the lane immediate used by lane-extract SIMD instructions.
+	// LaneIndex is the single-byte lane immediate used by SIMD lane
+	// extract/replace instructions.
 	LaneIndex uint32
+
+	// ShuffleLanes is the 16-byte lane immediate used by i8x16.shuffle.
+	ShuffleLanes [16]byte
 
 	// FixedCount is the fixed element count immediate used by array.new_fixed.
 	FixedCount uint32

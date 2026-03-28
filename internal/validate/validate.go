@@ -3212,6 +3212,28 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
+		case InstrI8x16Shuffle:
+			lanesOK := true
+			for _, lane := range ins.ShuffleLanes {
+				if lane >= 32 {
+					diags.Addf("%s: i8x16.shuffle lane %d out of range", insCtx, lane)
+					lanesOK = false
+					break
+				}
+			}
+			if !lanesOK {
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: i8x16.shuffle needs 2 operands", insCtx)
+				continue
+			}
+			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: i8x16.shuffle expects v128 operands", insCtx)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
 		case InstrI8x16Swizzle:
 			if len(stack) < 2 {
 				diags.Addf("%s: i8x16.swizzle needs 2 operands", insCtx)
@@ -3273,30 +3295,109 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
-		case InstrI32x4Splat:
+		case InstrI8x16Splat, InstrI16x8Splat, InstrI32x4Splat, InstrI64x2Splat, InstrF32x4Splat, InstrF64x2Splat:
+			name := instrName(ins.Kind)
+			operandType := ValueTypeI32
+			switch ins.Kind {
+			case InstrI8x16Splat, InstrI16x8Splat, InstrI32x4Splat:
+				operandType = ValueTypeI32
+			case InstrI64x2Splat:
+				operandType = ValueTypeI64
+			case InstrF32x4Splat:
+				operandType = ValueTypeF32
+			case InstrF64x2Splat:
+				operandType = ValueTypeF64
+			}
 			if len(stack) < 1 {
-				diags.Addf("%s: i32x4.splat needs 1 operand", insCtx)
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
-				diags.Addf("%s: i32x4.splat expects i32 operand", insCtx)
+			if stack[len(stack)-1] != operandType {
+				diags.Addf("%s: %s expects %s operand", insCtx, name, operandType)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeV128))
-		case InstrI32x4ExtractLane:
-			if ins.LaneIndex >= 4 {
-				diags.Addf("%s: i32x4.extract_lane lane %d out of range", insCtx, ins.LaneIndex)
+		case InstrI8x16ExtractLaneS, InstrI8x16ExtractLaneU,
+			InstrI16x8ExtractLaneS, InstrI16x8ExtractLaneU,
+			InstrI32x4ExtractLane,
+			InstrI64x2ExtractLane,
+			InstrF32x4ExtractLane,
+			InstrF64x2ExtractLane:
+			name := instrName(ins.Kind)
+			laneLimit := uint32(0)
+			resultType := ValueTypeI32
+			switch ins.Kind {
+			case InstrI8x16ExtractLaneS, InstrI8x16ExtractLaneU:
+				laneLimit = 16
+				resultType = ValueTypeI32
+			case InstrI16x8ExtractLaneS, InstrI16x8ExtractLaneU:
+				laneLimit = 8
+				resultType = ValueTypeI32
+			case InstrI32x4ExtractLane:
+				laneLimit = 4
+				resultType = ValueTypeI32
+			case InstrI64x2ExtractLane:
+				laneLimit = 2
+				resultType = ValueTypeI64
+			case InstrF32x4ExtractLane:
+				laneLimit = 4
+				resultType = ValueTypeF32
+			case InstrF64x2ExtractLane:
+				laneLimit = 2
+				resultType = ValueTypeF64
+			}
+			if ins.LaneIndex >= laneLimit {
+				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
 				continue
 			}
 			if len(stack) < 1 {
-				diags.Addf("%s: i32x4.extract_lane needs 1 operand", insCtx)
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
 			if stack[len(stack)-1] != ValueTypeV128 {
-				diags.Addf("%s: i32x4.extract_lane expects v128 operand", insCtx)
+				diags.Addf("%s: %s expects v128 operand", insCtx, name)
 				continue
 			}
-			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
+			setStackValue(len(stack)-1, validatedValueFromType(resultType))
+		case InstrI8x16ReplaceLane, InstrI16x8ReplaceLane, InstrI32x4ReplaceLane,
+			InstrI64x2ReplaceLane, InstrF32x4ReplaceLane, InstrF64x2ReplaceLane:
+			name := instrName(ins.Kind)
+			laneLimit := uint32(0)
+			valueType := ValueTypeI32
+			switch ins.Kind {
+			case InstrI8x16ReplaceLane:
+				laneLimit = 16
+				valueType = ValueTypeI32
+			case InstrI16x8ReplaceLane:
+				laneLimit = 8
+				valueType = ValueTypeI32
+			case InstrI32x4ReplaceLane:
+				laneLimit = 4
+				valueType = ValueTypeI32
+			case InstrI64x2ReplaceLane:
+				laneLimit = 2
+				valueType = ValueTypeI64
+			case InstrF32x4ReplaceLane:
+				laneLimit = 4
+				valueType = ValueTypeF32
+			case InstrF64x2ReplaceLane:
+				laneLimit = 2
+				valueType = ValueTypeF64
+			}
+			if ins.LaneIndex >= laneLimit {
+				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
+				continue
+			}
+			if len(stack) < 2 {
+				diags.Addf("%s: %s needs 2 operands", insCtx, name)
+				continue
+			}
+			if stack[len(stack)-1] != valueType || stack[len(stack)-2] != ValueTypeV128 {
+				diags.Addf("%s: %s expects %s and %s operands", insCtx, name, ValueTypeV128, valueType)
+				continue
+			}
+			truncateStack(len(stack) - 2)
+			appendStackType(ValueTypeV128)
 		case InstrI8x16NarrowI16x8S, InstrI8x16NarrowI16x8U,
 			InstrI16x8Eq, InstrI16x8Ne, InstrI16x8LtS, InstrI16x8LtU, InstrI16x8GtS, InstrI16x8GtU, InstrI16x8LeS, InstrI16x8LeU, InstrI16x8GeS, InstrI16x8GeU,
 			InstrI16x8NarrowI32x4S, InstrI16x8NarrowI32x4U,

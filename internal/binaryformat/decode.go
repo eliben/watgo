@@ -1436,12 +1436,25 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 		var value [16]byte
 		copy(value[:], bytes)
 		return wasmir.Instruction{Kind: def.Kind, V128Const: value}, nil
-	case wasmir.InstrI32x4ExtractLane:
+	case wasmir.InstrI8x16ExtractLaneS, wasmir.InstrI8x16ExtractLaneU, wasmir.InstrI8x16ReplaceLane,
+		wasmir.InstrI16x8ExtractLaneS, wasmir.InstrI16x8ExtractLaneU, wasmir.InstrI16x8ReplaceLane,
+		wasmir.InstrI32x4ExtractLane, wasmir.InstrI32x4ReplaceLane,
+		wasmir.InstrI64x2ExtractLane, wasmir.InstrI64x2ReplaceLane,
+		wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
+		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
 		lane, err := readByteImmediate(r, def.TextName, "lane")
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, LaneIndex: uint32(lane)}, nil
+	case wasmir.InstrI8x16Shuffle:
+		bytes, err := readN(r, 16)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid immediate: %w", def.TextName, err)
+		}
+		var lanes [16]byte
+		copy(lanes[:], bytes)
+		return wasmir.Instruction{Kind: def.Kind, ShuffleLanes: lanes}, nil
 	default:
 		return wasmir.Instruction{}, fmt.Errorf("%s does not have a generic binary decoder", def.TextName)
 	}

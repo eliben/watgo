@@ -879,9 +879,17 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrV128Const:
 		writeInstructionOpcode(out, instr.Kind)
 		out.Write(instr.V128Const[:])
-	case wasmir.InstrI32x4ExtractLane:
+	case wasmir.InstrI8x16ExtractLaneS, wasmir.InstrI8x16ExtractLaneU, wasmir.InstrI8x16ReplaceLane,
+		wasmir.InstrI16x8ExtractLaneS, wasmir.InstrI16x8ExtractLaneU, wasmir.InstrI16x8ReplaceLane,
+		wasmir.InstrI32x4ExtractLane, wasmir.InstrI32x4ReplaceLane,
+		wasmir.InstrI64x2ExtractLane, wasmir.InstrI64x2ReplaceLane,
+		wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
+		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
 		writeInstructionOpcode(out, instr.Kind)
 		out.WriteByte(byte(instr.LaneIndex))
+	case wasmir.InstrI8x16Shuffle:
+		writeInstructionOpcode(out, instr.Kind)
+		out.Write(instr.ShuffleLanes[:])
 	default:
 		diags.Addf("func[%d] instruction[%d]: unsupported instruction kind %d", funcIdx, instrIdx, instr.Kind)
 	}

@@ -39,6 +39,7 @@ const (
 	LoweringOperandF64Const
 	LoweringOperandV128Const
 	LoweringOperandLaneIndex
+	LoweringOperandShuffleLanes
 	LoweringOperandRefNull
 	LoweringOperandRefFunc
 	LoweringOperandDataIndex
@@ -257,6 +258,7 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrV128Or, "v128.or", 0xfd, 0x50, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrV128Xor, "v128.xor", 0xfd, 0x51, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrV128Bitselect, "v128.bitselect", 0xfd, 0x52, ternarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI8x16Splat, "i8x16.splat", 0xfd, 0x0f, unarySig(ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI8x16Swizzle, "i8x16.swizzle", 0xfd, 0x0e, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI8x16Eq, "i8x16.eq", 0xfd, 0x23, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI8x16Ne, "i8x16.ne", 0xfd, 0x24, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
@@ -311,6 +313,8 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI16x8NarrowI32x4U, "i16x8.narrow_i32x4_u", 0xfd, 0x86, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtendLowI8x16S, "i16x8.extend_low_i8x16_s", 0xfd, 0x87, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtendLowI8x16U, "i16x8.extend_low_i8x16_u", 0xfd, 0x89, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI16x8ExtendHighI8x16S, "i16x8.extend_high_i8x16_s", 0xfd, 0x88, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI16x8ExtendHighI8x16U, "i16x8.extend_high_i8x16_u", 0xfd, 0x8a, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8Shl, "i16x8.shl", 0xfd, 0x8b, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI16x8ShrS, "i16x8.shr_s", 0xfd, 0x8c, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI16x8ShrU, "i16x8.shr_u", 0xfd, 0x8d, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
@@ -330,6 +334,7 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI16x8ExtmulHighI8x16S, "i16x8.extmul_high_i8x16_s", 0xfd, 0x9d, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtmulLowI8x16U, "i16x8.extmul_low_i8x16_u", 0xfd, 0x9e, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtmulHighI8x16U, "i16x8.extmul_high_i8x16_u", 0xfd, 0x9f, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI16x8Splat, "i16x8.splat", 0xfd, 0x10, unarySig(ValueTypeI32, ValueTypeV128)),
 
 	prefixedOp(InstrI32x4Splat, "i32x4.splat", 0xfd, 0x11, unarySig(ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI32x4AllTrue, "i32x4.all_true", 0xfd, 0xa3, unarySig(ValueTypeV128, ValueTypeI32)),
@@ -349,6 +354,8 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI32x4Abs, "i32x4.abs", 0xfd, 0xa0, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI32x4ExtendLowI16x8S, "i32x4.extend_low_i16x8_s", 0xfd, 0xa7, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI32x4ExtendLowI16x8U, "i32x4.extend_low_i16x8_u", 0xfd, 0xa9, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI32x4ExtendHighI16x8S, "i32x4.extend_high_i16x8_s", 0xfd, 0xa8, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI32x4ExtendHighI16x8U, "i32x4.extend_high_i16x8_u", 0xfd, 0xaa, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI32x4Shl, "i32x4.shl", 0xfd, 0xab, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI32x4ShrS, "i32x4.shr_s", 0xfd, 0xac, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
 	prefixedOp(InstrI32x4ShrU, "i32x4.shr_u", 0xfd, 0xad, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
@@ -374,6 +381,10 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI64x2GeS, "i64x2.ge_s", 0xfd, 0xdb, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI64x2Abs, "i64x2.abs", 0xfd, 0xc0, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI64x2Neg, "i64x2.neg", 0xfd, 0xc1, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI64x2ExtendLowI32x4S, "i64x2.extend_low_i32x4_s", 0xfd, 0xc7, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI64x2ExtendLowI32x4U, "i64x2.extend_low_i32x4_u", 0xfd, 0xc9, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI64x2ExtendHighI32x4S, "i64x2.extend_high_i32x4_s", 0xfd, 0xc8, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI64x2ExtendHighI32x4U, "i64x2.extend_high_i32x4_u", 0xfd, 0xca, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI64x2AllTrue, "i64x2.all_true", 0xfd, 0xc3, unarySig(ValueTypeV128, ValueTypeI32)),
 	prefixedOp(InstrI64x2Bitmask, "i64x2.bitmask", 0xfd, 0xc4, unarySig(ValueTypeV128, ValueTypeI32)),
 	prefixedOp(InstrI64x2Shl, "i64x2.shl", 0xfd, 0xcb, binarySig(ValueTypeV128, ValueTypeI32, ValueTypeV128)),
@@ -386,6 +397,8 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI64x2ExtmulHighI32x4S, "i64x2.extmul_high_i32x4_s", 0xfd, 0xdd, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI64x2ExtmulLowI32x4U, "i64x2.extmul_low_i32x4_u", 0xfd, 0xde, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI64x2ExtmulHighI32x4U, "i64x2.extmul_high_i32x4_u", 0xfd, 0xdf, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI64x2Splat, "i64x2.splat", 0xfd, 0x12, unarySig(ValueTypeI64, ValueTypeV128)),
+	prefixedOp(InstrF32x4Splat, "f32x4.splat", 0xfd, 0x13, unarySig(ValueTypeF32, ValueTypeV128)),
 
 	prefixedOp(InstrF32x4Eq, "f32x4.eq", 0xfd, 0x41, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrF32x4Ne, "f32x4.ne", 0xfd, 0x42, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
@@ -440,6 +453,7 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrF64x2ConvertLowI32x4U, "f64x2.convert_low_i32x4_u", 0xfd, 0xff, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrF32x4DemoteF64x2Zero, "f32x4.demote_f64x2_zero", 0xfd, 0x5e, unarySig(ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrF64x2PromoteLowF32x4, "f64x2.promote_low_f32x4", 0xfd, 0x5f, unarySig(ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrF64x2Splat, "f64x2.splat", 0xfd, 0x14, unarySig(ValueTypeF64, ValueTypeV128)),
 
 	// Structured text instructions.
 	withBinaryOpcode(structuredInstr(InstrBlock, "block"), 0, 0x02),
@@ -536,12 +550,26 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(plainOperandInstr(InstrGlobalGet, "global.get", 1, LoweringOperandGlobalIndex), 0, 0x23),
 	withBinaryOpcode(plainOperandInstr(InstrGlobalSet, "global.set", 1, LoweringOperandGlobalSet), 0, 0x24),
 	withBinaryOpcode(plainOperandInstr(InstrI32Const, "i32.const", 1, LoweringOperandI32Const), 0, 0x41),
+	withBinaryOpcode(plainOperandInstr(InstrI8x16ExtractLaneS, "i8x16.extract_lane_s", 1, LoweringOperandLaneIndex), 0xfd, 0x15),
+	withBinaryOpcode(plainOperandInstr(InstrI8x16ExtractLaneU, "i8x16.extract_lane_u", 1, LoweringOperandLaneIndex), 0xfd, 0x16),
+	withBinaryOpcode(plainOperandInstr(InstrI8x16ReplaceLane, "i8x16.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x17),
+	withBinaryOpcode(plainOperandInstr(InstrI8x16Shuffle, "i8x16.shuffle", 16, LoweringOperandShuffleLanes), 0xfd, 0x0d),
+	withBinaryOpcode(plainOperandInstr(InstrI16x8ExtractLaneS, "i16x8.extract_lane_s", 1, LoweringOperandLaneIndex), 0xfd, 0x18),
+	withBinaryOpcode(plainOperandInstr(InstrI16x8ExtractLaneU, "i16x8.extract_lane_u", 1, LoweringOperandLaneIndex), 0xfd, 0x19),
+	withBinaryOpcode(plainOperandInstr(InstrI16x8ReplaceLane, "i16x8.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1a),
 	withBinaryOpcode(plainOperandInstr(InstrI32x4ExtractLane, "i32x4.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1b),
+	withBinaryOpcode(plainOperandInstr(InstrI32x4ReplaceLane, "i32x4.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1c),
 	withBinaryOpcode(plainOperandInstr(InstrI64Const, "i64.const", 1, LoweringOperandI64Const), 0, 0x42),
+	withBinaryOpcode(plainOperandInstr(InstrI64x2ExtractLane, "i64x2.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1d),
+	withBinaryOpcode(plainOperandInstr(InstrI64x2ReplaceLane, "i64x2.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1e),
 	withBinaryOpcode(plainOperandInstr(InstrLocalGet, "local.get", 1, LoweringOperandLocalIndex), 0, 0x20),
 	withBinaryOpcode(plainOperandInstr(InstrLocalSet, "local.set", 1, LoweringOperandLocalSet), 0, 0x21),
 	withBinaryOpcode(plainOperandInstr(InstrLocalTee, "local.tee", 1, LoweringOperandLocalTee), 0, 0x22),
 	withBinaryOpcode(plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex), 0xfc, 0x08),
+	withBinaryOpcode(plainOperandInstr(InstrF32x4ExtractLane, "f32x4.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1f),
+	withBinaryOpcode(plainOperandInstr(InstrF32x4ReplaceLane, "f32x4.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x20),
+	withBinaryOpcode(plainOperandInstr(InstrF64x2ExtractLane, "f64x2.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x21),
+	withBinaryOpcode(plainOperandInstr(InstrF64x2ReplaceLane, "f64x2.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x22),
 	withBinaryOpcode(plainOperandInstr(InstrRefFunc, "ref.func", 1, LoweringOperandRefFunc), 0, 0xd2),
 	withBinaryOpcode(plainOperandInstr(InstrRefNull, "ref.null", 1, LoweringOperandRefNull), 0, 0xd0),
 	withBinaryOpcode(plainOperandInstr(InstrV128Const, "v128.const", -1, LoweringOperandV128Const), 0xfd, 0x0c),

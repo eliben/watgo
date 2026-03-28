@@ -1789,6 +1789,8 @@ func loweringOperandDecoderFor(kind instrdef.LoweringOperandKind) loweringOperan
 		return decodeV128ConstOperands
 	case instrdef.LoweringOperandLaneIndex:
 		return decodeLaneIndexOperands
+	case instrdef.LoweringOperandShuffleLanes:
+		return decodeShuffleLaneOperands
 	case instrdef.LoweringOperandRefNull:
 		return decodeRefNullOperands
 	case instrdef.LoweringOperandRefFunc:
@@ -1826,6 +1828,10 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 		return false
 	}
 	if spec.operandCount >= 0 && len(pi.Operands) != spec.operandCount {
+		if pi.Name == "i8x16.shuffle" {
+			fl.diagf(instrLoc, "invalid lane length")
+			return true
+		}
 		fl.diagf(instrLoc, "%s expects %s", pi.Name, operandCountText(spec.operandCount))
 		return true
 	}
@@ -1836,10 +1842,14 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 		return true
 	}
 	ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
+	prevDiagCount := len(fl.mod.diags)
 	if spec.decode != nil && !spec.decode(fl, &ins, pi.Operands) {
 		// Current table-driven entries with decode callbacks all consume exactly
-		// one operand, so report that operand location.
-		fl.diagf(pi.Operands[0].Loc(), "invalid %s operand", pi.Name)
+		// one or more explicit operands. If the decoder already emitted a more
+		// specific diagnostic, keep that as the primary error.
+		if len(fl.mod.diags) == prevDiagCount {
+			fl.diagf(pi.Operands[0].Loc(), "invalid %s operand", pi.Name)
+		}
 		return true
 	}
 	fl.emitInstr(ins)
@@ -2665,12 +2675,36 @@ func decodeV128ConstOperands(_ *functionLowerer, ins *wasmir.Instruction, operan
 
 // decodeLaneIndexOperands decodes a SIMD lane immediate such as
 // `i32x4.extract_lane 3`.
-func decodeLaneIndexOperands(_ *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+func decodeLaneIndexOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
 	lane, ok := lowerFieldIndexOperand(operands[0])
 	if !ok {
 		return false
 	}
+	if lane > 0xff {
+		fl.diagf(operands[0].Loc(), "i8 constant out of range")
+		return false
+	}
 	ins.LaneIndex = lane
+	return true
+}
+
+// decodeShuffleLaneOperands decodes the 16 lane immediates for i8x16.shuffle.
+func decodeShuffleLaneOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	if len(operands) != 16 {
+		fl.diagf(ins.SourceLoc, "invalid lane length")
+		return false
+	}
+	for i, op := range operands {
+		lane, ok := lowerFieldIndexOperand(op)
+		if !ok {
+			return false
+		}
+		if lane > 0xff {
+			fl.diagf(op.Loc(), "i8 constant out of range")
+			return false
+		}
+		ins.ShuffleLanes[i] = byte(lane)
+	}
 	return true
 }
 

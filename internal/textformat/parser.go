@@ -1307,7 +1307,13 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 	}
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "memory.init", "data.drop", "i32x4.extract_lane":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "memory.init", "data.drop",
+		"i8x16.extract_lane_s", "i8x16.extract_lane_u", "i8x16.replace_lane",
+		"i16x8.extract_lane_s", "i16x8.extract_lane_u", "i16x8.replace_lane",
+		"i32x4.extract_lane", "i32x4.replace_lane",
+		"i64x2.extract_lane", "i64x2.replace_lane",
+		"f32x4.extract_lane", "f32x4.replace_lane",
+		"f64x2.extract_lane", "f64x2.replace_lane":
 		if cursor+1 >= len(elems) {
 			p.emitError(elem.loc, "%s expects one operand", name)
 			return nil, cursor + 1
@@ -1323,6 +1329,22 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "i8x16.shuffle":
+		operands := make([]Operand, 0, 16)
+		next := cursor + 1
+		for next < len(elems) {
+			op := p.parseOperand(elems[next])
+			if op == nil {
+				break
+			}
+			operands = append(operands, op)
+			next++
+		}
+		if len(operands) != 16 {
+			p.emitError(elem.loc, "invalid lane length")
+			return nil, next
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
 	case "v128.const":
 		operands := make([]Operand, 0, 17)
 		next := cursor + 1
