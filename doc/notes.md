@@ -1,109 +1,43 @@
-# watgo Design
+# watgo Notes
 
-## Goals
+`watgo` is a Go toolkit for parsing, validating, and encoding
+WebAssembly. It is not a runtime.
 
-`watgo` is a pure-Go toolkit for WebAssembly that can:
+## Public API
 
-- Parse WAT text into an internal representation.
-- Parse WASM binary into an internal representation.
-- Emit WASM binary from that representation.
-- Future: emit WAT text from that representation
-- Support transforms, analysis, debugging, and inspection.
+The public entry points are in [watgo.go](../watgo.go):
 
-## Non-Goals
+- `ParseWAT`: WAT -> `wasmir.Module`
+- `DecodeWASM`: binary wasm -> `wasmir.Module`
+- `ValidateModule`: semantic validation over `wasmir.Module`
+- `EncodeWASM`: `wasmir.Module` -> binary wasm
+- `CompileWATToWASM`: parse + lower + validate + encode
 
-- Full engine/runtime execution of modules.
-- JIT/AOT compilation.
-- Support for all proposals from day one.
+## Internal Structure
 
-## Architectural Principles
+- `wasmir`: semantic IR and public IR types
+- `internal/textformat`: WAT parsing and lowering
+- `internal/binaryformat`: wasm binary decoding/encoding
+- `internal/validate`: semantic validation
+- `internal/instrdef`: shared instruction catalog used by text, binary, and
+  validation code
 
-- Single canonical semantic IR to represent WASM modules, no matter which format
-  they came from (text, binary).
-- Lossless-ish text AST for WAT source fidelity (names, folded forms,
-  formatting-sensitive details where needed).
-- Strict separation between parsing/validation/encoding.
-- Deterministic outputs for stable tests and debugging.
+The main pipeline is:
 
-## High-Level Pipeline
+1. WAT -> `textformat` -> `wasmir`
+2. wasm binary -> `binaryformat` -> `wasmir`
+3. `wasmir` -> `validate`
+4. `wasmir` -> `binaryformat` encoder
 
-1. WAT input -> text lexer/parser -> `textformat` (text-oriented AST).
-2. `textformat` -> lower -> `wasmir` (canonical semantic IR).
-3. `wasmir` -> validator -> validated IR (or diagnostic set).
-4. `wasmir` -> binary encoder -> WASM bytes.
-5. WASM bytes -> binary decoder -> `wasmir`.
-6. Future: `wasmir` -> text printer -> WAT (canonical pretty-printed form).
+`wasmir` is the canonical semantic representation. Text-specific source details
+such as names, folded syntax, and literal spelling are intentionally not
+preserved there.
 
-## IR Design
+## Testing
 
-### `textformat` (text AST)
-
-Use this for faithful text parsing:
-
-- Module/function declarations with identifiers (`$name`) preserved.
-- Folded instructions preserved structurally.
-- Type-use syntax preserved where useful for diagnostics.
-- Source spans on all nodes for precise errors.
-
-### `wasmir` (semantic IR)
-
-Use this as the canonical transformation/emission target:
-
-- Fully resolved indices (no unresolved `$name`).
-- Explicit sections/components:
-  - Types, imports, functions, tables, memories, globals, exports, start,
-    elements, data, customs.
-- Function bodies in normalized instruction form (unfolded).
-- Constants/immediates represented in typed form.
-- Optional metadata map for debug/provenance.
-
-## Testing Strategy
-
-### 1. Unit Tests
-
-- Lexer/token tests (valid + malformed).
-- Parser node-shape tests for WAT constructs.
-- Resolver tests for name/index resolution edge cases.
-- Binary codec tests per section and instruction immediate.
-- Validator rule tests by category.
-
-Use table-driven tests heavily.
-
-### 2. End-to-end testing with wasm spec
-
-Parse scripts `*.wast` from WebAssembly/spec to extract expected semantics, run
-them and compare. Can use a command-line runtime like 'node' or the Wazero API
-to execute.
-
-WASM spec tests live in https://github.com/WebAssembly/spec/tree/main/test/core
-Their own runner uses the wasm interpreter in that repo (written in OCaml):
-https://github.com/WebAssembly/spec/tree/main/interpreter
-
-This is the syntax for `*.wast` scripts:
-https://github.com/WebAssembly/spec/tree/main/interpreter#scripts
-
-## Notes
-
-Identifiers that stand in for indices (e.g. `local.get $lhs`) aren't reflected
-in the binary format at all. This leads me to think we'll need another
-representation to parse the text format to; some sort of AST. Nested/folded
-instructions (https://www.w3.org/TR/wasm-core-1/#folded-instructions%E2%91%A0)
-is another such scenario. Something like an AST will be required to represent
-the text format with high fidelity.
-
-More details that are lost when lowering from text format:
-
-* nested/folded instructions, and conditions like (if ... (then ...)) are also
-  lowered to flat forms
-* spelling of floating point numbers like 0.125 and other notations (in binary
-  all floats are IEEE-754)
-* names of vars / types
-* inline types (instead of indices)
-
-Realistic WAT code for testing:
-
-* https://github.com/eliben/wasm-wat-samples/
-* Game of life: https://github.com/ColinEberhardt/wasm-game-of-life/blob/master/main.wat
-* Book samples:
-  https://github.com/battlelinegames/ArtOfWasm
-  https://github.com/bsletten/wasm_tdg
+- Unit tests cover parser, encoder/decoder, validator, and CLI layers.
+- `tests/wasmspec` runs `.wast` scripts against `watgo`.
+- The wasmspec harness uses Node as the execution engine, because `watgo` does
+  not execute wasm modules itself.
+- Detailed wasmspec tracing is off by default and can be enabled with
+  `WATGO_WASMSPEC_DEBUG=1`.
