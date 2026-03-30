@@ -329,6 +329,7 @@ const (
 	InstrI8x16Splat
 	InstrI8x16Shuffle
 	InstrI8x16Swizzle
+	InstrI8x16RelaxedSwizzle
 	InstrI8x16ExtractLaneS
 	InstrI8x16ExtractLaneU
 	InstrI8x16ReplaceLane
@@ -444,6 +445,10 @@ const (
 	InstrI32x4MaxS
 	InstrI32x4MaxU
 	InstrI32x4DotI16x8S
+	InstrI32x4RelaxedTruncF32x4S
+	InstrI32x4RelaxedTruncF32x4U
+	InstrI32x4RelaxedTruncF64x2SZero
+	InstrI32x4RelaxedTruncF64x2UZero
 	InstrI32x4ExtmulLowI16x8S
 	InstrI32x4ExtmulHighI16x8S
 	InstrI32x4ExtmulLowI16x8U
