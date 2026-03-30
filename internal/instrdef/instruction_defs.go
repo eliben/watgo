@@ -330,6 +330,7 @@ var instructionDefs = []InstructionDef{
 	prefixedOp(InstrI16x8MaxS, "i16x8.max_s", 0xfd, 0x98, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8MaxU, "i16x8.max_u", 0xfd, 0x99, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8AvgrU, "i16x8.avgr_u", 0xfd, 0x9b, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
+	prefixedOp(InstrI16x8RelaxedQ15mulrS, "i16x8.relaxed_q15mulr_s", 0xfd, 0x111, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtmulLowI8x16S, "i16x8.extmul_low_i8x16_s", 0xfd, 0x9c, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtmulHighI8x16S, "i16x8.extmul_high_i8x16_s", 0xfd, 0x9d, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),
 	prefixedOp(InstrI16x8ExtmulLowI8x16U, "i16x8.extmul_low_i8x16_u", 0xfd, 0x9e, binarySig(ValueTypeV128, ValueTypeV128, ValueTypeV128)),

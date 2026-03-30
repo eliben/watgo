@@ -68,6 +68,7 @@ const (
 	valueF64NaNCanonical  valueKind = "f64.nan:canonical"
 	valueF64NaNArithmetic valueKind = "f64.nan:arithmetic"
 	valueV128Const        valueKind = "v128.const"
+	valueEither           valueKind = "either"
 	valueRefNull          valueKind = "ref.null"
 	valueRefFunc          valueKind = "ref.func"
 	valueRefEq            valueKind = "ref.eq"
@@ -101,6 +102,9 @@ type scriptValue struct {
 	// literal preserves the source literal spelling from the .wast file.
 	// It is used for user-facing mismatch formatting.
 	literal string
+	// eitherValues stores alternative acceptable expected values for relaxed
+	// instructions that permit one of several valid results.
+	eitherValues []scriptValue
 }
 
 // invokeAction is an "(invoke ...)" script action.
@@ -798,6 +802,20 @@ func parseValue(sx *textformat.SExpr) (scriptValue, error) {
 		}
 		v.kind = valueV128Const
 		return v, nil
+	case "either":
+		elems := sx.Children()
+		if len(elems) < 2 {
+			return scriptValue{}, fmt.Errorf("either requires at least one alternative")
+		}
+		options := make([]scriptValue, 0, len(elems)-1)
+		for i := 1; i < len(elems); i++ {
+			v, err := parseValue(elems[i])
+			if err != nil {
+				return scriptValue{}, fmt.Errorf("either option[%d]: %w", i-1, err)
+			}
+			options = append(options, v)
+		}
+		return scriptValue{kind: valueEither, eitherValues: options}, nil
 	case "ref.null":
 		elems := sx.Children()
 		if len(elems) != 1 && len(elems) != 2 {
@@ -1696,131 +1714,64 @@ func (r *scriptRunner) runAssertReturn(res *commandResult, cmd scriptCommand) {
 	}
 	for i := range results {
 		want := cmd.expectValues[i]
-		switch want.kind {
-		case valueI32Const:
-			gotBits := uint32(results[i].scalar)
-			wantBits := uint32(want.bits)
-			if gotBits != wantBits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueI64Const:
-			gotBits := results[i].scalar
-			if gotBits != want.bits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF32Const:
-			gotBits := uint32(results[i].scalar)
-			wantBits := uint32(want.bits)
-			if gotBits != wantBits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF32NaNCanonical:
-			gotBits := uint32(results[i].scalar)
-			if !isCanonicalNaN32(gotBits) {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF32NaNArithmetic:
-			gotBits := uint32(results[i].scalar)
-			if !isArithmeticNaN32(gotBits) {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF64Const:
-			gotBits := results[i].scalar
-			if gotBits != want.bits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF64NaNCanonical:
-			gotBits := results[i].scalar
-			if !isCanonicalNaN64(gotBits) {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueF64NaNArithmetic:
-			gotBits := results[i].scalar
-			if !isArithmeticNaN64(gotBits) {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueV128Const:
-			if !results[i].isV128 || !matchV128Expected(results[i].v128, want) {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefNull:
-			if results[i].scalar != 0 {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefFunc:
-			if results[i].scalar == 0 {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefEq:
-			if results[i].scalar == 0 || results[i].scalar&encodedRefExternTag != 0 {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefHost:
-			if results[i].scalar != encodedRefHostTag|want.bits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefI31:
-			if results[i].scalar != encodedRefI31 {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefStruct:
-			if results[i].scalar != encodedRefStruct {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefArray:
-			if results[i].scalar != encodedRefArray {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		case valueRefExtern:
-			if results[i].scalar&encodedRefExternTag == 0 {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-			if want.literal != "" && results[i].scalar != encodedRefExternTag|want.bits {
-				res.status = false
-				res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
-				return
-			}
-		default:
+		if !runtimeValueMatchesExpected(results[i], want) {
 			res.status = false
-			res.detail = fmt.Sprintf("unsupported expected value kind %q", want.kind)
+			res.detail = fmt.Sprintf("result[%d] mismatch: got %s want %s", i, formatGotValueLikeExpected(results[i], want), formatExpectedValue(want))
 			return
 		}
 	}
 	res.status = true
+}
+
+// runtimeValueMatchesExpected reports whether got satisfies one expected script
+// value, including relaxed "(either ...)" alternatives.
+func runtimeValueMatchesExpected(got runtimeValue, want scriptValue) bool {
+	switch want.kind {
+	case valueEither:
+		for _, option := range want.eitherValues {
+			if runtimeValueMatchesExpected(got, option) {
+				return true
+			}
+		}
+		return false
+	case valueI32Const:
+		return uint32(got.scalar) == uint32(want.bits)
+	case valueI64Const:
+		return got.scalar == want.bits
+	case valueF32Const:
+		return uint32(got.scalar) == uint32(want.bits)
+	case valueF32NaNCanonical:
+		return isCanonicalNaN32(uint32(got.scalar))
+	case valueF32NaNArithmetic:
+		return isArithmeticNaN32(uint32(got.scalar))
+	case valueF64Const:
+		return got.scalar == want.bits
+	case valueF64NaNCanonical:
+		return isCanonicalNaN64(got.scalar)
+	case valueF64NaNArithmetic:
+		return isArithmeticNaN64(got.scalar)
+	case valueV128Const:
+		return got.isV128 && matchV128Expected(got.v128, want)
+	case valueRefNull:
+		return got.scalar == 0
+	case valueRefFunc:
+		return got.scalar != 0
+	case valueRefEq:
+		return got.scalar != 0 && got.scalar&encodedRefExternTag == 0
+	case valueRefHost:
+		return got.scalar == encodedRefHostTag|want.bits
+	case valueRefI31:
+		return got.scalar == encodedRefI31
+	case valueRefStruct:
+		return got.scalar == encodedRefStruct
+	case valueRefArray:
+		return got.scalar == encodedRefArray
+	case valueRefExtern:
+		return got.scalar&encodedRefExternTag != 0 &&
+			(want.literal == "" || got.scalar == encodedRefExternTag|want.bits)
+	default:
+		return false
+	}
 }
 
 // matchV128Expected compares a runtime v128 result against the script's
@@ -1911,6 +1862,12 @@ func matchV128Expected(got [16]byte, want scriptValue) bool {
 
 func formatExpectedValue(v scriptValue) string {
 	switch v.kind {
+	case valueEither:
+		parts := make([]string, len(v.eitherValues))
+		for i, option := range v.eitherValues {
+			parts[i] = formatExpectedValue(option)
+		}
+		return "(either " + strings.Join(parts, " ") + ")"
 	case valueI32Const:
 		return fmt.Sprintf("(i32.const %s)", v.literal)
 	case valueI64Const:
@@ -1958,6 +1915,14 @@ func formatExpectedValue(v scriptValue) string {
 
 func formatGotValueLikeExpected(got runtimeValue, want scriptValue) string {
 	switch want.kind {
+	case valueEither:
+		if len(want.eitherValues) != 0 {
+			return formatGotValueLikeExpected(got, want.eitherValues[0])
+		}
+		if got.isV128 {
+			return formatV128AsI8x16(got.v128)
+		}
+		return fmt.Sprintf("0x%x", got.scalar)
 	case valueI32Const:
 		return fmt.Sprintf("(i32.const %s)", formatI32Like(uint32(got.scalar), want.literal))
 	case valueI64Const:

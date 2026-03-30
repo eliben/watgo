@@ -404,6 +404,7 @@ const (
 	InstrI16x8MaxS
 	InstrI16x8MaxU
 	InstrI16x8AvgrU
+	InstrI16x8RelaxedQ15mulrS
 	InstrI16x8ExtmulLowI8x16S
 	InstrI16x8ExtmulHighI8x16S
 	InstrI16x8ExtmulLowI8x16U
