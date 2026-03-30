@@ -363,8 +363,11 @@ func newAnyrefHelperTemplateData(sig wasmir.FuncType) (helperTemplateData, error
 }
 
 // loweredHelperParamsAndPrelude converts helper-visible parameters into the WAT
-// needed to reconstruct the original target arguments. Only v128 needs custom
-// lowering; all other value types pass through as-is.
+// needed to reconstruct the original target arguments.
+//
+// Helpers lower float parameters to raw integer bit patterns so exact NaN
+// payloads survive the JS embedding boundary, and they lower v128 parameters to
+// four i32 words because JS cannot materialize SIMD values directly.
 func loweredHelperParamsAndPrelude(params []wasmir.ValueType) ([]string, []string, bool, error) {
 	var exportParams []string
 	var prelude []string
@@ -372,7 +375,41 @@ func loweredHelperParamsAndPrelude(params []wasmir.ValueType) ([]string, []strin
 	helperIndex := 0
 	scratchOffset := 0
 	for _, vt := range params {
-		if vt.Kind != wasmir.ValueKindV128 {
+		switch vt.Kind {
+		case wasmir.ValueKindF32:
+			exportParams = append(exportParams, "i32")
+			prelude = append(prelude,
+				fmt.Sprintf("local.get %d", helperIndex),
+				"f32.reinterpret_i32",
+			)
+			helperIndex++
+			continue
+		case wasmir.ValueKindF64:
+			exportParams = append(exportParams, "i64")
+			prelude = append(prelude,
+				fmt.Sprintf("local.get %d", helperIndex),
+				"f64.reinterpret_i64",
+			)
+			helperIndex++
+			continue
+		case wasmir.ValueKindV128:
+			needsMemory = true
+			exportParams = append(exportParams, "i32", "i32", "i32", "i32")
+			for _, wordOffset := range []int{0, 4, 8, 12} {
+				prelude = append(prelude,
+					fmt.Sprintf("i32.const %d", scratchOffset+wordOffset),
+					fmt.Sprintf("local.get %d", helperIndex),
+					"i32.store",
+				)
+				helperIndex++
+			}
+			prelude = append(prelude,
+				fmt.Sprintf("i32.const %d", scratchOffset),
+				"v128.load",
+			)
+			scratchOffset += 16
+			continue
+		default:
 			name, err := valueTypeString(vt)
 			if err != nil {
 				return nil, nil, false, err
@@ -382,21 +419,6 @@ func loweredHelperParamsAndPrelude(params []wasmir.ValueType) ([]string, []strin
 			helperIndex++
 			continue
 		}
-		needsMemory = true
-		exportParams = append(exportParams, "i32", "i32", "i32", "i32")
-		for _, wordOffset := range []int{0, 4, 8, 12} {
-			prelude = append(prelude,
-				fmt.Sprintf("i32.const %d", scratchOffset+wordOffset),
-				fmt.Sprintf("local.get %d", helperIndex),
-				"i32.store",
-			)
-			helperIndex++
-		}
-		prelude = append(prelude,
-			fmt.Sprintf("i32.const %d", scratchOffset),
-			"v128.load",
-		)
-		scratchOffset += 16
 	}
 	return exportParams, prelude, needsMemory, nil
 }
@@ -456,13 +478,40 @@ func encodeDirectInvokeArgs(scriptArgs []scriptValue, params []wasmir.ValueType)
 	return args, nil
 }
 
-// encodeHelperInvokeArgs prepares the helper-visible argument list. v128
-// arguments are lowered to four i32 words because the helper rebuilds them in
-// wasm before calling the target.
+// encodeHelperInvokeArgs prepares the helper-visible argument list. Float
+// arguments are passed as raw integer bits so helpers can reinterpret them
+// inside wasm without JS-number NaN canonicalization. v128 arguments are
+// lowered to four i32 words because the helper rebuilds them in wasm before
+// calling the target.
 func encodeHelperInvokeArgs(scriptArgs []scriptValue, params []wasmir.ValueType) ([]nodeValue, error) {
 	var out []nodeValue
 	for i, arg := range scriptArgs {
-		if params[i].Kind != wasmir.ValueKindV128 {
+		switch params[i].Kind {
+		case wasmir.ValueKindF32:
+			out = append(out, nodeValue{
+				Type: "i32",
+				Bits: strconv.FormatUint(uint64(helperF32ArgBits(arg)), 10),
+			})
+			continue
+		case wasmir.ValueKindF64:
+			out = append(out, nodeValue{
+				Type: "i64",
+				Bits: strconv.FormatUint(helperF64ArgBits(arg), 10),
+			})
+			continue
+		case wasmir.ValueKindV128:
+			if arg.kind != valueV128Const {
+				return nil, fmt.Errorf("invoke arg[%d]: v128 helper lowering requires v128.const", i)
+			}
+			for word := 0; word < 4; word++ {
+				bits := binary.LittleEndian.Uint32(arg.v128[word*4:])
+				out = append(out, nodeValue{
+					Type: "i32",
+					Bits: strconv.FormatUint(uint64(bits), 10),
+				})
+			}
+			continue
+		default:
 			encoded, err := encodeScriptArg(arg, params[i])
 			if err != nil {
 				return nil, fmt.Errorf("invoke arg[%d]: %w", i, err)
@@ -470,18 +519,38 @@ func encodeHelperInvokeArgs(scriptArgs []scriptValue, params []wasmir.ValueType)
 			out = append(out, encoded)
 			continue
 		}
-		if arg.kind != valueV128Const {
-			return nil, fmt.Errorf("invoke arg[%d]: v128 helper lowering requires v128.const", i)
-		}
-		for word := 0; word < 4; word++ {
-			bits := binary.LittleEndian.Uint32(arg.v128[word*4:])
-			out = append(out, nodeValue{
-				Type: "i32",
-				Bits: strconv.FormatUint(uint64(bits), 10),
-			})
-		}
 	}
 	return out, nil
+}
+
+// helperF32ArgBits returns the exact f32 bit pattern a helper should receive
+// for one script argument.
+func helperF32ArgBits(arg scriptValue) uint32 {
+	switch arg.kind {
+	case valueF32Const:
+		return uint32(arg.bits)
+	case valueF32NaNCanonical:
+		return 0x7fc00000
+	case valueF32NaNArithmetic:
+		return 0x7fc00001
+	default:
+		return uint32(arg.bits)
+	}
+}
+
+// helperF64ArgBits returns the exact f64 bit pattern a helper should receive
+// for one script argument.
+func helperF64ArgBits(arg scriptValue) uint64 {
+	switch arg.kind {
+	case valueF64Const:
+		return arg.bits
+	case valueF64NaNCanonical:
+		return 0x7ff8000000000000
+	case valueF64NaNArithmetic:
+		return 0x7ff8000000000001
+	default:
+		return arg.bits
+	}
 }
 
 // compileHelperTemplate renders one helper WAT module, compiles it with watgo,
