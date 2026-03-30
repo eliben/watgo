@@ -1316,9 +1316,14 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	}
 
 	name := elem.tok.value
-	if instructionHasSyntaxClass(name, instrdef.InstrSyntaxStructured) && cursor+1 < len(elems) {
-		if typeOp, ok := p.parsePlainControlTypeOperand(elems[cursor+1]); ok {
-			return &PlainInstr{Name: name, Operands: []Operand{typeOp}, loc: elem.loc}, cursor + 2
+	if instructionHasSyntaxClass(name, instrdef.InstrSyntaxStructured) || name == "else" || name == "end" {
+		if instr, next, ok := p.parsePlainStructuredInstr(name, elems, cursor); ok {
+			return instr, next
+		}
+	}
+	if name == "call_indirect" {
+		if instr, next := p.parsePlainCallIndirectInstr(elems, cursor); instr != nil {
+			return instr, next
 		}
 	}
 	switch name {
@@ -1548,6 +1553,92 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	// For this initial subset, parse all other instructions as plain
 	// zero-operand instructions.
 	return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+}
+
+// parsePlainStructuredInstr parses one raw structured control instruction from
+// a flat instruction stream.
+//
+// This handles label sugar like:
+//
+//	block $done
+//	if $body
+//	else $body
+//	end $body
+//
+// and the existing plain single-result blocktype form like:
+//
+//	block (result i32)
+func (p *Parser) parsePlainStructuredInstr(name string, elems []*SExpr, cursor int) (Instruction, int, bool) {
+	switch name {
+	case "block", "loop", "if":
+		operands := make([]Operand, 0, 2)
+		next := cursor + 1
+		if next < len(elems) && elems[next].IsTokenKind(ID) {
+			operands = append(operands, p.parseOperand(elems[next]))
+			next++
+		}
+		if next < len(elems) {
+			if typeOp, ok := p.parsePlainControlTypeOperand(elems[next]); ok {
+				if typeOp != nil {
+					operands = append(operands, typeOp)
+				}
+				next++
+			}
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elems[cursor].loc}, next, true
+	case "else", "end":
+		next := cursor + 1
+		if next < len(elems) && elems[next].IsTokenKind(ID) {
+			next++
+		}
+		return &PlainInstr{Name: name, loc: elems[cursor].loc}, next, true
+	default:
+		return nil, cursor, false
+	}
+}
+
+// parsePlainCallIndirectInstr parses one flat call_indirect with optional
+// table operand and trailing type-use clauses.
+//
+// Examples:
+//
+//	call_indirect
+//	call_indirect (type $sig)
+//	call_indirect $tab (type $sig) (param i32) (result i64)
+//
+// The preceding stack operands stay as separate plain instructions in the
+// linear stream; only the immediate table/type-use syntax is attached here.
+func (p *Parser) parsePlainCallIndirectInstr(elems []*SExpr, cursor int) (Instruction, int) {
+	args := make([]FoldedArg, 0, 4)
+	next := cursor + 1
+
+	if next < len(elems) {
+		if op := p.parseOperand(elems[next]); op != nil {
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				args = append(args, FoldedArg{Operand: op})
+				next++
+			}
+		}
+	}
+
+	for next < len(elems) {
+		clause := elems[next]
+		if !clause.IsList() {
+			break
+		}
+		head := clause.HeadKeyword()
+		if head != "type" && head != "param" && head != "result" {
+			break
+		}
+		nested := p.parseFoldedInstr(clause)
+		if nested != nil {
+			args = append(args, FoldedArg{Instr: nested})
+		}
+		next++
+	}
+
+	return &FoldedInstr{Name: "call_indirect", Args: args, loc: elems[cursor].loc}, next
 }
 
 // parsePlainControlTypeOperand parses a single-result blocktype clause used by

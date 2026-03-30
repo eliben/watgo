@@ -1593,11 +1593,11 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 	fl.pushLabel(labelName)
 	fl.lowerFoldedClauseInstrs(thenClause)
 	if elseClause != nil {
-		fl.lowerPlainInstr(&PlainInstr{Name: "else", loc: elseClause.loc})
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: elseClause.loc.String()})
 		fl.lowerFoldedClauseInstrs(elseClause)
 	}
 	fl.popLabel()
-	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
+	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fi.loc.String()})
 }
 
 // lowerFoldedBlock lowers folded structured control forms "(block ...)" and
@@ -1787,7 +1787,7 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		fl.lowerInstruction(body)
 	}
 	fl.popLabel()
-	fl.lowerPlainInstr(&PlainInstr{Name: "end", loc: fi.loc})
+	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fi.loc.String()})
 }
 
 func parseFoldedTypeClauseRef(fi *FoldedInstr) (string, bool) {
@@ -1944,10 +1944,76 @@ func operandCountText(count int) string {
 	}
 }
 
+// lowerPlainStructuredHeader decodes the optional label and single-result
+// blocktype accepted by raw block/loop/if forms.
+func (fl *functionLowerer) lowerPlainStructuredHeader(pi *PlainInstr, instrName string) (string, *wasmir.ValueType, bool) {
+	if len(pi.Operands) > 2 {
+		fl.diagf(pi.Loc(), "%s expects at most 2 operands", instrName)
+		return "", nil, false
+	}
+
+	var labelName string
+	var resultType *wasmir.ValueType
+	for i, op := range pi.Operands {
+		switch operand := op.(type) {
+		case *IdOperand:
+			if i != 0 || labelName != "" {
+				fl.diagf(op.Loc(), "invalid %s label", instrName)
+				return "", nil, false
+			}
+			labelName = operand.Value
+		case *TypeOperand:
+			if resultType != nil {
+				fl.diagf(op.Loc(), "duplicate %s result type", instrName)
+				return "", nil, false
+			}
+			vt, ok := lowerBlockResultTypeOperand(op, fl.mod.typesByName)
+			if !ok {
+				fl.diagf(op.Loc(), "invalid %s result type", instrName)
+				return "", nil, false
+			}
+			vtCopy := vt
+			resultType = &vtCopy
+		default:
+			fl.diagf(op.Loc(), "invalid operand for %s", instrName)
+			return "", nil, false
+		}
+	}
+	return labelName, resultType, true
+}
+
+// lowerPlainCallIndirect lowers a flat call_indirect using the same immediate
+// forms supported by folded call_indirect: optional table operand plus trailing
+// type/param/result clauses.
+func (fl *functionLowerer) lowerPlainCallIndirect(pi *PlainInstr, instrLoc string) {
+	fi := &FoldedInstr{Name: pi.Name, loc: pi.loc}
+	for _, op := range pi.Operands {
+		fi.Args = append(fi.Args, FoldedArg{Operand: op})
+	}
+	fl.lowerFoldedCallIndirect(fi)
+}
+
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
 	if fl.lowerMemoryInstr(pi, instrLoc) {
+		return
+	}
+	if pi.Name == "end" {
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "end expects no operands")
+			return
+		}
+		fl.popLabel()
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: instrLoc})
+		return
+	}
+	if pi.Name == "else" {
+		if len(pi.Operands) != 0 {
+			fl.diagf(instrLoc, "else expects no operands")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
 		return
 	}
 	if fl.lowerBySpec(pi, instrLoc) {
@@ -1955,6 +2021,9 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
+	case "call_indirect":
+		fl.lowerPlainCallIndirect(pi, instrLoc)
+		return
 	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill", "struct.new", "struct.new_default":
 		if len(pi.Operands) != 1 {
 			fl.diagf(instrLoc, "%s expects 1 operand", pi.Name)
@@ -2249,24 +2318,19 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		fl.emitInstr(ins)
 		return
 	case "if":
-		if len(pi.Operands) > 1 {
-			fl.diagf(instrLoc, "if expects at most 1 operand")
+		labelName, resultType, ok := fl.lowerPlainStructuredHeader(pi, "if")
+		if !ok {
 			return
 		}
 		ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: instrLoc}
-		if len(pi.Operands) == 1 {
-			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0], fl.mod.typesByName)
-			if !ok {
-				fl.diagf(pi.Operands[0].Loc(), "invalid if result type")
-				return
-			}
-			vtCopy := vt
-			ins.BlockType = &vtCopy
+		if resultType != nil {
+			ins.BlockType = resultType
 		}
 		fl.emitInstr(ins)
+		fl.pushLabel(labelName)
 	case "block", "loop":
-		if len(pi.Operands) > 1 {
-			fl.diagf(instrLoc, "%s expects at most 1 operand", pi.Name)
+		labelName, resultType, ok := fl.lowerPlainStructuredHeader(pi, pi.Name)
+		if !ok {
 			return
 		}
 		kind := wasmir.InstrBlock
@@ -2274,16 +2338,11 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			kind = wasmir.InstrLoop
 		}
 		ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
-		if len(pi.Operands) == 1 {
-			vt, ok := lowerBlockResultTypeOperand(pi.Operands[0], fl.mod.typesByName)
-			if !ok {
-				fl.diagf(pi.Operands[0].Loc(), "invalid %s result type", pi.Name)
-				return
-			}
-			vtCopy := vt
-			ins.BlockType = &vtCopy
+		if resultType != nil {
+			ins.BlockType = resultType
 		}
 		fl.emitInstr(ins)
+		fl.pushLabel(labelName)
 	case "table.init":
 		if len(pi.Operands) < 1 || len(pi.Operands) > 2 {
 			fl.diagf(instrLoc, "table.init expects 1 or 2 operands")
