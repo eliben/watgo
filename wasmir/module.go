@@ -406,6 +406,7 @@ const (
 	InstrI16x8MaxU
 	InstrI16x8AvgrU
 	InstrI16x8RelaxedQ15mulrS
+	InstrI16x8RelaxedDotI8x16I7x16S
 	InstrI16x8ExtmulLowI8x16S
 	InstrI16x8ExtmulHighI8x16S
 	InstrI16x8ExtmulLowI8x16U
@@ -449,6 +450,8 @@ const (
 	InstrI32x4RelaxedTruncF32x4U
 	InstrI32x4RelaxedTruncF64x2SZero
 	InstrI32x4RelaxedTruncF64x2UZero
+	InstrI32x4RelaxedLaneselect
+	InstrI32x4RelaxedDotI8x16I7x16AddS
 	InstrI32x4ExtmulLowI16x8S
 	InstrI32x4ExtmulHighI16x8S
 	InstrI32x4ExtmulLowI16x8U
@@ -473,6 +476,7 @@ const (
 	InstrI64x2Add
 	InstrI64x2Sub
 	InstrI64x2Mul
+	InstrI64x2RelaxedLaneselect
 	InstrI64x2ExtmulLowI32x4S
 	InstrI64x2ExtmulHighI32x4S
 	InstrI64x2ExtmulLowI32x4U
@@ -508,6 +512,11 @@ const (
 	InstrF32x4Max
 	InstrF32x4Pmin
 	InstrF32x4Pmax
+	InstrF32x4RelaxedMadd
+	InstrF32x4RelaxedNmadd
+	InstrI8x16RelaxedLaneselect
+	InstrF32x4RelaxedMin
+	InstrF32x4RelaxedMax
 	InstrF64x2Eq
 	InstrF64x2Ne
 	InstrF64x2Lt
@@ -529,6 +538,11 @@ const (
 	InstrF64x2Max
 	InstrF64x2Pmin
 	InstrF64x2Pmax
+	InstrF64x2RelaxedMadd
+	InstrF64x2RelaxedNmadd
+	InstrI16x8RelaxedLaneselect
+	InstrF64x2RelaxedMin
+	InstrF64x2RelaxedMax
 	InstrI32x4TruncSatF64x2SZero
 	InstrI32x4TruncSatF64x2UZero
 	InstrF64x2ConvertLowI32x4S
