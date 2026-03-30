@@ -2529,7 +2529,7 @@ func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, o
 			var m *wasmir.Module
 			m, err = binaryformat.DecodeModule(wasmBytes)
 			if err == nil {
-				err = validate.ValidateModule(m)
+				err = validate.ValidateModule(m, nil)
 			}
 		}
 	} else {

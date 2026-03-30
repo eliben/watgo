@@ -5,14 +5,15 @@ import (
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
+	"github.com/eliben/watgo/internal/valhint"
 	. "github.com/eliben/watgo/wasmir"
 )
 
 const (
-	maxMemoryPages32 uint64 = 65536
-	maxMemoryPages64 uint64 = 1 << 48
+	maxMemoryPages32  uint64 = 65536
+	maxMemoryPages64  uint64 = 1 << 48
 	maxMemoryOffset32 uint64 = 1<<32 - 1
-	maxTableElems32  uint64 = 1<<32 - 1
+	maxTableElems32   uint64 = 1<<32 - 1
 )
 
 type validatedValue struct {
@@ -693,10 +694,16 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 }
 
 // ValidateModule validates m.
+//
+// hints may be nil. When provided, they must be aligned to m's defined
+// functions and instruction bodies and typically come from
+// textformat.LowerModuleWithHints. Binary-decoded modules and callers that do
+// not have folded-source metadata should pass nil.
+//
 // Validation includes module-level checks (type/export indices) and function
 // body type checks for the currently supported instruction subset.
 // It returns nil on success. On any failure, it returns diag.ErrorList.
-func ValidateModule(m *Module) error {
+func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	if m == nil {
 		return diag.Fromf("module is nil")
 	}
@@ -753,7 +760,11 @@ func ValidateModule(m *Module) error {
 			diags.Addf("%s has non-function type index %d", fnCtx, f.TypeIdx)
 			continue
 		}
-		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx)
+		var funcHints *valhint.FuncHints
+		if hints != nil && i < len(hints.Funcs) {
+			funcHints = &hints.Funcs[i]
+		}
+		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, funcHints)
 		for _, err := range funcErrs {
 			diags.Addf("%s: %v", fnCtx, err)
 		}
@@ -920,7 +931,7 @@ func ValidateModule(m *Module) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32) diag.ErrorList {
+func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, hints *valhint.FuncHints) diag.ErrorList {
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
 	funcImportCount := uint32(len(funcImportTypeIdx))
@@ -972,6 +983,12 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			appendStackValue(v)
 		}
 	}
+	instrHintAt := func(i int) valhint.InstrHints {
+		if hints == nil || i < 0 || i >= len(hints.Instrs) {
+			return valhint.InstrHints{}
+		}
+		return hints.Instrs[i]
+	}
 	truncateStack := func(n int) {
 		stack = stack[:n]
 	}
@@ -993,13 +1010,13 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		controlKindIf
 	)
 	type controlFrame struct {
-		kind        controlKind
-		entryHeight int
-		paramTypes  []ValueType
-		resultTypes []ValueType
-		sawElse     bool
+		kind               controlKind
+		entryHeight        int
+		paramTypes         []ValueType
+		resultTypes        []ValueType
+		sawElse            bool
 		enteredUnreachable bool
-		unreachable bool
+		unreachable        bool
 	}
 	var controlStack []controlFrame
 	// The function body is typed under an implicit outer block whose label
@@ -1166,9 +1183,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 	}
 
-	applyFixedStackSig := func(insCtx string, ins Instruction, sig instrdef.FixedStackSig) {
+	applyFixedStackSig := func(insCtx string, ins Instruction, sig instrdef.FixedStackSig, hint valhint.InstrHints) {
 		kind := ins.Kind
-		if !ensureCurrentFrameOperands(int(sig.ParamCount), int(ins.OperandCount), int(ins.BottomOperandCount)) {
+		if !ensureCurrentFrameOperands(int(sig.ParamCount), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 			diags.Addf("%s: %s needs %d operands", insCtx, instrName(kind), sig.ParamCount)
 			return
 		}
@@ -1190,9 +1207,10 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		if ins.SourceLoc != "" {
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
 		}
+		hint := instrHintAt(i)
 
 		if def, ok := instrdef.LookupInstructionByKind(ins.Kind); ok && def.Validate.StackSig.Enabled {
-			applyFixedStackSig(insCtx, ins, def.Validate.StackSig)
+			applyFixedStackSig(insCtx, ins, def.Validate.StackSig, hint)
 			continue
 		}
 		switch ins.Kind {
@@ -1337,7 +1355,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: local.set needs 1 operand", insCtx)
 				continue
 			}
@@ -1353,7 +1371,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: local.tee needs 1 operand", insCtx)
 				continue
 			}
@@ -1380,7 +1398,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: global.set on immutable global %d", insCtx, ins.GlobalIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: global.set needs 1 operand", insCtx)
 				continue
 			}
@@ -1395,7 +1413,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.get needs 1 operand", insCtx)
 				continue
 			}
@@ -1410,7 +1428,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.set needs 2 operands", insCtx)
 				continue
 			}
@@ -1434,7 +1452,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: unknown table %d", insCtx, ins.SourceTableIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.copy needs 3 operands", insCtx)
 				continue
 			}
@@ -1468,7 +1486,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: unknown table %d", insCtx, ins.TableIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.fill needs 3 operands", insCtx)
 				continue
 			}
@@ -1496,7 +1514,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: unknown elem segment %d", insCtx, ins.ElemIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.init needs 3 operands", insCtx)
 				continue
 			}
@@ -1529,7 +1547,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: table.grow needs 2 operands", insCtx)
 				continue
 			}
@@ -1562,7 +1580,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(len(calleeType.Params), int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(len(calleeType.Params), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
 				continue
 			}
@@ -1596,7 +1614,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			need := len(calleeType.Params) + 1 // +1 for table element index
-			if !ensureCurrentFrameOperands(need, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(need, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: call_indirect needs %d operands", insCtx, need)
 				continue
 			}
@@ -1631,7 +1649,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			need := len(calleeType.Params) + 1
-			if !ensureCurrentFrameOperands(need, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(need, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
 				continue
 			}
@@ -1665,7 +1683,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: struct.new type index %d is not a struct type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(len(td.Fields), int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(len(td.Fields), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: struct.new needs %d operands", insCtx, len(td.Fields))
 				continue
 			}
@@ -1720,7 +1738,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: struct.get field index %d out of range", insCtx, ins.FieldIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: struct.get needs 1 operand", insCtx)
 				continue
 			}
@@ -1749,7 +1767,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: struct.get_s requires packed field type", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: struct.get_s needs 1 operand", insCtx)
 				continue
 			}
@@ -1778,7 +1796,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: struct.get_u requires packed field type", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: struct.get_u needs 1 operand", insCtx)
 				continue
 			}
@@ -1807,7 +1825,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: immutable field", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: struct.set needs 2 operands", insCtx)
 				continue
 			}
@@ -1823,7 +1841,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(len(stack) - 2)
 		case InstrArrayLen:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.len needs 1 operand", insCtx)
 				continue
 			}
@@ -1846,7 +1864,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.new_default requires defaultable element type", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.new_default needs 1 operand", insCtx)
 				continue
 			}
@@ -1865,7 +1883,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.new type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.new needs 2 operands", insCtx)
 				continue
 			}
@@ -1890,7 +1908,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.new_fixed type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(int(ins.FixedCount), int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(int(ins.FixedCount), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.new_fixed needs %d operands", insCtx, ins.FixedCount)
 				continue
 			}
@@ -1923,7 +1941,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.new_data data index %d out of range", insCtx, ins.DataIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.new_data needs 2 operands", insCtx)
 				continue
 			}
@@ -1952,7 +1970,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.new_elem needs 2 operands", insCtx)
 				continue
 			}
@@ -1984,7 +2002,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.init_data data index %d out of range", insCtx, ins.DataIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(4, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.init_data needs 4 operands", insCtx)
 				continue
 			}
@@ -2021,7 +2039,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(4, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.init_elem needs 4 operands", insCtx)
 				continue
 			}
@@ -2045,7 +2063,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.get type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.get needs 2 operands", insCtx)
 				continue
 			}
@@ -2074,7 +2092,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: %s requires packed array element type", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2103,7 +2121,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array.set requires mutable array", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.set needs 3 operands", insCtx)
 				continue
 			}
@@ -2136,7 +2154,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: immutable array", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(4, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.fill needs 4 operands", insCtx)
 				continue
 			}
@@ -2186,7 +2204,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: array types do not match", insCtx)
 				continue
 			}
-			if !ensureCurrentFrameOperands(5, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(5, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: array.copy needs 5 operands", insCtx)
 				continue
 			}
@@ -2210,7 +2228,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(len(stack) - 5)
 		case InstrRefEq:
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.eq needs 2 operands", insCtx)
 				continue
 			}
@@ -2222,7 +2240,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 2)
 			appendStackValue(validatedValueFromType(ValueTypeI32))
 		case InstrRefTest:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.test needs 1 operand", insCtx)
 				continue
 			}
@@ -2232,7 +2250,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrRefCast:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.cast needs 1 operand", insCtx)
 				continue
 			}
@@ -2242,7 +2260,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
 		case InstrRefI31:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.i31 needs 1 operand", insCtx)
 				continue
 			}
@@ -2252,7 +2270,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeI31(false)))
 		case InstrExternConvertAny:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: extern.convert_any needs 1 operand", insCtx)
 				continue
 			}
@@ -2263,7 +2281,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeExtern(got.Type.Nullable)))
 		case InstrAnyConvertExtern:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: any.convert_extern needs 1 operand", insCtx)
 				continue
 			}
@@ -2274,7 +2292,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeAny(got.Type.Nullable)))
 		case InstrI31GetS:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i31.get_s needs 1 operand", insCtx)
 				continue
 			}
@@ -2284,7 +2302,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI31GetU:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i31.get_u needs 1 operand", insCtx)
 				continue
 			}
@@ -2310,13 +2328,13 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			appendStackType(ValueTypeV128)
 
 		case InstrDrop:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: drop needs 1 operand", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 1)
 		case InstrSelect:
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: select needs 3 operands", insCtx)
 				continue
 			}
@@ -2351,7 +2369,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i32.load needs 1 operand", insCtx)
 				continue
 			}
@@ -2370,7 +2388,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i64.load needs 1 operand", insCtx)
 				continue
 			}
@@ -2389,7 +2407,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f32.load needs 1 operand", insCtx)
 				continue
 			}
@@ -2408,7 +2426,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f64.load needs 1 operand", insCtx)
 				continue
 			}
@@ -2427,7 +2445,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2462,7 +2480,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2485,7 +2503,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2504,7 +2522,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2523,7 +2541,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i32.store needs 2 operands", insCtx)
 				continue
 			}
@@ -2542,7 +2560,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i64.store needs 2 operands", insCtx)
 				continue
 			}
@@ -2561,7 +2579,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2580,7 +2598,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2599,7 +2617,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f32.store needs 2 operands", insCtx)
 				continue
 			}
@@ -2618,7 +2636,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f64.store needs 2 operands", insCtx)
 				continue
 			}
@@ -2637,7 +2655,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: v128.store needs 2 operands", insCtx)
 				continue
 			}
@@ -2666,7 +2684,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: memory.grow needs 1 operand", insCtx)
 				continue
 			}
@@ -2688,7 +2706,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: memory.copy source memory index %d out of range", insCtx, ins.SourceMemoryIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: memory.copy needs 3 operands", insCtx)
 				continue
 			}
@@ -2713,7 +2731,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: memory.init needs 3 operands", insCtx)
 				continue
 			}
@@ -2732,7 +2750,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: memory.fill needs 3 operands", insCtx)
 				continue
 			}
@@ -2754,7 +2772,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			_ = target
 			markCurrentFrameUnreachable()
 		case InstrBrIf:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_if needs 1 i32 condition operand", insCtx)
 				continue
 			}
@@ -2770,7 +2788,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				}
 			}
 		case InstrBrOnNull:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_on_null needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2816,7 +2834,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 1)
 			appendStackValue(refinedNonNullValue(refVal))
 		case InstrBrOnNonNull:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_on_non_null needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2868,7 +2886,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(len(stack) - 1)
 		case InstrBrOnCast:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_on_cast needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2923,7 +2941,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(diffRefType(ins.SourceRefType, ins.RefType)))
 		case InstrBrOnCastFail:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_on_cast_fail needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2979,7 +2997,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
 		case InstrBrTable:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
 				continue
 			}
@@ -3046,7 +3064,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU,
 			InstrI32And, InstrI32Or, InstrI32Xor, InstrI32Rotl, InstrI32Rotr:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3060,7 +3078,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		case InstrI32Eq, InstrI32Ne, InstrI32LtS, InstrI32LtU, InstrI32LeS, InstrI32LeU,
 			InstrI32GtS, InstrI32GtU, InstrI32GeS, InstrI32GeU:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3071,7 +3089,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
 		case InstrI32Eqz:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i32.eqz needs 1 operand", insCtx)
 				continue
 			}
@@ -3082,7 +3100,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			// i32.eqz replaces i32 with i32 at top-of-stack.
 		case InstrI32Clz, InstrI32Ctz, InstrI32Popcnt, InstrI32Extend8S, InstrI32Extend16S:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3096,7 +3114,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU,
 			InstrI64And, InstrI64Or, InstrI64Xor, InstrI64Rotl, InstrI64Rotr:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3110,7 +3128,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		case InstrI64Eq, InstrI64Ne, InstrI64LtS, InstrI64LtU, InstrI64GtS, InstrI64GtU,
 			InstrI64LeS, InstrI64LeU, InstrI64GeS, InstrI64GeU:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3121,7 +3139,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
 		case InstrI64Eqz:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i64.eqz needs 1 operand", insCtx)
 				continue
 			}
@@ -3132,7 +3150,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI64Clz, InstrI64Ctz, InstrI64Popcnt, InstrI64Extend8S, InstrI64Extend16S, InstrI64Extend32S:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3143,7 +3161,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			// i64 unary operators preserve i64 on stack.
 
 		case InstrI32WrapI64:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i32.wrap_i64 needs 1 operand", insCtx)
 				continue
 			}
@@ -3155,7 +3173,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 		case InstrI64ExtendI32S, InstrI64ExtendI32U:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3166,7 +3184,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
 
 		case InstrF32ConvertI32S:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
 				continue
 			}
@@ -3177,7 +3195,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
 
 		case InstrF64ConvertI64S:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
 				continue
 			}
@@ -3189,7 +3207,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3202,7 +3220,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest, InstrF32Neg:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3213,7 +3231,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			// Unary f32 operators preserve top-of-stack type.
 		case InstrF32Eq, InstrF32Lt, InstrF32Gt, InstrF32Ne:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3226,7 +3244,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 		case InstrF64Add, InstrF64Sub, InstrF64Mul, InstrF64Div, InstrF64Min, InstrF64Max:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3239,7 +3257,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 
 		case InstrF64Sqrt, InstrF64Ceil, InstrF64Floor, InstrF64Trunc, InstrF64Nearest, InstrF64Neg:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3250,7 +3268,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			// Unary f64 operators preserve top-of-stack type.
 		case InstrF64Eq, InstrF64Le:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3272,7 +3290,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			if !lanesOK {
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i8x16.shuffle needs 2 operands", insCtx)
 				continue
 			}
@@ -3283,7 +3301,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
 		case InstrI8x16Swizzle:
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i8x16.swizzle needs 2 operands", insCtx)
 				continue
 			}
@@ -3298,7 +3316,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrI32x4AllTrue, InstrI32x4Bitmask,
 			InstrI64x2AllTrue, InstrI64x2Bitmask:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3308,7 +3326,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrV128Not:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: v128.not needs 1 operand", insCtx)
 				continue
 			}
@@ -3318,7 +3336,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 		case InstrV128And, InstrV128AndNot, InstrV128Or, InstrV128Xor:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3333,7 +3351,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrI32x4Shl, InstrI32x4ShrS, InstrI32x4ShrU,
 			InstrI64x2Shl, InstrI64x2ShrS, InstrI64x2ShrU:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3356,7 +3374,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			case InstrF64x2Splat:
 				operandType = ValueTypeF64
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3398,7 +3416,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3436,7 +3454,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
 				continue
 			}
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3461,7 +3479,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrF64x2Eq, InstrF64x2Ne, InstrF64x2Lt, InstrF64x2Gt, InstrF64x2Le, InstrF64x2Ge,
 			InstrF64x2Add, InstrF64x2Sub, InstrF64x2Mul, InstrF64x2Div, InstrF64x2Min, InstrF64x2Max, InstrF64x2Pmin, InstrF64x2Pmax:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
@@ -3484,7 +3502,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			InstrF32x4DemoteF64x2Zero, InstrF64x2PromoteLowF32x4,
 			InstrI32x4Neg:
 			name := instrName(ins.Kind)
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
@@ -3493,7 +3511,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 		case InstrV128Bitselect:
-			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(3, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: v128.bitselect needs 3 operands", insCtx)
 				continue
 			}
@@ -3504,7 +3522,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			truncateStack(len(stack) - 3)
 			appendStackType(ValueTypeV128)
 		case InstrI32ReinterpretF32:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i32.reinterpret_f32 needs 1 operand", insCtx)
 				continue
 			}
@@ -3514,7 +3532,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI64ReinterpretF64:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: i64.reinterpret_f64 needs 1 operand", insCtx)
 				continue
 			}
@@ -3524,7 +3542,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
 		case InstrF32ReinterpretI32:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f32.reinterpret_i32 needs 1 operand", insCtx)
 				continue
 			}
@@ -3534,7 +3552,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
 		case InstrF64ReinterpretI64:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: f64.reinterpret_i64 needs 1 operand", insCtx)
 				continue
 			}
@@ -3557,7 +3575,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			appendStackValue(validatedValue{Type: RefTypeIndexed(typeIdx, false)})
 		case InstrRefIsNull:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.is_null needs 1 operand", insCtx)
 				continue
 			}
@@ -3568,7 +3586,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrRefAsNonNull:
-			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: ref.as_non_null needs 1 operand", insCtx)
 				continue
 			}

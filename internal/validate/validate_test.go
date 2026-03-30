@@ -55,7 +55,7 @@ func makeValidAddModule() *Module {
 
 func TestValidateModule_ValidAdd(t *testing.T) {
 	m := makeValidAddModule()
-	if err := validate.ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m, nil); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
@@ -64,7 +64,7 @@ func TestValidateModule_LocalIndexOutOfRange(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body[1].LocalIndex = 99
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -79,7 +79,7 @@ func TestValidateModule_IncludesInstructionSourceLocation(t *testing.T) {
 	m.Funcs[0].Body[1].LocalIndex = 99
 	m.Funcs[0].Body[1].SourceLoc = "12:34"
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -93,7 +93,7 @@ func TestValidateModule_StackUnderflow(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body = []Instruction{{Kind: InstrI32Add}, {Kind: InstrEnd}}
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -111,7 +111,7 @@ func TestValidateModule_ResultArityMismatch(t *testing.T) {
 		{Kind: InstrEnd},
 	}
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -126,7 +126,7 @@ func TestValidateModule_ExportIndexOutOfRange(t *testing.T) {
 	m := makeValidAddModule()
 	m.Exports[0].Index = 5
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -145,7 +145,7 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 		Index: 42,
 	})
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want diagnostics")
 	}
@@ -198,7 +198,7 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 		},
 	}
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -232,7 +232,7 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 		},
 	}
 
-	if err := validate.ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m, nil); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
@@ -244,7 +244,7 @@ func TestValidateModule_Memory64PageLimit(t *testing.T) {
 		},
 	}
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -271,7 +271,7 @@ func TestValidateModule_SIMDMemoryOps(t *testing.T) {
 		}},
 	}
 
-	if err := validate.ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m, nil); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 }
@@ -299,13 +299,13 @@ func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
 		}},
 	}
 
-	if err := validate.ValidateModule(m64); err != nil {
+	if err := validate.ValidateModule(m64, nil); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 
 	m32 := *m64
 	m32.Memories = []Memory{{AddressType: ValueTypeI32, Min: 1}}
-	err := validate.ValidateModule(&m32)
+	err := validate.ValidateModule(&m32, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -331,13 +331,13 @@ func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
 		}},
 	}
 
-	if err := validate.ValidateModule(m64); err != nil {
+	if err := validate.ValidateModule(m64, nil); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 
 	m32 := *m64
 	m32.Memories = []Memory{{AddressType: ValueTypeI32, Min: 1}}
-	err := validate.ValidateModule(&m32)
+	err := validate.ValidateModule(&m32, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}
@@ -362,7 +362,7 @@ func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
 		}},
 	}
 
-	err := validate.ValidateModule(m)
+	err := validate.ValidateModule(m, nil)
 	if err == nil {
 		t.Fatal("ValidateModule returned nil error, want failure")
 	}

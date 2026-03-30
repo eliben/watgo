@@ -23,12 +23,12 @@ func TestPipelineEncodeAddModule(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, lowerErr := textformat.LowerModule(ast)
+	m, hints, lowerErr := textformat.LowerModuleWithHints(ast)
 	if lowerErr != nil {
 		t.Fatalf("LowerModule error: %v", lowerErr)
 	}
 
-	validateErr := validate.ValidateModule(m)
+	validateErr := validate.ValidateModule(m, hints)
 	if validateErr != nil {
 		t.Fatalf("ValidateModule error: %v", validateErr)
 	}
@@ -68,11 +68,11 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := textformat.LowerModule(ast)
+	m, hints, err := textformat.LowerModuleWithHints(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
-	if err := validate.ValidateModule(m); err != nil {
+	if err := validate.ValidateModule(m, hints); err != nil {
 		t.Fatalf("ValidateModule error: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeModule error: %v", err)
 	}
-	if err := validate.ValidateModule(decoded); err != nil {
+	if err := validate.ValidateModule(decoded, nil); err != nil {
 		t.Fatalf("ValidateModule(decoded) error: %v", err)
 	}
 

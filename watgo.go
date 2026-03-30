@@ -43,7 +43,7 @@ func DecodeWASM(src []byte) (*wasmir.Module, error) {
 // instruction sequences. Validation errors are typically returned as
 // diag.ErrorList values.
 func ValidateModule(m *wasmir.Module) error {
-	return validate.ValidateModule(m)
+	return validate.ValidateModule(m, nil)
 }
 
 // EncodeWASM encodes semantic IR as binary WebAssembly.
@@ -63,11 +63,15 @@ func EncodeWASM(m *wasmir.Module) ([]byte, error) {
 // This is the public end-to-end convenience API when the caller wants binary
 // output directly from WAT input.
 func CompileWATToWASM(src []byte) ([]byte, error) {
-	m, err := ParseWAT(src)
+	tm, err := textformat.ParseModule(string(src))
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateModule(m); err != nil {
+	m, hints, err := textformat.LowerModuleWithHints(tm)
+	if err != nil {
+		return nil, err
+	}
+	if err := validate.ValidateModule(m, hints); err != nil {
 		return nil, err
 	}
 	return EncodeWASM(m)

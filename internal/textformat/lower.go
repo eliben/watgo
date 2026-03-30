@@ -8,6 +8,7 @@ import (
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
 	"github.com/eliben/watgo/internal/numlit"
+	"github.com/eliben/watgo/internal/valhint"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -19,6 +20,9 @@ type moduleLowerer struct {
 	// successfully lowered types, functions, and exports are appended here as
 	// we walk the AST, even if other parts fail and diagnostics are collected.
 	out *wasmir.Module
+
+	// hints carries optional validator-side metadata aligned to out.
+	hints *valhint.ModuleHints
 
 	// diags accumulates every lowering diagnostic discovered for the module.
 	// Lowering keeps going after errors so callers get a complete error list in
@@ -99,6 +103,9 @@ type functionLowerer struct {
 	// body stores lowered semantic instructions as they are produced.
 	body []wasmir.Instruction
 
+	// bodyHints stores optional validator hints aligned 1:1 with body.
+	bodyHints []valhint.InstrHints
+
 	// localsByName maps text local identifiers (for params and locals) to their
 	// resolved local indices.
 	localsByName map[string]uint32
@@ -125,25 +132,39 @@ type labelScope struct {
 
 // LowerModule lowers astm (a parsed text-format module) into a semantic
 // wasmir.Module.
-// It returns the lowered module (possibly partial) and nil on success.
-// On any failure, it returns diag.ErrorList.
+//
+// This convenience wrapper discards optional validator hints. Internal callers
+// that lower WAT and then validate it should prefer [LowerModuleWithHints].
 func LowerModule(astm *Module) (*wasmir.Module, error) {
+	m, _, err := LowerModuleWithHints(astm)
+	return m, err
+}
+
+// LowerModuleWithHints lowers astm into semantic IR plus optional validator
+// hints that preserve a small amount of folded-source shape.
+//
+// The returned hints are aligned to the lowered module's defined functions and
+// instructions. Callers that validate a freshly lowered text module should pass
+// them to internal/validate. Callers that do not validate immediately, or that
+// only need the lowered module, may ignore them.
+func LowerModuleWithHints(astm *Module) (*wasmir.Module, *valhint.ModuleHints, error) {
 	if astm == nil {
-		return nil, diag.Fromf("module is nil")
+		return nil, nil, diag.Fromf("module is nil")
 	}
 
 	l := newModuleLowerer()
 	l.lowerModule(astm)
 	if l.diags.HasAny() {
-		return l.out, l.diags
+		return l.out, l.hints, l.diags
 	}
-	return l.out, nil
+	return l.out, l.hints, nil
 }
 
 // newModuleLowerer creates a module lowerer with an empty output module.
 func newModuleLowerer() *moduleLowerer {
 	return &moduleLowerer{
 		out:               &wasmir.Module{},
+		hints:             &valhint.ModuleHints{},
 		funcsByName:       map[string]uint32{},
 		typesByName:       map[string]uint32{},
 		globalsByName:     map[string]uint32{},
@@ -882,6 +903,7 @@ func newFunctionLowerer(mod *moduleLowerer, funcIdx int, fn *Function) *function
 		fn:           fn,
 		localsByName: map[string]uint32{},
 		body:         make([]wasmir.Instruction, 0, len(fn.Instrs)+1),
+		bodyHints:    make([]valhint.InstrHints, 0, len(fn.Instrs)+1),
 		labelStack:   make([]labelScope, 0, 8),
 	}
 }
@@ -916,7 +938,7 @@ func (fl *functionLowerer) lower() {
 	fl.lowerLocals()
 
 	fl.lowerInstrs()
-	fl.body = append(fl.body, wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fl.fn.loc.String()})
+	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: fl.fn.loc.String()})
 
 	fl.mod.out.Funcs = append(fl.mod.out.Funcs, wasmir.Function{
 		TypeIdx:    typeIdx,
@@ -926,6 +948,9 @@ func (fl *functionLowerer) lower() {
 		Locals:     fl.locals,
 		Body:       fl.body,
 		SourceLoc:  fl.fn.loc.String(),
+	})
+	fl.mod.hints.Funcs = append(fl.mod.hints.Funcs, valhint.FuncHints{
+		Instrs: append([]valhint.InstrHints(nil), fl.bodyHints...),
 	})
 
 	if fl.fn.Export != "" {
@@ -1863,11 +1888,10 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
 		return true
 	}
-	ins := wasmir.Instruction{
-		Kind:               kind,
-		OperandCount:       uint8(pi.explicitInstrArgs),
-		BottomOperandCount: uint8(pi.bottomInstrArgs),
-		SourceLoc:          instrLoc,
+	ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
+	hint := valhint.InstrHints{
+		ExplicitInstrArgs: uint8(pi.explicitInstrArgs),
+		BottomInstrArgs:   uint8(pi.bottomInstrArgs),
 	}
 	prevDiagCount := len(fl.mod.diags)
 	if spec.decode != nil && !spec.decode(fl, &ins, pi.Operands) {
@@ -1879,7 +1903,7 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 		}
 		return true
 	}
-	fl.emitInstr(ins)
+	fl.emitInstrWithHint(ins, hint)
 	return true
 }
 
@@ -2799,7 +2823,14 @@ func decodeShuffleLaneOperands(fl *functionLowerer, ins *wasmir.Instruction, ope
 
 // emitInstr appends one lowered instruction to the current function body.
 func (fl *functionLowerer) emitInstr(instr wasmir.Instruction) {
+	fl.emitInstrWithHint(instr, valhint.InstrHints{})
+}
+
+// emitInstrWithHint appends one lowered instruction plus optional validator
+// hint metadata aligned to the same body index.
+func (fl *functionLowerer) emitInstrWithHint(instr wasmir.Instruction, hint valhint.InstrHints) {
 	fl.body = append(fl.body, instr)
+	fl.bodyHints = append(fl.bodyHints, hint)
 }
 
 // pushLabel pushes one active structured control label.

@@ -1096,15 +1096,6 @@ type Instruction struct {
 	// V128Const is the raw 16-byte immediate for InstrV128Const.
 	V128Const [16]byte
 
-	// OperandCount records how many explicit folded operands this instruction had
-	// in text format source. Decoders leave it at zero.
-	OperandCount uint8
-
-	// BottomOperandCount is the subset of OperandCount that came from explicit
-	// folded child instructions which are statically polymorphic bottom, such as
-	// `unreachable`. Decoders leave it at zero.
-	BottomOperandCount uint8
-
 	// SourceLoc is an optional source location string used in diagnostics.
 	SourceLoc string
 }
