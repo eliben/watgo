@@ -11,6 +11,7 @@ import (
 const (
 	maxMemoryPages32 uint64 = 65536
 	maxMemoryPages64 uint64 = 1 << 48
+	maxMemoryOffset32 uint64 = 1<<32 - 1
 	maxTableElems32  uint64 = 1<<32 - 1
 )
 
@@ -813,8 +814,15 @@ func ValidateModule(m *Module) error {
 	for i, f := range m.Funcs {
 		for j, ins := range f.Body {
 			natural, ok := naturalMemoryAlignExponent(ins.Kind)
-			if ok && ins.MemoryAlign > natural {
+			if !ok {
+				continue
+			}
+			if ins.MemoryAlign > natural {
 				diags.Addf("func[%d] instruction[%d]: alignment must not be larger than natural", i, j)
+			}
+			if int(ins.MemoryIndex) < len(m.Memories) && memoryAddressType(m, ins.MemoryIndex) != ValueTypeI64 &&
+				ins.MemoryOffset > maxMemoryOffset32 {
+				diags.Addf("func[%d] instruction[%d]: offset out of range", i, j)
 			}
 		}
 	}
