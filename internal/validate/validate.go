@@ -697,7 +697,7 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 //
 // hints may be nil. When provided, they must be aligned to m's defined
 // functions and instruction bodies and typically come from
-// textformat.LowerModuleWithHints. Binary-decoded modules and callers that do
+// textformat.LowerModule. Binary-decoded modules and callers that do
 // not have folded-source metadata should pass nil.
 //
 // Validation includes module-level checks (type/export indices) and function

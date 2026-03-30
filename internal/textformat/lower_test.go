@@ -41,7 +41,7 @@ func TestLowerModule_AddFunction(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, err = LowerModule(ast)
+	_, _, err = LowerModule(ast)
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
@@ -128,7 +128,7 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 		}},
 	}
 
-	_, err := LowerModule(ast)
+	_, _, err := LowerModule(ast)
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
@@ -154,7 +154,7 @@ func TestLowerModule_SIMDEndianFlipSlice(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestLowerModule_SIMDV128ConstI16x8(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, err = LowerModule(ast)
+	_, _, err = LowerModule(ast)
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want diagnostics")
 	}
@@ -255,7 +255,7 @@ func TestLowerModule_NamedFunctionInDiagnostics(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	_, err = LowerModule(ast)
+	_, _, err = LowerModule(ast)
 	if err == nil {
 		t.Fatal("LowerModule returned nil error, want failure")
 	}
@@ -280,7 +280,7 @@ func TestLowerModule_LowersCallByName(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestLowerModule_LowersPassiveDataAndMemoryInit(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestLowerModule_LowersFoldedIf(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestLowerModule_Memory64DataOffset(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestLowerModule_Memory64MemArgOffset(t *testing.T) {
 		t.Fatalf("ParseModule failed: %v", err)
 	}
 
-	m, err := LowerModule(ast)
+	m, _, err := LowerModule(ast)
 	if err != nil {
 		t.Fatalf("LowerModule error: %v", err)
 	}

@@ -21,7 +21,8 @@ func ParseWAT(src []byte) (*wasmir.Module, error) {
 		return nil, err
 	}
 
-	return textformat.LowerModule(tm)
+	m, _, err := textformat.LowerModule(tm)
+	return m, err
 }
 
 // DecodeWASM decodes binary WebAssembly into semantic IR.
@@ -67,7 +68,7 @@ func CompileWATToWASM(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, hints, err := textformat.LowerModuleWithHints(tm)
+	m, hints, err := textformat.LowerModule(tm)
 	if err != nil {
 		return nil, err
 	}

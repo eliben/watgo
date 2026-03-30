@@ -130,24 +130,14 @@ type labelScope struct {
 	name string
 }
 
-// LowerModule lowers astm (a parsed text-format module) into a semantic
-// wasmir.Module.
-//
-// This convenience wrapper discards optional validator hints. Internal callers
-// that lower WAT and then validate it should prefer [LowerModuleWithHints].
-func LowerModule(astm *Module) (*wasmir.Module, error) {
-	m, _, err := LowerModuleWithHints(astm)
-	return m, err
-}
-
-// LowerModuleWithHints lowers astm into semantic IR plus optional validator
-// hints that preserve a small amount of folded-source shape.
+// LowerModule lowers astm into semantic IR plus optional validator hints that
+// preserve a small amount of folded-source shape.
 //
 // The returned hints are aligned to the lowered module's defined functions and
 // instructions. Callers that validate a freshly lowered text module should pass
 // them to internal/validate. Callers that do not validate immediately, or that
 // only need the lowered module, may ignore them.
-func LowerModuleWithHints(astm *Module) (*wasmir.Module, *valhint.ModuleHints, error) {
+func LowerModule(astm *Module) (*wasmir.Module, *valhint.ModuleHints, error) {
 	if astm == nil {
 		return nil, nil, diag.Fromf("module is nil")
 	}
