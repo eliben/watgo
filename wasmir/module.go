@@ -617,8 +617,16 @@ const (
 	InstrI64Extend16S
 	InstrI64Extend32S
 	InstrI32WrapI64
+	InstrI32TruncF32S
+	InstrI32TruncF32U
+	InstrI32TruncF64S
+	InstrI32TruncF64U
 	InstrI64ExtendI32S
 	InstrI64ExtendI32U
+	InstrI64TruncF32S
+	InstrI64TruncF32U
+	InstrI64TruncF64S
+	InstrI64TruncF64U
 	InstrF32ConvertI32S
 	InstrF64ConvertI64S
 	InstrF32Add

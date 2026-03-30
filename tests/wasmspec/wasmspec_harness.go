@@ -2466,6 +2466,9 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "integer overflow" {
 		return strings.Contains(gotLower, "divide result unrepresentable")
 	}
+	if wantLower == "invalid conversion to integer" {
+		return strings.Contains(gotLower, "float unrepresentable in integer range")
+	}
 	if wantLower == "out of bounds memory access" {
 		return strings.Contains(gotLower, "memory access out of bounds") ||
 			strings.Contains(gotLower, "data segment out of bounds")
