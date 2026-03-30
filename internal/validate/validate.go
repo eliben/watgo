@@ -765,15 +765,15 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
-	if m.HasStart {
-		if m.StartFuncIndex >= totalFuncCount {
+	if m.StartFuncIndex != nil {
+		if *m.StartFuncIndex >= totalFuncCount {
 			diags.Addf("start: unknown function")
 		} else {
 			var startTypeIdx uint32
-			if m.StartFuncIndex < funcImportCount {
-				startTypeIdx = funcImportTypeIdx[m.StartFuncIndex]
+			if *m.StartFuncIndex < funcImportCount {
+				startTypeIdx = funcImportTypeIdx[*m.StartFuncIndex]
 			} else {
-				startTypeIdx = m.Funcs[m.StartFuncIndex-funcImportCount].TypeIdx
+				startTypeIdx = m.Funcs[*m.StartFuncIndex-funcImportCount].TypeIdx
 			}
 			if int(startTypeIdx) >= len(m.Types) || m.Types[startTypeIdx].Kind != TypeDefKindFunc {
 				diags.Addf("start: unknown function")
@@ -865,10 +865,10 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		if addrType == ValueTypeI32 && table.Min > maxTableElems32 {
 			diags.Addf("table[%d]: table size", i)
 		}
-		if table.HasMax && table.Min > table.Max {
+		if table.Max != nil && table.Min > *table.Max {
 			diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
 		}
-		if addrType == ValueTypeI32 && table.HasMax && table.Max > maxTableElems32 {
+		if addrType == ValueTypeI32 && table.Max != nil && *table.Max > maxTableElems32 {
 			diags.Addf("table[%d]: table size", i)
 		}
 		if len(table.Init) > 0 {
@@ -892,11 +892,11 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		if mem.Min > maxPages {
 			diags.Addf("memory[%d]: memory size", i)
 		}
-		if mem.HasMax {
-			if mem.Max > maxPages {
+		if mem.Max != nil {
+			if *mem.Max > maxPages {
 				diags.Addf("memory[%d]: memory size", i)
 			}
-			if mem.Min > mem.Max {
+			if mem.Min > *mem.Max {
 				diags.Addf("memory[%d]: size minimum must not be greater than maximum", i)
 			}
 		}
@@ -1235,8 +1235,8 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			ft := m.Types[ins.BlockTypeIndex]
 			return ft.Params, ft.Results, true
 		}
-		if ins.BlockHasResult {
-			return nil, []ValueType{ins.BlockType}, true
+		if ins.BlockType != nil {
+			return nil, []ValueType{*ins.BlockType}, true
 		}
 		return nil, nil, true
 	}

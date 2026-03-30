@@ -208,11 +208,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 
 // encodeStartSection emits section 8 when the module has a start function.
 func encodeStartSection(m *wasmir.Module) []byte {
-	if m == nil || !m.HasStart {
+	if m == nil || m.StartFuncIndex == nil {
 		return nil
 	}
 	var payload bytes.Buffer
-	writeULEB128(&payload, m.StartFuncIndex)
+	writeULEB128(&payload, *m.StartFuncIndex)
 	return payload.Bytes()
 }
 
@@ -422,7 +422,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 				diags.Addf("table[%d]: unsupported ref type %s", i, tb.RefType)
 				payload.WriteByte(refTypeFuncRefCode)
 			}
-			writeLimits(&payload, tb.Min, tb.HasMax, tb.Max)
+			writeLimits(&payload, tb.Min, tb.Max != nil, derefUint64(tb.Max))
 			encodeConstExprInstrs(&payload, fmt.Sprintf("table[%d]", i), tb.Init, diags)
 			continue
 		}
@@ -984,9 +984,9 @@ func encodeBlockType(out *bytes.Buffer, funcIdx int, instrIdx int, opname string
 		writeSLEB128(out, int64(instr.BlockTypeIndex))
 		return
 	}
-	if instr.BlockHasResult {
-		if !encodeValueType(out, instr.BlockType) {
-			diags.Addf("func[%d] instruction[%d]: unsupported %s result type %s", funcIdx, instrIdx, opname, instr.BlockType)
+	if instr.BlockType != nil {
+		if !encodeValueType(out, *instr.BlockType) {
+			diags.Addf("func[%d] instruction[%d]: unsupported %s result type %s", funcIdx, instrIdx, opname, *instr.BlockType)
 			out.WriteByte(blockTypeEmptyCode)
 		}
 		return
@@ -1167,37 +1167,44 @@ func writeLimits(out *bytes.Buffer, min uint64, hasMax bool, max uint64) {
 	writeULEB64(out, min)
 }
 
+func derefUint64(v *uint64) uint64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
 func writeTableLimits(out *bytes.Buffer, table wasmir.Table) {
 	if table.AddressType == wasmir.ValueTypeI64 {
-		if table.HasMax {
+		if table.Max != nil {
 			out.WriteByte(limitsFlagMinMax64)
 			writeULEB64(out, table.Min)
-			writeULEB64(out, table.Max)
+			writeULEB64(out, *table.Max)
 			return
 		}
 		out.WriteByte(limitsFlagMinOnly64)
 		writeULEB64(out, table.Min)
 		return
 	}
-	writeLimits(out, table.Min, table.HasMax, table.Max)
+	writeLimits(out, table.Min, table.Max != nil, derefUint64(table.Max))
 }
 
 func writeMemoryLimits(out *bytes.Buffer, mem wasmir.Memory) {
 	if mem.AddressType == wasmir.ValueTypeI64 {
-		if mem.HasMax {
+		if mem.Max != nil {
 			out.WriteByte(limitsFlagMinMax64)
 			writeULEB64(out, mem.Min)
-			writeULEB64(out, mem.Max)
+			writeULEB64(out, *mem.Max)
 			return
 		}
 		out.WriteByte(limitsFlagMinOnly64)
 		writeULEB64(out, mem.Min)
 		return
 	}
-	if mem.HasMax {
+	if mem.Max != nil {
 		out.WriteByte(limitsFlagMinMax)
 		writeULEB64(out, mem.Min)
-		writeULEB64(out, mem.Max)
+		writeULEB64(out, *mem.Max)
 		return
 	}
 	out.WriteByte(limitsFlagMinOnly)

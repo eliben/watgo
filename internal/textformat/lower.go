@@ -198,8 +198,7 @@ func (l *moduleLowerer) collectStartDecl(astm *Module) {
 		l.diags.Addf("start: unknown function %q", astm.Start.FuncRef)
 		return
 	}
-	l.out.HasStart = true
-	l.out.StartFuncIndex = startIndex
+	l.out.StartFuncIndex = &startIndex
 }
 
 // collectElemDecls lowers module-level elem declarations.
@@ -428,7 +427,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		if len(td.ElemExprs) > 0 && min < uint64(len(td.ElemExprs)) {
 			min = uint64(len(td.ElemExprs))
 		}
-		if td.HasMax && td.Max < min {
+		if td.Max != nil && *td.Max < min {
 			l.diags.Addf("table[%d]: size minimum must not be greater than maximum", i)
 			continue
 		}
@@ -441,9 +440,8 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 		tb := wasmir.Table{
 			AddressType: addressType,
 			Min:         min,
-			HasMax:      td.HasMax,
-			Max:         td.Max,
 			RefType:     refType,
+			Max:         td.Max,
 		}
 		if td.ImportModule != "" {
 			tb.ImportModule = td.ImportModule
@@ -565,7 +563,6 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 		mem := wasmir.Memory{
 			AddressType:  addressType,
 			Min:          md.Min,
-			HasMax:       md.HasMax,
 			Max:          md.Max,
 			ImportModule: md.ImportModule,
 			ImportName:   md.ImportName,
@@ -1589,8 +1586,8 @@ func (fl *functionLowerer) lowerFoldedIf(fi *FoldedInstr) {
 	case len(finalResults) == 1:
 		// A plain single-result `if` can use the compact valtype blocktype:
 		//   (if (result i32) ...)
-		ins.BlockHasResult = true
-		ins.BlockType = finalResults[0]
+		vt := finalResults[0]
+		ins.BlockType = &vt
 	}
 	fl.emitInstr(ins)
 	fl.pushLabel(labelName)
@@ -1772,11 +1769,11 @@ func (fl *functionLowerer) lowerFoldedBlock(fi *FoldedInstr, isLoop bool) {
 		})
 	case len(finalResults) == 1:
 		// Single-result blocktype can be encoded directly as a value type.
+		vt := finalResults[0]
 		fl.emitInstr(wasmir.Instruction{
-			Kind:           kind,
-			BlockHasResult: true,
-			BlockType:      finalResults[0],
-			SourceLoc:      fi.loc.String(),
+			Kind:      kind,
+			BlockType: &vt,
+			SourceLoc: fi.loc.String(),
 		})
 	default:
 		// No signature annotation => empty blocktype.
@@ -2263,8 +2260,8 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 				fl.diagf(pi.Operands[0].Loc(), "invalid if result type")
 				return
 			}
-			ins.BlockHasResult = true
-			ins.BlockType = vt
+			vtCopy := vt
+			ins.BlockType = &vtCopy
 		}
 		fl.emitInstr(ins)
 	case "block", "loop":
@@ -2283,8 +2280,8 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 				fl.diagf(pi.Operands[0].Loc(), "invalid %s result type", pi.Name)
 				return
 			}
-			ins.BlockHasResult = true
-			ins.BlockType = vt
+			vtCopy := vt
+			ins.BlockType = &vtCopy
 		}
 		fl.emitInstr(ins)
 	case "table.init":

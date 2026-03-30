@@ -221,7 +221,7 @@ func TestValidateModule_IfElseWithResult(t *testing.T) {
 				TypeIdx: 0,
 				Body: []Instruction{
 					{Kind: InstrI32Const, I32Const: 1},
-					{Kind: InstrIf, BlockHasResult: true, BlockType: ValueTypeI64},
+					{Kind: InstrIf, BlockType: func() *ValueType { vt := ValueTypeI64; return &vt }()},
 					{Kind: InstrI64Const, I64Const: 10},
 					{Kind: InstrElse},
 					{Kind: InstrI64Const, I64Const: 20},

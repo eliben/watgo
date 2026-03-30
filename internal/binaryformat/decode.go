@@ -149,8 +149,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 				diags.Addf("start section: invalid function index: %v", err)
 				break
 			}
-			out.HasStart = true
-			out.StartFuncIndex = startIndex
+			out.StartFuncIndex = &startIndex
 
 		case sectionElementID:
 			if seenElement {
@@ -439,15 +438,17 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				break
 			}
 			imp.Kind = wasmir.ExternalKindTable
-			imp.Table = wasmir.Table{
-				AddressType:  addrType,
-				Min:          min,
-				HasMax:       hasMax,
-				Max:          max,
-				RefType:      refType,
-				ImportModule: moduleName,
-				ImportName:   name,
-			}
+				table := wasmir.Table{
+					AddressType:  addrType,
+					Min:          min,
+					RefType:      refType,
+					ImportModule: moduleName,
+					ImportName:   name,
+				}
+				if hasMax {
+					table.Max = &max
+				}
+				imp.Table = table
 		case importKindMemoryCode:
 			addrType, min, hasMax, max, err := decodeMemoryLimits(r)
 			if err != nil {
@@ -455,14 +456,16 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				break
 			}
 			imp.Kind = wasmir.ExternalKindMemory
-			imp.Memory = wasmir.Memory{
-				AddressType:  addrType,
-				Min:          min,
-				HasMax:       hasMax,
-				Max:          max,
-				ImportModule: moduleName,
-				ImportName:   name,
-			}
+				mem := wasmir.Memory{
+					AddressType:  addrType,
+					Min:          min,
+					ImportModule: moduleName,
+					ImportName:   name,
+				}
+				if hasMax {
+					mem.Max = &max
+				}
+				imp.Memory = mem
 		case importKindGlobalCode:
 			ty, err := decodeValueTypeFromReader(r)
 			if err != nil {
@@ -547,7 +550,11 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid init expr: %v", i, err)
 				break
 			}
-			out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType, Init: init})
+				table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType, Init: init}
+				if hasMax {
+					table.Max = &max
+				}
+				out = append(out, table)
 			continue
 		}
 		refType, err := decodeValueTypeFromLeadingByte(r, first)
@@ -563,7 +570,11 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 			diags.Addf("table[%d]: invalid limits: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.Table{AddressType: addrType, Min: min, HasMax: hasMax, Max: max, RefType: refType})
+			table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType}
+			if hasMax {
+				table.Max = &max
+			}
+			out = append(out, table)
 	}
 	return out
 }
@@ -581,7 +592,11 @@ func decodeMemorySection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Memory
 			diags.Addf("memory[%d]: invalid limits: %v", i, err)
 			break
 		}
-		out = append(out, wasmir.Memory{AddressType: addrType, Min: min, HasMax: hasMax, Max: max})
+			mem := wasmir.Memory{AddressType: addrType, Min: min}
+			if hasMax {
+				mem.Max = &max
+			}
+			out = append(out, mem)
 	}
 	return out
 }
@@ -1558,8 +1573,7 @@ func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instru
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
-		ins.BlockHasResult = true
-		ins.BlockType = vt
+			ins.BlockType = &vt
 		return ins, nil
 	}
 	if err := r.UnreadByte(); err != nil {

@@ -631,8 +631,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 			p.emitError(sx.list[cursor].loc, "invalid table maximum size")
 			return td
 		}
-		td.HasMax = true
-		td.Max = max
+		td.Max = &max
 		cursor++
 	}
 
@@ -721,8 +720,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 			p.emitError(sx.list[cursor].loc, "invalid memory maximum size")
 			return md
 		}
-		md.HasMax = true
-		md.Max = max
+		md.Max = &max
 	}
 	return md
 }

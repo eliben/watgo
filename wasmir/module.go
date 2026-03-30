@@ -707,12 +707,9 @@ type Module struct {
 	// Exports is the list of exported definitions.
 	Exports []Export
 
-	// HasStart reports whether the module has a start function section.
-	HasStart bool
-
-	// StartFuncIndex is the module function index invoked during instantiation
-	// when HasStart is true.
-	StartFuncIndex uint32
+	// StartFuncIndex is the module function index invoked during instantiation.
+	// Nil means the module has no start function section.
+	StartFuncIndex *uint32
 
 	// Elements is the list of active element segments used to initialize tables.
 	Elements []ElementSegment
@@ -853,11 +850,8 @@ type Table struct {
 	// Min is the minimum table size in elements.
 	Min uint64
 
-	// HasMax reports whether Max is present.
-	HasMax bool
-
-	// Max is the maximum table size in elements when HasMax is true.
-	Max uint64
+	// Max is the optional maximum table size in elements.
+	Max *uint64
 
 	// RefType is the table element reference type.
 	RefType ValueType
@@ -882,11 +876,8 @@ type Memory struct {
 	// Min is the minimum memory size in 64KiB pages.
 	Min uint64
 
-	// HasMax reports whether Max is present.
-	HasMax bool
-
-	// Max is the maximum memory size in 64KiB pages when HasMax is true.
-	Max uint64
+	// Max is the optional maximum memory size in 64KiB pages.
+	Max *uint64
 
 	// ImportModule is set when this memory is imported.
 	ImportModule string
@@ -1081,12 +1072,9 @@ type Instruction struct {
 	// elem.drop.
 	ElemIndex uint32
 
-	// BlockType is the if block result type for InstrIf when BlockHasResult is
-	// true.
-	BlockType ValueType
-
-	// BlockHasResult reports whether InstrIf has an explicit result type.
-	BlockHasResult bool
+	// BlockType is the optional explicit value-type block result for structured
+	// control instructions that are not using BlockTypeUsesIndex.
+	BlockType *ValueType
 
 	// BlockTypeUsesIndex reports that structured control block type is encoded
 	// as a type index into Module.Types (multi-value block signature).

@@ -374,7 +374,7 @@ func TestLowerModule_LowersFoldedIf(t *testing.T) {
 	if body[1].Kind != wasmir.InstrI64Eqz {
 		t.Fatalf("body[1]=%#v, want i64.eqz", body[1])
 	}
-	if body[2].Kind != wasmir.InstrIf || !body[2].BlockHasResult || body[2].BlockType != wasmir.ValueTypeI64 {
+	if body[2].Kind != wasmir.InstrIf || body[2].BlockType == nil || *body[2].BlockType != wasmir.ValueTypeI64 {
 		t.Fatalf("body[2]=%#v, want if with i64 result", body[2])
 	}
 	if body[4].Kind != wasmir.InstrElse {
@@ -413,8 +413,8 @@ func TestLowerModule_Memory64DataOffset(t *testing.T) {
 	if got := m.Memories[0].Min; got != 2 {
 		t.Fatalf("memory min=%d, want 2", got)
 	}
-	if !m.Memories[0].HasMax || m.Memories[0].Max != 250000 {
-		t.Fatalf("memory max=(%t,%d), want (true,250000)", m.Memories[0].HasMax, m.Memories[0].Max)
+	if m.Memories[0].Max == nil || *m.Memories[0].Max != 250000 {
+		t.Fatalf("memory max=%v, want 250000", m.Memories[0].Max)
 	}
 
 	if len(m.Data) != 1 {

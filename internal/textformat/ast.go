@@ -98,11 +98,8 @@ type TableDecl struct {
 	// Min is the minimum table size in elements.
 	Min uint64
 
-	// HasMax reports whether a maximum table size was specified.
-	HasMax bool
-
-	// Max is the maximum table size when HasMax is true.
-	Max uint64
+	// Max is the optional maximum table size.
+	Max *uint64
 
 	// RefTy is the declared table reference element type.
 	RefTy Type
@@ -147,11 +144,8 @@ type MemoryDecl struct {
 	// Min is the minimum memory size in pages.
 	Min uint64
 
-	// HasMax reports whether a maximum memory size was specified.
-	HasMax bool
-
-	// Max is the maximum memory size in pages when HasMax is true.
-	Max uint64
+	// Max is the optional maximum memory size in pages.
+	Max *uint64
 
 	// InlineData contains raw string tokens from "(memory (data ...))" sugar.
 	InlineData []string
