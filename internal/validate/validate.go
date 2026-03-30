@@ -765,6 +765,26 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
+	if m.HasStart {
+		if m.StartFuncIndex >= totalFuncCount {
+			diags.Addf("start: unknown function")
+		} else {
+			var startTypeIdx uint32
+			if m.StartFuncIndex < funcImportCount {
+				startTypeIdx = funcImportTypeIdx[m.StartFuncIndex]
+			} else {
+				startTypeIdx = m.Funcs[m.StartFuncIndex-funcImportCount].TypeIdx
+			}
+			if int(startTypeIdx) >= len(m.Types) || m.Types[startTypeIdx].Kind != TypeDefKindFunc {
+				diags.Addf("start: unknown function")
+			} else {
+				startType := m.Types[startTypeIdx]
+				if len(startType.Params) != 0 || len(startType.Results) != 0 {
+					diags.Addf("start: start function")
+				}
+			}
+		}
+	}
 	for i, td := range m.Types {
 		if !validateTypeDefVisibility(m, uint32(i), td) {
 			diags.Addf("type[%d]: unknown type", i)

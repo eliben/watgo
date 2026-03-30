@@ -39,7 +39,20 @@ type Module struct {
 	// Exports contains parsed top-level export declarations in source order.
 	Exports []*ExportDecl
 
+	// Start is the optional module start declaration.
+	Start *StartDecl
+
 	// loc is the source location of the module form head.
+	loc location
+}
+
+// StartDecl is one module-level start declaration "(start ...)".
+type StartDecl struct {
+	// FuncRef is the raw function reference token text from the declaration.
+	// It is an identifier or numeric index.
+	FuncRef string
+
+	// loc is the source location of the start declaration form head.
 	loc location
 }
 

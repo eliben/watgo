@@ -25,6 +25,7 @@ const (
 	sectionMemoryID    byte = 5
 	sectionGlobalID    byte = 6
 	sectionExportID    byte = 7
+	sectionStartID     byte = 8
 	sectionElementID   byte = 9
 	sectionCodeID      byte = 10
 	sectionDataID      byte = 11
@@ -174,6 +175,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 		writeSection(&out, sectionExportID, exportSection)
 	}
 
+	startSection := encodeStartSection(m)
+	if len(startSection) > 0 {
+		writeSection(&out, sectionStartID, startSection)
+	}
+
 	elementSection := encodeElementSection(m.Elements, &diags)
 	if len(elementSection) > 0 {
 		writeSection(&out, sectionElementID, elementSection)
@@ -198,6 +204,16 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 		return nil, diags
 	}
 	return out.Bytes(), nil
+}
+
+// encodeStartSection emits section 8 when the module has a start function.
+func encodeStartSection(m *wasmir.Module) []byte {
+	if m == nil || !m.HasStart {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeULEB128(&payload, m.StartFuncIndex)
+	return payload.Bytes()
 }
 
 // writeSection emits one section as:

@@ -184,6 +184,27 @@ func TestParseSmoke(t *testing.T) {
 	}
 }
 
+func TestParseModule_StartDeclLoc(t *testing.T) {
+	wat := `(module
+  (func $main)
+  (start $main)
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	if m.Start == nil {
+		t.Fatal("got nil Start, want start declaration")
+	}
+	if m.Start.FuncRef != "$main" {
+		t.Fatalf("start func ref=%q, want $main", m.Start.FuncRef)
+	}
+	if got := m.Start.loc.String(); got != "3:3" {
+		t.Fatalf("start loc=%q, want 3:3", got)
+	}
+}
+
 func TestParseModule_LinearAddInstructions(t *testing.T) {
 	wat := `(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)

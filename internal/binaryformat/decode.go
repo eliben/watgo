@@ -39,6 +39,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	seenMemory := false
 	seenGlobal := false
 	seenExport := false
+	seenStart := false
 	seenElement := false
 	seenCode := false
 	seenData := false
@@ -136,6 +137,20 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			}
 			seenExport = true
 			out.Exports = decodeExportSection(sr, &diags)
+
+		case sectionStartID:
+			if seenStart {
+				diags.Addf("duplicate start section")
+				break
+			}
+			seenStart = true
+			startIndex, err := readU32(sr)
+			if err != nil {
+				diags.Addf("start section: invalid function index: %v", err)
+				break
+			}
+			out.HasStart = true
+			out.StartFuncIndex = startIndex
 
 		case sectionElementID:
 			if seenElement {

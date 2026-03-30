@@ -185,6 +185,21 @@ func (l *moduleLowerer) lowerModule(astm *Module) {
 		l.lowerFunction(i, f)
 	}
 	l.collectModuleExports(astm)
+	l.collectStartDecl(astm)
+}
+
+// collectStartDecl lowers an optional module start declaration.
+func (l *moduleLowerer) collectStartDecl(astm *Module) {
+	if astm == nil || astm.Start == nil {
+		return
+	}
+	startIndex, ok := l.resolveFunctionRef(astm.Start.FuncRef)
+	if !ok {
+		l.diags.Addf("start: unknown function %q", astm.Start.FuncRef)
+		return
+	}
+	l.out.HasStart = true
+	l.out.StartFuncIndex = startIndex
 }
 
 // collectElemDecls lowers module-level elem declarations.

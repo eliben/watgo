@@ -241,6 +241,23 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 				m.Exports = append(m.Exports, ed)
 			}
 			importsClosed = true
+		case "start":
+			if m.Start != nil {
+				p.emitError(sub.loc, "multiple start sections")
+				importsClosed = true
+				continue
+			}
+			if len(sub.Children()) != 2 || !sub.Children()[1].IsToken() ||
+				(!sub.Children()[1].IsTokenKind(ID) && !sub.Children()[1].IsTokenKind(INT)) {
+				p.emitError(sub.loc, "start expects function reference")
+				importsClosed = true
+				continue
+			}
+			m.Start = &StartDecl{
+				FuncRef: sub.Children()[1].tok.value,
+				loc:     sub.loc,
+			}
+			importsClosed = true
 		case "tag":
 			// Exception handling tags are outside the current lowering subset.
 			// Keep parsing the rest of the module fields.

@@ -707,6 +707,13 @@ type Module struct {
 	// Exports is the list of exported definitions.
 	Exports []Export
 
+	// HasStart reports whether the module has a start function section.
+	HasStart bool
+
+	// StartFuncIndex is the module function index invoked during instantiation
+	// when HasStart is true.
+	StartFuncIndex uint32
+
 	// Elements is the list of active element segments used to initialize tables.
 	Elements []ElementSegment
 }
