@@ -863,6 +863,7 @@ func (l *moduleLowerer) collectFunctionNames(astm *Module) {
 func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasmir.ValueType, name string) uint32 {
 	for i, ft := range l.out.Types {
 		if ft.Kind == wasmir.TypeDefKindFunc &&
+			!typeBelongsToMultiRecGroup(l.out.Types, uint32(i)) &&
 			equalValueTypeSlices(ft.Params, params) &&
 			equalValueTypeSlices(ft.Results, results) {
 			return uint32(i)
@@ -876,6 +877,28 @@ func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasm
 		Results: results,
 	})
 	return typeIdx
+}
+
+// typeBelongsToMultiRecGroup reports whether type index idx is part of a
+// recursive group with more than one member.
+//
+// Implicit function types must not reuse such entries merely because their raw
+// signatures are structurally equal.
+func typeBelongsToMultiRecGroup(types []wasmir.FuncType, idx uint32) bool {
+	if int(idx) >= len(types) {
+		return false
+	}
+	for start := idx; ; {
+		groupSize := types[start].RecGroupSize
+		if groupSize > 0 && idx < start+groupSize {
+			return groupSize > 1
+		}
+		if start == 0 {
+			break
+		}
+		start--
+	}
+	return false
 }
 
 // lowerFunction lowers one text-format function f as function number funcIdx

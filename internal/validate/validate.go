@@ -555,6 +555,59 @@ func isValidDeclaredSubtype(m *Module, sub, super FuncType) bool {
 	}
 }
 
+func typeRefVisibleFromType(m *Module, fromIndex, targetIndex uint32) bool {
+	if m == nil || int(fromIndex) >= len(m.Types) || int(targetIndex) >= len(m.Types) {
+		return false
+	}
+	if targetIndex == fromIndex {
+		return true
+	}
+	if targetIndex < fromIndex {
+		return true
+	}
+	groupStart, groupSize, _ := recGroupInfo(m, fromIndex)
+	return groupSize > 1 && targetIndex >= groupStart && targetIndex < groupStart+groupSize
+}
+
+func validateTypeVisibilityRef(m *Module, fromIndex uint32, vt ValueType) bool {
+	if !vt.UsesTypeIndex() {
+		return true
+	}
+	return typeRefVisibleFromType(m, fromIndex, vt.HeapType.TypeIndex)
+}
+
+func validateTypeDefVisibility(m *Module, typeIndex uint32, td FuncType) bool {
+	for _, super := range td.SuperTypes {
+		if !typeRefVisibleFromType(m, typeIndex, super) {
+			return false
+		}
+	}
+	switch td.Kind {
+	case TypeDefKindFunc:
+		for _, vt := range td.Params {
+			if !validateTypeVisibilityRef(m, typeIndex, vt) {
+				return false
+			}
+		}
+		for _, vt := range td.Results {
+			if !validateTypeVisibilityRef(m, typeIndex, vt) {
+				return false
+			}
+		}
+	case TypeDefKindStruct:
+		for _, field := range td.Fields {
+			if field.Packed == PackedTypeNone && !validateTypeVisibilityRef(m, typeIndex, field.Type) {
+				return false
+			}
+		}
+	case TypeDefKindArray:
+		if td.ElemField.Packed == PackedTypeNone && !validateTypeVisibilityRef(m, typeIndex, td.ElemField.Type) {
+			return false
+		}
+	}
+	return true
+}
+
 func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 	if got == want {
 		return true
@@ -713,6 +766,9 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 	for i, td := range m.Types {
+		if !validateTypeDefVisibility(m, uint32(i), td) {
+			diags.Addf("type[%d]: unknown type", i)
+		}
 		for j, super := range td.SuperTypes {
 			if int(super) >= len(m.Types) {
 				diags.Addf("type[%d] super[%d]: unknown type", i, j)
