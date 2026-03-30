@@ -287,6 +287,10 @@ const (
 	InstrV128Load16Lane
 	InstrV128Load32Lane
 	InstrV128Load64Lane
+	InstrV128Store8Lane
+	InstrV128Store16Lane
+	InstrV128Store32Lane
+	InstrV128Store64Lane
 	InstrI32Load8S
 	InstrI32Load8U
 	InstrI32Load16S

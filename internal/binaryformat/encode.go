@@ -841,6 +841,7 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		wasmir.InstrV128Load32Splat, wasmir.InstrV128Load64Splat,
 		wasmir.InstrV128Load32Zero, wasmir.InstrV128Load64Zero,
 		wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
+		wasmir.InstrV128Store8Lane, wasmir.InstrV128Store16Lane, wasmir.InstrV128Store32Lane, wasmir.InstrV128Store64Lane,
 		wasmir.InstrI32Load8S,
 		wasmir.InstrI32Load8U, wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
 		wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI64Load16S,
@@ -851,7 +852,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 		writeInstructionOpcode(out, instr.Kind)
 		encodeMemArg(out, instr)
 		if instr.Kind == wasmir.InstrV128Load8Lane || instr.Kind == wasmir.InstrV128Load16Lane ||
-			instr.Kind == wasmir.InstrV128Load32Lane || instr.Kind == wasmir.InstrV128Load64Lane {
+			instr.Kind == wasmir.InstrV128Load32Lane || instr.Kind == wasmir.InstrV128Load64Lane ||
+			instr.Kind == wasmir.InstrV128Store8Lane || instr.Kind == wasmir.InstrV128Store16Lane ||
+			instr.Kind == wasmir.InstrV128Store32Lane || instr.Kind == wasmir.InstrV128Store64Lane {
 			out.WriteByte(byte(instr.LaneIndex))
 		}
 	case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:

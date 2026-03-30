@@ -2274,7 +2274,7 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 	}
 	ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
 	var parseOK bool
-	if isSIMDLoadLaneInstr(kind) {
+	if isSIMDMemoryLaneInstr(kind) {
 		ins.MemoryAlign, ins.MemoryOffset, ins.MemoryIndex, ins.LaneIndex, parseOK = parseMemArgLaneOperands(pi.Operands, fl.mod.memoriesByName)
 	} else {
 		ins.MemoryAlign, ins.MemoryOffset, ins.MemoryIndex, parseOK = parseMemArgOperands(pi.Operands, fl.mod.memoriesByName)
@@ -2287,11 +2287,12 @@ func (fl *functionLowerer) lowerMemoryInstr(pi *PlainInstr, instrLoc string) boo
 	return true
 }
 
-// isSIMDLoadLaneInstr reports whether kind is one of the SIMD lane-load
+// isSIMDMemoryLaneInstr reports whether kind is one of the SIMD memory
 // instructions that carry both a memarg and a lane immediate.
-func isSIMDLoadLaneInstr(kind wasmir.InstrKind) bool {
+func isSIMDMemoryLaneInstr(kind wasmir.InstrKind) bool {
 	switch kind {
-	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane:
+	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
+		wasmir.InstrV128Store8Lane, wasmir.InstrV128Store16Lane, wasmir.InstrV128Store32Lane, wasmir.InstrV128Store64Lane:
 		return true
 	default:
 		return false

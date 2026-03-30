@@ -637,11 +637,15 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 		return 0, true
 	case InstrV128Load8Lane:
 		return 0, true
+	case InstrV128Store8Lane:
+		return 0, true
 	case InstrI32Load16S, InstrI32Load16U, InstrI64Load16S, InstrI64Load16U, InstrI32Store16, InstrI64Store16:
 		return 1, true
 	case InstrV128Load16Splat:
 		return 1, true
 	case InstrV128Load16Lane:
+		return 1, true
+	case InstrV128Store16Lane:
 		return 1, true
 	case InstrI32Load, InstrF32Load, InstrI64Load32S, InstrI64Load32U, InstrI32Store, InstrI64Store32, InstrF32Store:
 		return 2, true
@@ -651,6 +655,8 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 		return 2, true
 	case InstrV128Load32Lane:
 		return 2, true
+	case InstrV128Store32Lane:
+		return 2, true
 	case InstrI64Load, InstrF64Load, InstrI64Store, InstrF64Store:
 		return 3, true
 	case InstrV128Load8x8S, InstrV128Load8x8U, InstrV128Load16x4S, InstrV128Load16x4U, InstrV128Load32x2S, InstrV128Load32x2U, InstrV128Load64Splat:
@@ -658,6 +664,8 @@ func naturalMemoryAlignExponent(kind InstrKind) (uint32, bool) {
 	case InstrV128Load64Zero:
 		return 3, true
 	case InstrV128Load64Lane:
+		return 3, true
+	case InstrV128Store64Lane:
 		return 3, true
 	case InstrV128Load, InstrV128Store:
 		return 4, true
@@ -2429,7 +2437,8 @@ instrLoop:
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeV128))
-		case InstrV128Load8Lane, InstrV128Load16Lane, InstrV128Load32Lane, InstrV128Load64Lane:
+		case InstrV128Load8Lane, InstrV128Load16Lane, InstrV128Load32Lane, InstrV128Load64Lane,
+			InstrV128Store8Lane, InstrV128Store16Lane, InstrV128Store32Lane, InstrV128Store64Lane:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
 				continue
@@ -2440,13 +2449,13 @@ instrLoop:
 			}
 			laneLimit := uint32(0)
 			switch ins.Kind {
-			case InstrV128Load8Lane:
+			case InstrV128Load8Lane, InstrV128Store8Lane:
 				laneLimit = 16
-			case InstrV128Load16Lane:
+			case InstrV128Load16Lane, InstrV128Store16Lane:
 				laneLimit = 8
-			case InstrV128Load32Lane:
+			case InstrV128Load32Lane, InstrV128Store32Lane:
 				laneLimit = 4
-			case InstrV128Load64Lane:
+			case InstrV128Load64Lane, InstrV128Store64Lane:
 				laneLimit = 2
 			}
 			if ins.LaneIndex >= laneLimit {
@@ -2463,7 +2472,10 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 2)
-			appendStackType(ValueTypeV128)
+			switch ins.Kind {
+			case InstrV128Load8Lane, InstrV128Load16Lane, InstrV128Load32Lane, InstrV128Load64Lane:
+				appendStackType(ValueTypeV128)
+			}
 		case InstrI32Load8S, InstrI32Load8U, InstrI32Load16S, InstrI32Load16U:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: %s requires memory", insCtx, instrName(ins.Kind))
