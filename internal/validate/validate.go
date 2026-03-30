@@ -16,7 +16,8 @@ const (
 )
 
 type validatedValue struct {
-	Type ValueType
+	Type    ValueType
+	Unknown bool
 }
 
 func isRefValueType(vt ValueType) bool {
@@ -27,7 +28,14 @@ func validatedValueFromType(vt ValueType) validatedValue {
 	return validatedValue{Type: vt}
 }
 
+func validatedUnknownValue() validatedValue {
+	return validatedValue{Unknown: true}
+}
+
 func sameValidatedValue(got, want validatedValue) bool {
+	if got.Unknown || want.Unknown {
+		return true
+	}
 	return got.Type == want.Type
 }
 
@@ -44,10 +52,16 @@ func equalValueTypeSlices(a, b []ValueType) bool {
 }
 
 func validatedValueName(v validatedValue) string {
+	if v.Unknown {
+		return "unknown"
+	}
 	return v.Type.String()
 }
 
 func refinedNonNullValue(v validatedValue) validatedValue {
+	if v.Unknown {
+		return v
+	}
 	if isRefValueType(v.Type) {
 		v.Type.Nullable = false
 	}
@@ -627,6 +641,9 @@ func matchesGCExpectedValue(m *Module, got, want ValueType) bool {
 }
 
 func matchesExpectedValueInModule(m *Module, got, want validatedValue) bool {
+	if got.Unknown {
+		return true
+	}
 	return matchesGCExpectedValue(m, got.Type, want.Type)
 }
 
@@ -940,14 +957,12 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		localInitialized[len(ft.Params)+i] = isDefaultableValueType(vt)
 	}
 
-	funcResultValues := valuesOf(ft.Results)
-
-	stack := make([]ValueType, 0)
+	stack := make([]validatedValue, 0)
 	stackValue := func(i int) validatedValue {
-		return validatedValue{Type: stack[i]}
+		return stack[i]
 	}
 	appendStackValue := func(v validatedValue) {
-		stack = append(stack, v.Type)
+		stack = append(stack, v)
 	}
 	appendStackType := func(vt ValueType) {
 		appendStackValue(validatedValueFromType(vt))
@@ -961,7 +976,15 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		stack = stack[:n]
 	}
 	setStackValue := func(i int, v validatedValue) {
-		stack[i] = v.Type
+		stack[i] = v
+	}
+	stackValueHasType := func(i int, want ValueType) bool {
+		got := stackValue(i)
+		return got.Unknown || got.Type == want
+	}
+	stackValueIsRef := func(i int) bool {
+		got := stackValue(i)
+		return got.Unknown || isRefValueType(got.Type)
 	}
 	type controlKind uint8
 	const (
@@ -975,6 +998,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		paramTypes  []ValueType
 		resultTypes []ValueType
 		sawElse     bool
+		enteredUnreachable bool
 		unreachable bool
 	}
 	var controlStack []controlFrame
@@ -987,7 +1011,59 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		resultTypes: append([]ValueType(nil), ft.Results...),
 	})
 
+	currentFrameUnreachable := func() bool {
+		return len(controlStack) > 0 && controlStack[len(controlStack)-1].unreachable
+	}
+
+	ensureCurrentFrameOperands := func(n int, explicitOperands int, bottomOperands int) bool {
+		if len(controlStack) == 0 {
+			return len(stack) >= n
+		}
+		frame := controlStack[len(controlStack)-1]
+		available := len(stack) - frame.entryHeight
+		requiredConcrete := explicitOperands
+		if bottomOperands > 0 {
+			requiredConcrete = 0
+		}
+		if requiredConcrete > n {
+			requiredConcrete = n
+		}
+		if available < requiredConcrete {
+			return false
+		}
+		if available >= n {
+			return true
+		}
+		if !frame.unreachable {
+			return false
+		}
+		missing := n - available
+		padding := make([]validatedValue, missing)
+		for i := range padding {
+			padding[i] = validatedUnknownValue()
+		}
+		stack = append(stack[:frame.entryHeight], append(padding, stack[frame.entryHeight:]...)...)
+		return true
+	}
+
 	validateFrameResult := func(insCtx string, frame controlFrame, context string) {
+		if frame.unreachable {
+			actualCount := len(stack) - frame.entryHeight
+			if actualCount > len(frame.resultTypes) {
+				diags.Addf("%s: %s stack height mismatch: got %d want at most %d", insCtx, context, len(stack), frame.entryHeight+len(frame.resultTypes))
+				return
+			}
+			wantBase := len(frame.resultTypes) - actualCount
+			for i := 0; i < actualCount; i++ {
+				got := stackValue(frame.entryHeight + i)
+				want := valueAt(frame.resultTypes, wantBase+i)
+				if !matchesExpectedValueInModule(m, got, want) {
+					diags.Addf("%s: %s result type mismatch at %d: got %s want %s", insCtx, context, wantBase+i, validatedValueName(got), validatedValueName(want))
+					return
+				}
+			}
+			return
+		}
 		wantHeight := frame.entryHeight + len(frame.resultTypes)
 		if len(stack) != wantHeight {
 			diags.Addf("%s: %s stack height mismatch: got %d want %d", insCtx, context, len(stack), wantHeight)
@@ -1014,8 +1090,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			targetTypes = target.paramTypes
 		}
 		targetValues := valuesOf(targetTypes)
-		minHeight := target.entryHeight + len(targetValues)
-		if len(stack) < minHeight {
+		if !ensureCurrentFrameOperands(len(targetValues), 0, 0) {
 			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opName, depth)
 			return controlFrame{}, nil, 0, false
 		}
@@ -1073,41 +1148,6 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		return nil, nil, true
 	}
 
-	validateBrOnCastStatic := func(ins Instruction, insCtx, opname string, branchOnCast bool) bool {
-		if !ins.SourceRefType.IsRef() || !ins.RefType.IsRef() {
-			diags.Addf("%s: type mismatch", insCtx)
-			return false
-		}
-		if !matchesRefTypeInModule(m, ins.RefType, ins.SourceRefType) {
-			diags.Addf("%s: type mismatch", insCtx)
-			return false
-		}
-		if int(ins.BranchDepth) >= len(controlStack) {
-			diags.Addf("%s: %s depth %d out of range", insCtx, opname, ins.BranchDepth)
-			return false
-		}
-		target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
-		targetValues := branchTargetTypes(target)
-		if len(targetValues) == 0 {
-			diags.Addf("%s: %s depth %d has insufficient stack height", insCtx, opname, ins.BranchDepth)
-			return false
-		}
-		wantRef := targetValues[len(targetValues)-1]
-		if !wantRef.Type.IsRef() {
-			diags.Addf("%s: type mismatch", insCtx)
-			return false
-		}
-		gotRef := validatedValueFromType(ins.RefType)
-		if !branchOnCast {
-			gotRef = validatedValueFromType(diffRefType(ins.SourceRefType, ins.RefType))
-		}
-		if !matchesExpectedValueInModule(m, gotRef, wantRef) {
-			diags.Addf("%s: type mismatch", insCtx)
-			return false
-		}
-		return true
-	}
-
 	stackSigOperandText := func(sig instrdef.FixedStackSig) string {
 		switch sig.ParamCount {
 		case 0:
@@ -1126,14 +1166,15 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 	}
 
-	applyFixedStackSig := func(insCtx string, kind InstrKind, sig instrdef.FixedStackSig) {
-		if len(stack) < int(sig.ParamCount) {
+	applyFixedStackSig := func(insCtx string, ins Instruction, sig instrdef.FixedStackSig) {
+		kind := ins.Kind
+		if !ensureCurrentFrameOperands(int(sig.ParamCount), int(ins.OperandCount), int(ins.BottomOperandCount)) {
 			diags.Addf("%s: %s needs %d operands", insCtx, instrName(kind), sig.ParamCount)
 			return
 		}
 		base := len(stack) - int(sig.ParamCount)
 		for j := uint8(0); j < sig.ParamCount; j++ {
-			if stack[base+int(j)] != sig.Params[j] {
+			if !matchesExpectedValueInModule(m, stackValue(base+int(j)), validatedValueFromType(sig.Params[j])) {
 				diags.Addf("%s: %s expects %s", insCtx, instrName(kind), stackSigOperandText(sig))
 				return
 			}
@@ -1144,73 +1185,14 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		}
 	}
 
-	returned := false
-instrLoop:
 	for i, ins := range f.Body {
 		insCtx := fmt.Sprintf("instruction %d", i)
 		if ins.SourceLoc != "" {
 			insCtx = fmt.Sprintf("%s at %s", insCtx, ins.SourceLoc)
 		}
 
-		if len(controlStack) > 0 && controlStack[len(controlStack)-1].unreachable {
-			switch ins.Kind {
-			case InstrBrOnCast:
-				validateBrOnCastStatic(ins, insCtx, "br_on_cast", true)
-			case InstrBrOnCastFail:
-				validateBrOnCastStatic(ins, insCtx, "br_on_cast_fail", false)
-			}
-			switch ins.Kind {
-			case InstrBlock, InstrLoop, InstrIf:
-				opname := instrName(ins.Kind)
-				params, results, ok := controlSignature(ins, insCtx, opname)
-				if !ok {
-					continue
-				}
-				kind := controlKindBlock
-				switch ins.Kind {
-				case InstrLoop:
-					kind = controlKindLoop
-				case InstrIf:
-					kind = controlKindIf
-				}
-				controlStack = append(controlStack, controlFrame{
-					kind:        kind,
-					entryHeight: len(stack),
-					paramTypes:  params,
-					resultTypes: results,
-					unreachable: true,
-				})
-				continue
-			case InstrElse:
-				frame := controlStack[len(controlStack)-1]
-				if frame.kind != controlKindIf {
-					diags.Addf("%s: else without matching if", insCtx)
-					continue
-				}
-				if frame.sawElse {
-					diags.Addf("%s: duplicate else for if", insCtx)
-					continue
-				}
-				truncateStack(frame.entryHeight + len(frame.paramTypes))
-				frame.sawElse = true
-				// Else branch is reachable even if then branch was unreachable.
-				frame.unreachable = false
-				controlStack[len(controlStack)-1] = frame
-				continue
-			case InstrEnd:
-				frame := controlStack[len(controlStack)-1]
-				controlStack = controlStack[:len(controlStack)-1]
-				truncateStack(frame.entryHeight)
-				appendStackValues(valuesOf(frame.resultTypes))
-				continue
-			default:
-				// Unreachable code is stack-polymorphic; ignore non-structural ops.
-				continue
-			}
-		}
-
 		if def, ok := instrdef.LookupInstructionByKind(ins.Kind); ok && def.Validate.StackSig.Enabled {
-			applyFixedStackSig(insCtx, ins.Kind, def.Validate.StackSig)
+			applyFixedStackSig(insCtx, ins, def.Validate.StackSig)
 			continue
 		}
 		switch ins.Kind {
@@ -1219,7 +1201,7 @@ instrLoop:
 			if !ok {
 				continue
 			}
-			if len(stack) < len(params) {
+			if !ensureCurrentFrameOperands(len(params), 0, 0) {
 				diags.Addf("%s: block needs %d parameter operands", insCtx, len(params))
 				continue
 			}
@@ -1241,17 +1223,19 @@ instrLoop:
 				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
-				kind:        controlKindBlock,
-				entryHeight: len(stack) - len(params),
-				paramTypes:  params,
-				resultTypes: results,
+				kind:               controlKindBlock,
+				entryHeight:        len(stack) - len(params),
+				paramTypes:         params,
+				resultTypes:        results,
+				enteredUnreachable: currentFrameUnreachable(),
+				unreachable:        currentFrameUnreachable(),
 			})
 		case InstrLoop:
 			params, results, ok := controlSignature(ins, insCtx, "loop")
 			if !ok {
 				continue
 			}
-			if len(stack) < len(params) {
+			if !ensureCurrentFrameOperands(len(params), 0, 0) {
 				diags.Addf("%s: loop needs %d parameter operands", insCtx, len(params))
 				continue
 			}
@@ -1273,29 +1257,27 @@ instrLoop:
 				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
-				kind:        controlKindLoop,
-				entryHeight: len(stack) - len(params),
-				paramTypes:  params,
-				resultTypes: results,
+				kind:               controlKindLoop,
+				entryHeight:        len(stack) - len(params),
+				paramTypes:         params,
+				resultTypes:        results,
+				enteredUnreachable: currentFrameUnreachable(),
+				unreachable:        currentFrameUnreachable(),
 			})
 		case InstrIf:
 			params, results, ok := controlSignature(ins, insCtx, "if")
 			if !ok {
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1+len(params), 0, 0) {
 				diags.Addf("%s: if needs 1 i32 condition operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: if expects i32 condition operand", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 1) // pop condition
-			if len(stack) < len(params) {
-				diags.Addf("%s: if needs %d parameter operands", insCtx, len(params))
-				continue
-			}
 			base := len(stack) - len(params)
 			matched := true
 			for j := range params {
@@ -1314,10 +1296,12 @@ instrLoop:
 				setStackValue(base+j, valueAt(params, j))
 			}
 			controlStack = append(controlStack, controlFrame{
-				kind:        controlKindIf,
-				entryHeight: len(stack) - len(params),
-				paramTypes:  params,
-				resultTypes: results,
+				kind:               controlKindIf,
+				entryHeight:        len(stack) - len(params),
+				paramTypes:         params,
+				resultTypes:        results,
+				enteredUnreachable: currentFrameUnreachable(),
+				unreachable:        currentFrameUnreachable(),
 			})
 		case InstrElse:
 			if len(controlStack) == 0 {
@@ -1333,12 +1317,10 @@ instrLoop:
 				diags.Addf("%s: duplicate else for if", insCtx)
 				continue
 			}
-			if !frame.unreachable {
-				validateFrameResult(insCtx, frame, "then-branch")
-			}
+			validateFrameResult(insCtx, frame, "then-branch")
 			truncateStack(frame.entryHeight + len(frame.paramTypes))
 			frame.sawElse = true
-			frame.unreachable = false
+			frame.unreachable = frame.enteredUnreachable
 			controlStack[len(controlStack)-1] = frame
 		case InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
@@ -1355,7 +1337,7 @@ instrLoop:
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: local.set needs 1 operand", insCtx)
 				continue
 			}
@@ -1371,7 +1353,7 @@ instrLoop:
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: local.tee needs 1 operand", insCtx)
 				continue
 			}
@@ -1398,7 +1380,7 @@ instrLoop:
 				diags.Addf("%s: global.set on immutable global %d", insCtx, ins.GlobalIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: global.set needs 1 operand", insCtx)
 				continue
 			}
@@ -1413,12 +1395,12 @@ instrLoop:
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.get needs 1 operand", insCtx)
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: table.get expects %s index operand", insCtx, addrType)
 				continue
 			}
@@ -1428,12 +1410,12 @@ instrLoop:
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.set needs 2 operands", insCtx)
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: table.set expects %s index operand", insCtx, addrType)
 				continue
 			}
@@ -1452,7 +1434,7 @@ instrLoop:
 				diags.Addf("%s: unknown table %d", insCtx, ins.SourceTableIndex)
 				continue
 			}
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.copy needs 3 operands", insCtx)
 				continue
 			}
@@ -1464,11 +1446,11 @@ instrLoop:
 			}
 			dstAddrType := tableAddressType(m, ins.TableIndex)
 			srcAddrType := tableAddressType(m, ins.SourceTableIndex)
-			if stack[len(stack)-3] != dstAddrType {
+			if !stackValueHasType(len(stack)-3, dstAddrType) {
 				diags.Addf("%s: table.copy expects %s destination index operand", insCtx, dstAddrType)
 				continue
 			}
-			if stack[len(stack)-2] != srcAddrType {
+			if !stackValueHasType(len(stack)-2, srcAddrType) {
 				diags.Addf("%s: table.copy expects %s source index operand", insCtx, srcAddrType)
 				continue
 			}
@@ -1476,7 +1458,7 @@ instrLoop:
 			if dstAddrType == ValueTypeI64 && srcAddrType == ValueTypeI64 {
 				lenType = ValueTypeI64
 			}
-			if stack[len(stack)-1] != lenType {
+			if !stackValueHasType(len(stack)-1, lenType) {
 				diags.Addf("%s: table.copy expects %s length operand", insCtx, lenType)
 				continue
 			}
@@ -1486,12 +1468,12 @@ instrLoop:
 				diags.Addf("%s: unknown table %d", insCtx, ins.TableIndex)
 				continue
 			}
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.fill needs 3 operands", insCtx)
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-3] != addrType {
+			if !stackValueHasType(len(stack)-3, addrType) {
 				diags.Addf("%s: table.fill expects %s index operand", insCtx, addrType)
 				continue
 			}
@@ -1500,7 +1482,7 @@ instrLoop:
 				diags.Addf("%s: table.fill expects %s value operand", insCtx, validatedValueName(want))
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: table.fill expects %s length operand", insCtx, addrType)
 				continue
 			}
@@ -1514,7 +1496,7 @@ instrLoop:
 				diags.Addf("%s: unknown elem segment %d", insCtx, ins.ElemIndex)
 				continue
 			}
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.init needs 3 operands", insCtx)
 				continue
 			}
@@ -1524,15 +1506,15 @@ instrLoop:
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-3] != addrType {
+			if !stackValueHasType(len(stack)-3, addrType) {
 				diags.Addf("%s: table.init expects %s destination index operand", insCtx, addrType)
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-2, ValueTypeI32) {
 				diags.Addf("%s: table.init expects i32 source index operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: table.init expects i32 length operand", insCtx)
 				continue
 			}
@@ -1547,7 +1529,7 @@ instrLoop:
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: table.grow needs 2 operands", insCtx)
 				continue
 			}
@@ -1557,7 +1539,7 @@ instrLoop:
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: table.grow expects %s delta operand", insCtx, addrType)
 				continue
 			}
@@ -1580,7 +1562,7 @@ instrLoop:
 				diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
 				continue
 			}
-			if len(stack) < len(calleeType.Params) {
+			if !ensureCurrentFrameOperands(len(calleeType.Params), int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
 				continue
 			}
@@ -1614,12 +1596,12 @@ instrLoop:
 				continue
 			}
 			need := len(calleeType.Params) + 1 // +1 for table element index
-			if len(stack) < need {
+			if !ensureCurrentFrameOperands(need, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: call_indirect needs %d operands", insCtx, need)
 				continue
 			}
 			addrType := tableAddressType(m, ins.TableIndex)
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: call_indirect expects %s table index operand", insCtx, addrType)
 				continue
 			}
@@ -1649,7 +1631,7 @@ instrLoop:
 				continue
 			}
 			need := len(calleeType.Params) + 1
-			if len(stack) < need {
+			if !ensureCurrentFrameOperands(need, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
 				continue
 			}
@@ -1683,7 +1665,7 @@ instrLoop:
 				diags.Addf("%s: struct.new type index %d is not a struct type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if len(stack) < len(td.Fields) {
+			if !ensureCurrentFrameOperands(len(td.Fields), int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: struct.new needs %d operands", insCtx, len(td.Fields))
 				continue
 			}
@@ -1738,7 +1720,7 @@ instrLoop:
 				diags.Addf("%s: struct.get field index %d out of range", insCtx, ins.FieldIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: struct.get needs 1 operand", insCtx)
 				continue
 			}
@@ -1767,7 +1749,7 @@ instrLoop:
 				diags.Addf("%s: struct.get_s requires packed field type", insCtx)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: struct.get_s needs 1 operand", insCtx)
 				continue
 			}
@@ -1796,7 +1778,7 @@ instrLoop:
 				diags.Addf("%s: struct.get_u requires packed field type", insCtx)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: struct.get_u needs 1 operand", insCtx)
 				continue
 			}
@@ -1825,7 +1807,7 @@ instrLoop:
 				diags.Addf("%s: immutable field", insCtx)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: struct.set needs 2 operands", insCtx)
 				continue
 			}
@@ -1841,7 +1823,7 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 2)
 		case InstrArrayLen:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.len needs 1 operand", insCtx)
 				continue
 			}
@@ -1864,11 +1846,11 @@ instrLoop:
 				diags.Addf("%s: array.new_default requires defaultable element type", insCtx)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.new_default needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.new_default expects i32 length operand", insCtx)
 				continue
 			}
@@ -1883,7 +1865,7 @@ instrLoop:
 				diags.Addf("%s: array.new type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.new needs 2 operands", insCtx)
 				continue
 			}
@@ -1892,7 +1874,7 @@ instrLoop:
 				diags.Addf("%s: array.new expects element operand of type %s", insCtx, elemType)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.new expects i32 length operand", insCtx)
 				continue
 			}
@@ -1908,7 +1890,7 @@ instrLoop:
 				diags.Addf("%s: array.new_fixed type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if len(stack) < int(ins.FixedCount) {
+			if !ensureCurrentFrameOperands(int(ins.FixedCount), int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.new_fixed needs %d operands", insCtx, ins.FixedCount)
 				continue
 			}
@@ -1941,11 +1923,11 @@ instrLoop:
 				diags.Addf("%s: array.new_data data index %d out of range", insCtx, ins.DataIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.new_data needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.new_data expects i32 offset and i32 length operands", insCtx)
 				continue
 			}
@@ -1970,11 +1952,11 @@ instrLoop:
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.new_elem needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.new_elem expects i32 offset and i32 length operands", insCtx)
 				continue
 			}
@@ -2002,7 +1984,7 @@ instrLoop:
 				diags.Addf("%s: array.init_data data index %d out of range", insCtx, ins.DataIndex)
 				continue
 			}
-			if len(stack) < 4 {
+			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.init_data needs 4 operands", insCtx)
 				continue
 			}
@@ -2011,7 +1993,7 @@ instrLoop:
 				diags.Addf("%s: array.init_data expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
-			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-3, ValueTypeI32) || !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.init_data expects i32 destination, source, and length operands", insCtx)
 				continue
 			}
@@ -2039,7 +2021,7 @@ instrLoop:
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
-			if len(stack) < 4 {
+			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.init_elem needs 4 operands", insCtx)
 				continue
 			}
@@ -2048,7 +2030,7 @@ instrLoop:
 				diags.Addf("%s: array.init_elem expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
-			if stack[len(stack)-3] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-3, ValueTypeI32) || !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.init_elem expects i32 destination, source, and length operands", insCtx)
 				continue
 			}
@@ -2063,11 +2045,11 @@ instrLoop:
 				diags.Addf("%s: array.get type index %d is not an array type", insCtx, ins.TypeIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.get needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.get expects i32 index operand", insCtx)
 				continue
 			}
@@ -2092,11 +2074,11 @@ instrLoop:
 				diags.Addf("%s: %s requires packed array element type", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: %s expects i32 index operand", insCtx, instrName(ins.Kind))
 				continue
 			}
@@ -2121,7 +2103,7 @@ instrLoop:
 				diags.Addf("%s: array.set requires mutable array", insCtx)
 				continue
 			}
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.set needs 3 operands", insCtx)
 				continue
 			}
@@ -2130,7 +2112,7 @@ instrLoop:
 				diags.Addf("%s: array.set expects value operand of type %s", insCtx, validatedValueName(wantValue))
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-2, ValueTypeI32) {
 				diags.Addf("%s: array.set expects i32 index operand", insCtx)
 				continue
 			}
@@ -2154,7 +2136,7 @@ instrLoop:
 				diags.Addf("%s: immutable array", insCtx)
 				continue
 			}
-			if len(stack) < 4 {
+			if !ensureCurrentFrameOperands(4, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.fill needs 4 operands", insCtx)
 				continue
 			}
@@ -2163,7 +2145,7 @@ instrLoop:
 				diags.Addf("%s: array.fill expects operand of type %s", insCtx, validatedValueName(wantRef))
 				continue
 			}
-			if stack[len(stack)-3] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-3, ValueTypeI32) {
 				diags.Addf("%s: array.fill expects i32 index operand", insCtx)
 				continue
 			}
@@ -2172,7 +2154,7 @@ instrLoop:
 				diags.Addf("%s: type mismatch", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.fill expects i32 length operand", insCtx)
 				continue
 			}
@@ -2204,7 +2186,7 @@ instrLoop:
 				diags.Addf("%s: array types do not match", insCtx)
 				continue
 			}
-			if len(stack) < 5 {
+			if !ensureCurrentFrameOperands(5, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: array.copy needs 5 operands", insCtx)
 				continue
 			}
@@ -2213,7 +2195,7 @@ instrLoop:
 				diags.Addf("%s: array.copy expects destination operand of type %s", insCtx, validatedValueName(dstWant))
 				continue
 			}
-			if stack[len(stack)-4] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-4, ValueTypeI32) {
 				diags.Addf("%s: array.copy expects i32 destination index operand", insCtx)
 				continue
 			}
@@ -2222,13 +2204,13 @@ instrLoop:
 				diags.Addf("%s: array.copy expects source operand of type %s", insCtx, validatedValueName(srcWant))
 				continue
 			}
-			if stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: array.copy expects i32 source index and length operands", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 5)
 		case InstrRefEq:
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.eq needs 2 operands", insCtx)
 				continue
 			}
@@ -2240,37 +2222,37 @@ instrLoop:
 			truncateStack(len(stack) - 2)
 			appendStackValue(validatedValueFromType(ValueTypeI32))
 		case InstrRefTest:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.test needs 1 operand", insCtx)
 				continue
 			}
-			if !stackValue(len(stack) - 1).Type.IsRef() {
+			if !stackValueIsRef(len(stack) - 1) {
 				diags.Addf("%s: ref.test expects reference operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrRefCast:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.cast needs 1 operand", insCtx)
 				continue
 			}
-			if !stackValue(len(stack) - 1).Type.IsRef() {
+			if !stackValueIsRef(len(stack) - 1) {
 				diags.Addf("%s: ref.cast expects reference operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
 		case InstrRefI31:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.i31 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: ref.i31 expects i32 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeI31(false)))
 		case InstrExternConvertAny:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: extern.convert_any needs 1 operand", insCtx)
 				continue
 			}
@@ -2281,7 +2263,7 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeExtern(got.Type.Nullable)))
 		case InstrAnyConvertExtern:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: any.convert_extern needs 1 operand", insCtx)
 				continue
 			}
@@ -2292,7 +2274,7 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(RefTypeAny(got.Type.Nullable)))
 		case InstrI31GetS:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i31.get_s needs 1 operand", insCtx)
 				continue
 			}
@@ -2302,7 +2284,7 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI31GetU:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i31.get_u needs 1 operand", insCtx)
 				continue
 			}
@@ -2328,17 +2310,17 @@ instrLoop:
 			appendStackType(ValueTypeV128)
 
 		case InstrDrop:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: drop needs 1 operand", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 1)
 		case InstrSelect:
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: select needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: select expects i32 condition operand", insCtx)
 				continue
 			}
@@ -2349,7 +2331,16 @@ instrLoop:
 				continue
 			}
 			truncateStack(len(stack) - 3)
-			appendStackValue(v1)
+			switch {
+			case v1.Unknown && !v2.Unknown:
+				appendStackValue(v2)
+			case v2.Unknown && !v1.Unknown:
+				appendStackValue(v1)
+			case v1.Unknown && v2.Unknown:
+				appendStackValue(validatedUnknownValue())
+			default:
+				appendStackValue(v1)
+			}
 		case InstrI32Load:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i32.load requires memory", insCtx)
@@ -2360,11 +2351,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i32.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: i32.load expects %s address operand", insCtx, addrType)
 				continue
 			}
@@ -2379,11 +2370,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i64.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: i64.load expects %s address operand", insCtx, addrType)
 				continue
 			}
@@ -2398,11 +2389,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f32.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: f32.load expects %s address operand", insCtx, addrType)
 				continue
 			}
@@ -2417,11 +2408,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f64.load needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: f64.load expects %s address operand", insCtx, addrType)
 				continue
 			}
@@ -2436,11 +2427,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2471,11 +2462,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: %s expects v128 value and %s address operands", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2494,11 +2485,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2513,11 +2504,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: %s expects %s address operand", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2532,11 +2523,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i32.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: i32.store expects i32 value and %s address operands", insCtx, addrType)
 				continue
 			}
@@ -2551,11 +2542,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i64.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: i64.store expects i64 value and %s address operands", insCtx, addrType)
 				continue
 			}
@@ -2570,11 +2561,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: %s expects i32 value and %s address operands", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2589,11 +2580,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, instrName(ins.Kind))
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: %s expects i64 value and %s address operands", insCtx, instrName(ins.Kind), addrType)
 				continue
 			}
@@ -2608,11 +2599,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f32.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeF32) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: f32.store expects f32 value and %s address operands", insCtx, addrType)
 				continue
 			}
@@ -2627,11 +2618,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f64.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeF64) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: f64.store expects f64 value and %s address operands", insCtx, addrType)
 				continue
 			}
@@ -2646,11 +2637,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: v128.store needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != addrType {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, addrType) {
 				diags.Addf("%s: v128.store expects v128 value and %s address operands", insCtx, addrType)
 				continue
 			}
@@ -2675,11 +2666,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: memory.grow needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: memory.grow expects %s operand", insCtx, addrType)
 				continue
 			}
@@ -2697,13 +2688,13 @@ instrLoop:
 				diags.Addf("%s: memory.copy source memory index %d out of range", insCtx, ins.SourceMemoryIndex)
 				continue
 			}
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: memory.copy needs 3 operands", insCtx)
 				continue
 			}
 			dstAddrType := memoryAddressType(m, ins.MemoryIndex)
 			srcAddrType := memoryAddressType(m, ins.SourceMemoryIndex)
-			if stack[len(stack)-3] != dstAddrType || stack[len(stack)-2] != srcAddrType || stack[len(stack)-1] != dstAddrType {
+			if !stackValueHasType(len(stack)-3, dstAddrType) || !stackValueHasType(len(stack)-2, srcAddrType) || !stackValueHasType(len(stack)-1, dstAddrType) {
 				diags.Addf("%s: memory.copy expects %s destination, %s source, and %s length operands", insCtx, dstAddrType, srcAddrType, dstAddrType)
 				continue
 			}
@@ -2722,11 +2713,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: memory.init needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-3] != addrType || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-3, addrType) || !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: memory.init expects %s destination, i32 source, and i32 length operands", insCtx, addrType)
 				continue
 			}
@@ -2741,11 +2732,11 @@ instrLoop:
 				continue
 			}
 			addrType := memoryAddressType(m, ins.MemoryIndex)
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: memory.fill needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-3] != addrType || stack[len(stack)-2] != ValueTypeI32 || stack[len(stack)-1] != addrType {
+			if !stackValueHasType(len(stack)-3, addrType) || !stackValueHasType(len(stack)-2, ValueTypeI32) || !stackValueHasType(len(stack)-1, addrType) {
 				diags.Addf("%s: memory.fill expects %s destination, i32 value, and %s length operands", insCtx, addrType, addrType)
 				continue
 			}
@@ -2763,11 +2754,11 @@ instrLoop:
 			_ = target
 			markCurrentFrameUnreachable()
 		case InstrBrIf:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_if needs 1 i32 condition operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: br_if expects i32 condition operand", insCtx)
 				continue
 			}
@@ -2779,12 +2770,12 @@ instrLoop:
 				}
 			}
 		case InstrBrOnNull:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_on_null needs 1 reference operand", insCtx)
 				continue
 			}
 			refVal := stackValue(len(stack) - 1)
-			if !isRefValueType(refVal.Type) {
+			if !stackValueIsRef(len(stack) - 1) {
 				diags.Addf("%s: br_on_null expects reference operand", insCtx)
 				continue
 			}
@@ -2794,7 +2785,7 @@ instrLoop:
 			}
 			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
 			targetValues := branchTargetTypes(target)
-			if len(stack) < len(targetValues)+1 {
+			if !ensureCurrentFrameOperands(len(targetValues)+1, 0, 0) {
 				diags.Addf("%s: br_on_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
 				continue
 			}
@@ -2825,12 +2816,12 @@ instrLoop:
 			truncateStack(len(stack) - 1)
 			appendStackValue(refinedNonNullValue(refVal))
 		case InstrBrOnNonNull:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_on_non_null needs 1 reference operand", insCtx)
 				continue
 			}
 			refVal := stackValue(len(stack) - 1)
-			if !isRefValueType(refVal.Type) {
+			if !stackValueIsRef(len(stack) - 1) {
 				diags.Addf("%s: br_on_non_null expects reference operand", insCtx)
 				continue
 			}
@@ -2840,7 +2831,7 @@ instrLoop:
 			}
 			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
 			targetValues := branchTargetTypes(target)
-			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+			if len(targetValues) == 0 || !ensureCurrentFrameOperands(len(targetValues), 0, 0) {
 				diags.Addf("%s: br_on_non_null depth %d has insufficient stack height", insCtx, ins.BranchDepth)
 				continue
 			}
@@ -2877,7 +2868,7 @@ instrLoop:
 			}
 			truncateStack(len(stack) - 1)
 		case InstrBrOnCast:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_on_cast needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2896,7 +2887,7 @@ instrLoop:
 			}
 			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
 			targetValues := branchTargetTypes(target)
-			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+			if len(targetValues) == 0 || !ensureCurrentFrameOperands(len(targetValues), 0, 0) {
 				diags.Addf("%s: br_on_cast depth %d has insufficient stack height", insCtx, ins.BranchDepth)
 				continue
 			}
@@ -2932,7 +2923,7 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(diffRefType(ins.SourceRefType, ins.RefType)))
 		case InstrBrOnCastFail:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_on_cast_fail needs 1 reference operand", insCtx)
 				continue
 			}
@@ -2951,7 +2942,7 @@ instrLoop:
 			}
 			target := controlStack[len(controlStack)-1-int(ins.BranchDepth)]
 			targetValues := branchTargetTypes(target)
-			if len(targetValues) == 0 || len(stack) < len(targetValues) {
+			if len(targetValues) == 0 || !ensureCurrentFrameOperands(len(targetValues), 0, 0) {
 				diags.Addf("%s: br_on_cast_fail depth %d has insufficient stack height", insCtx, ins.BranchDepth)
 				continue
 			}
@@ -2988,11 +2979,11 @@ instrLoop:
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ins.RefType))
 		case InstrBrTable:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: br_table needs 1 i32 selector operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: br_table expects i32 selector operand", insCtx)
 				continue
 			}
@@ -3030,16 +3021,9 @@ instrLoop:
 				markCurrentFrameUnreachable()
 			}
 		case InstrUnreachable:
-			if len(controlStack) == 0 {
-				// Top-level unreachable makes the rest of the function unreachable.
-				truncateStack(0)
-				appendStackValues(funcResultValues)
-				returned = true
-				break instrLoop
-			}
 			markCurrentFrameUnreachable()
 		case InstrReturn:
-			if len(stack) < len(ft.Results) {
+			if !ensureCurrentFrameOperands(len(ft.Results), 0, 0) {
 				diags.Addf("%s: return needs %d operands", insCtx, len(ft.Results))
 				continue
 			}
@@ -3056,20 +3040,17 @@ instrLoop:
 			if !ok {
 				continue
 			}
-			truncateStack(0)
-			appendStackValues(funcResultValues)
-			returned = true
-			break instrLoop
+			markCurrentFrameUnreachable()
 
 		case InstrI32Add, InstrI32Sub, InstrI32Mul, InstrI32DivS, InstrI32DivU,
 			InstrI32RemS, InstrI32RemU, InstrI32Shl, InstrI32ShrS, InstrI32ShrU,
 			InstrI32And, InstrI32Or, InstrI32Xor, InstrI32Rotl, InstrI32Rotr:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) || !stackValueHasType(len(stack)-2, ValueTypeI32) {
 				diags.Addf("%s: %s expects i32 operands", insCtx, name)
 				continue
 			}
@@ -3079,33 +3060,33 @@ instrLoop:
 		case InstrI32Eq, InstrI32Ne, InstrI32LtS, InstrI32LtU, InstrI32LeS, InstrI32LeU,
 			InstrI32GtS, InstrI32GtU, InstrI32GeS, InstrI32GeU:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) || !stackValueHasType(len(stack)-2, ValueTypeI32) {
 				diags.Addf("%s: %s expects i32 operands", insCtx, name)
 				continue
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
 		case InstrI32Eqz:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i32.eqz needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: i32.eqz expects i32 operand", insCtx)
 				continue
 			}
 			// i32.eqz replaces i32 with i32 at top-of-stack.
 		case InstrI32Clz, InstrI32Ctz, InstrI32Popcnt, InstrI32Extend8S, InstrI32Extend16S:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: %s expects i32 operand", insCtx, name)
 				continue
 			}
@@ -3115,11 +3096,11 @@ instrLoop:
 			InstrI64RemS, InstrI64RemU, InstrI64Shl, InstrI64ShrS, InstrI64ShrU,
 			InstrI64And, InstrI64Or, InstrI64Xor, InstrI64Rotl, InstrI64Rotr:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) || !stackValueHasType(len(stack)-2, ValueTypeI64) {
 				diags.Addf("%s: %s expects i64 operands", insCtx, name)
 				continue
 			}
@@ -3129,44 +3110,44 @@ instrLoop:
 		case InstrI64Eq, InstrI64Ne, InstrI64LtS, InstrI64LtU, InstrI64GtS, InstrI64GtU,
 			InstrI64LeS, InstrI64LeU, InstrI64GeS, InstrI64GeU:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 || stack[len(stack)-2] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) || !stackValueHasType(len(stack)-2, ValueTypeI64) {
 				diags.Addf("%s: %s expects i64 operands", insCtx, name)
 				continue
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeI32)
 		case InstrI64Eqz:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i64.eqz needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) {
 				diags.Addf("%s: i64.eqz expects i64 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI64Clz, InstrI64Ctz, InstrI64Popcnt, InstrI64Extend8S, InstrI64Extend16S, InstrI64Extend32S:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) {
 				diags.Addf("%s: %s expects i64 operand", insCtx, name)
 				continue
 			}
 			// i64 unary operators preserve i64 on stack.
 
 		case InstrI32WrapI64:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i32.wrap_i64 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) {
 				diags.Addf("%s: i32.wrap_i64 expects i64 operand", insCtx)
 				continue
 			}
@@ -3174,33 +3155,33 @@ instrLoop:
 
 		case InstrI64ExtendI32S, InstrI64ExtendI32U:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: %s expects i32 operand", insCtx, name)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
 
 		case InstrF32ConvertI32S:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: f32.convert_i32_s expects i32 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
 
 		case InstrF64ConvertI64S:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) {
 				diags.Addf("%s: f64.convert_i64_s expects i64 operand", insCtx)
 				continue
 			}
@@ -3208,11 +3189,11 @@ instrLoop:
 
 		case InstrF32Add, InstrF32Sub, InstrF32Mul, InstrF32Div, InstrF32Min, InstrF32Max:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF32) || !stackValueHasType(len(stack)-2, ValueTypeF32) {
 				diags.Addf("%s: %s expects f32 operands", insCtx, name)
 				continue
 			}
@@ -3221,22 +3202,22 @@ instrLoop:
 
 		case InstrF32Sqrt, InstrF32Ceil, InstrF32Floor, InstrF32Trunc, InstrF32Nearest, InstrF32Neg:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF32) {
 				diags.Addf("%s: %s expects f32 operand", insCtx, name)
 				continue
 			}
 			// Unary f32 operators preserve top-of-stack type.
 		case InstrF32Eq, InstrF32Lt, InstrF32Gt, InstrF32Ne:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 || stack[len(stack)-2] != ValueTypeF32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF32) || !stackValueHasType(len(stack)-2, ValueTypeF32) {
 				diags.Addf("%s: %s expects f32 operands", insCtx, name)
 				continue
 			}
@@ -3245,11 +3226,11 @@ instrLoop:
 
 		case InstrF64Add, InstrF64Sub, InstrF64Mul, InstrF64Div, InstrF64Min, InstrF64Max:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeF64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF64) || !stackValueHasType(len(stack)-2, ValueTypeF64) {
 				diags.Addf("%s: %s expects f64 operands", insCtx, name)
 				continue
 			}
@@ -3258,22 +3239,22 @@ instrLoop:
 
 		case InstrF64Sqrt, InstrF64Ceil, InstrF64Floor, InstrF64Trunc, InstrF64Nearest, InstrF64Neg:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF64) {
 				diags.Addf("%s: %s expects f64 operand", insCtx, name)
 				continue
 			}
 			// Unary f64 operators preserve top-of-stack type.
 		case InstrF64Eq, InstrF64Le:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 || stack[len(stack)-2] != ValueTypeF64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF64) || !stackValueHasType(len(stack)-2, ValueTypeF64) {
 				diags.Addf("%s: %s expects f64 operands", insCtx, name)
 				continue
 			}
@@ -3291,22 +3272,22 @@ instrLoop:
 			if !lanesOK {
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i8x16.shuffle needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: i8x16.shuffle expects v128 operands", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(ValueTypeV128)
 		case InstrI8x16Swizzle:
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i8x16.swizzle needs 2 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: i8x16.swizzle expects v128 operands", insCtx)
 				continue
 			}
@@ -3317,31 +3298,31 @@ instrLoop:
 			InstrI32x4AllTrue, InstrI32x4Bitmask,
 			InstrI64x2AllTrue, InstrI64x2Bitmask:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 operand", insCtx, name)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrV128Not:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: v128.not needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) {
 				diags.Addf("%s: v128.not expects v128 operand", insCtx)
 				continue
 			}
 		case InstrV128And, InstrV128AndNot, InstrV128Or, InstrV128Xor:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 operands", insCtx, name)
 				continue
 			}
@@ -3352,11 +3333,11 @@ instrLoop:
 			InstrI32x4Shl, InstrI32x4ShrS, InstrI32x4ShrU,
 			InstrI64x2Shl, InstrI64x2ShrS, InstrI64x2ShrU:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 and i32 operands", insCtx, name)
 				continue
 			}
@@ -3375,11 +3356,11 @@ instrLoop:
 			case InstrF64x2Splat:
 				operandType = ValueTypeF64
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != operandType {
+			if !stackValueHasType(len(stack)-1, operandType) {
 				diags.Addf("%s: %s expects %s operand", insCtx, name, operandType)
 				continue
 			}
@@ -3417,11 +3398,11 @@ instrLoop:
 				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
 				continue
 			}
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 operand", insCtx, name)
 				continue
 			}
@@ -3455,11 +3436,11 @@ instrLoop:
 				diags.Addf("%s: %s lane %d out of range", insCtx, name, ins.LaneIndex)
 				continue
 			}
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != valueType || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, valueType) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: %s expects %s and %s operands", insCtx, name, ValueTypeV128, valueType)
 				continue
 			}
@@ -3480,11 +3461,11 @@ instrLoop:
 			InstrF64x2Eq, InstrF64x2Ne, InstrF64x2Lt, InstrF64x2Gt, InstrF64x2Le, InstrF64x2Ge,
 			InstrF64x2Add, InstrF64x2Sub, InstrF64x2Mul, InstrF64x2Div, InstrF64x2Min, InstrF64x2Max, InstrF64x2Pmin, InstrF64x2Pmax:
 			name := instrName(ins.Kind)
-			if len(stack) < 2 {
+			if !ensureCurrentFrameOperands(2, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 operands", insCtx, name)
 				continue
 			}
@@ -3503,61 +3484,61 @@ instrLoop:
 			InstrF32x4DemoteF64x2Zero, InstrF64x2PromoteLowF32x4,
 			InstrI32x4Neg:
 			name := instrName(ins.Kind)
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) {
 				diags.Addf("%s: %s expects v128 operand", insCtx, name)
 				continue
 			}
 		case InstrV128Bitselect:
-			if len(stack) < 3 {
+			if !ensureCurrentFrameOperands(3, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: v128.bitselect needs 3 operands", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeV128 || stack[len(stack)-2] != ValueTypeV128 || stack[len(stack)-3] != ValueTypeV128 {
+			if !stackValueHasType(len(stack)-1, ValueTypeV128) || !stackValueHasType(len(stack)-2, ValueTypeV128) || !stackValueHasType(len(stack)-3, ValueTypeV128) {
 				diags.Addf("%s: v128.bitselect expects v128 operands", insCtx)
 				continue
 			}
 			truncateStack(len(stack) - 3)
 			appendStackType(ValueTypeV128)
 		case InstrI32ReinterpretF32:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i32.reinterpret_f32 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF32) {
 				diags.Addf("%s: i32.reinterpret_f32 expects f32 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrI64ReinterpretF64:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: i64.reinterpret_f64 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeF64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeF64) {
 				diags.Addf("%s: i64.reinterpret_f64 expects f64 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI64))
 		case InstrF32ReinterpretI32:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f32.reinterpret_i32 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI32 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI32) {
 				diags.Addf("%s: f32.reinterpret_i32 expects i32 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeF32))
 		case InstrF64ReinterpretI64:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: f64.reinterpret_i64 needs 1 operand", insCtx)
 				continue
 			}
-			if stack[len(stack)-1] != ValueTypeI64 {
+			if !stackValueHasType(len(stack)-1, ValueTypeI64) {
 				diags.Addf("%s: f64.reinterpret_i64 expects i64 operand", insCtx)
 				continue
 			}
@@ -3576,23 +3557,23 @@ instrLoop:
 			}
 			appendStackValue(validatedValue{Type: RefTypeIndexed(typeIdx, false)})
 		case InstrRefIsNull:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.is_null needs 1 operand", insCtx)
 				continue
 			}
 			top := stackValue(len(stack) - 1)
-			if !isRefValueType(top.Type) {
+			if !top.Unknown && !isRefValueType(top.Type) {
 				diags.Addf("%s: ref.is_null expects reference operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(ValueTypeI32))
 		case InstrRefAsNonNull:
-			if len(stack) < 1 {
+			if !ensureCurrentFrameOperands(1, int(ins.OperandCount), int(ins.BottomOperandCount)) {
 				diags.Addf("%s: ref.as_non_null needs 1 operand", insCtx)
 				continue
 			}
 			top := stackValue(len(stack) - 1)
-			if !isRefValueType(top.Type) {
+			if !top.Unknown && !isRefValueType(top.Type) {
 				diags.Addf("%s: ref.as_non_null expects reference operand", insCtx)
 				continue
 			}
@@ -3602,19 +3583,18 @@ instrLoop:
 			if len(controlStack) > 0 {
 				frame := controlStack[len(controlStack)-1]
 				controlStack = controlStack[:len(controlStack)-1]
-				if !frame.unreachable {
-					switch frame.kind {
-					case controlKindIf:
-						validateFrameResult(insCtx, frame, "if-branch")
-						if len(frame.resultTypes) > 0 && !frame.sawElse &&
-							!equalValueTypeSlices(frame.paramTypes, frame.resultTypes) {
-							diags.Addf("%s: if with result requires else branch", insCtx)
-						}
-					case controlKindBlock:
-						validateFrameResult(insCtx, frame, "block")
-					case controlKindLoop:
-						validateFrameResult(insCtx, frame, "loop")
+				switch frame.kind {
+				case controlKindIf:
+					validateFrameResult(insCtx, frame, "if-branch")
+					if len(frame.resultTypes) > 0 && !frame.sawElse &&
+						!equalValueTypeSlices(frame.paramTypes, frame.resultTypes) &&
+						!frame.enteredUnreachable {
+						diags.Addf("%s: if with result requires else branch", insCtx)
 					}
+				case controlKindBlock:
+					validateFrameResult(insCtx, frame, "block")
+				case controlKindLoop:
+					validateFrameResult(insCtx, frame, "loop")
 				}
 
 				truncateStack(frame.entryHeight)
@@ -3628,9 +3608,6 @@ instrLoop:
 		default:
 			diags.Addf("%s: unsupported instruction kind %d", insCtx, ins.Kind)
 		}
-	}
-	if returned {
-		return diags
 	}
 	if len(controlStack) > 0 {
 		diags.Addf("%sunterminated control construct: missing end", funcLocCtx)

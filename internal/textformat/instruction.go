@@ -27,6 +27,12 @@ type Instruction interface {
 type PlainInstr struct {
 	Name     string
 	Operands []Operand
+	// explicitInstrArgs counts folded instruction children that were lowered
+	// ahead of this plain instruction.
+	explicitInstrArgs int
+	// bottomInstrArgs counts explicit folded children that are statically
+	// polymorphic bottom.
+	bottomInstrArgs int
 	loc      location
 }
 

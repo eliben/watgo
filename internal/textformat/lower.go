@@ -1099,8 +1099,14 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 	}
 
 	var operands []Operand
+	explicitInstrArgs := 0
+	bottomInstrArgs := 0
 	for _, arg := range fi.Args {
 		if arg.Instr != nil {
+			explicitInstrArgs++
+			if isStaticallyBottomInstr(arg.Instr) {
+				bottomInstrArgs++
+			}
 			fl.lowerInstruction(arg.Instr)
 			continue
 		}
@@ -1111,7 +1117,23 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.diagf(fi.Loc(), "invalid folded argument in %q", fi.Name)
 	}
 
-	fl.lowerPlainInstr(&PlainInstr{Name: fi.Name, Operands: operands, loc: fi.loc})
+	fl.lowerPlainInstr(&PlainInstr{Name: fi.Name, Operands: operands, explicitInstrArgs: explicitInstrArgs, bottomInstrArgs: bottomInstrArgs, loc: fi.loc})
+}
+
+func isStaticallyBottomInstr(in Instruction) bool {
+	switch ins := in.(type) {
+	case *PlainInstr:
+		switch ins.Name {
+		case "unreachable", "return", "br", "br_table":
+			return true
+		}
+	case *FoldedInstr:
+		switch ins.Name {
+		case "unreachable", "return", "br", "br_table":
+			return true
+		}
+	}
+	return false
 }
 
 // lowerFoldedCallIndirect lowers folded "(call_indirect ...)" preserving
@@ -1841,7 +1863,12 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 		fl.diagf(instrLoc, "unsupported instruction %q", pi.Name)
 		return true
 	}
-	ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
+	ins := wasmir.Instruction{
+		Kind:               kind,
+		OperandCount:       uint8(pi.explicitInstrArgs),
+		BottomOperandCount: uint8(pi.bottomInstrArgs),
+		SourceLoc:          instrLoc,
+	}
 	prevDiagCount := len(fl.mod.diags)
 	if spec.decode != nil && !spec.decode(fl, &ins, pi.Operands) {
 		// Current table-driven entries with decode callbacks all consume exactly
