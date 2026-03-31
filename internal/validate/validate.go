@@ -836,6 +836,11 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 			diags.Addf("%s has non-function type index %d", fnCtx, f.TypeIdx)
 			continue
 		}
+		for j, local := range f.Locals {
+			if !validModuleValueType(m, local) {
+				diags.Addf("%s local[%d]: unknown type", fnCtx, j)
+			}
+		}
 		var funcHints *valhint.FuncHints
 		if hints != nil && i < len(hints.Funcs) {
 			funcHints = &hints.Funcs[i]
@@ -847,6 +852,10 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	}
 
 	for i, g := range m.Globals {
+		if !validModuleValueType(m, g.Type) {
+			diags.Addf("global[%d]: unknown type", i)
+			continue
+		}
 		if g.ImportModule != "" {
 			continue
 		}
@@ -861,6 +870,10 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	}
 
 	for i, table := range m.Tables {
+		if !validModuleValueType(m, table.RefType) {
+			diags.Addf("table[%d]: unknown type", i)
+			continue
+		}
 		addrType := tableAddressType(m, uint32(i))
 		if addrType == ValueTypeI32 && table.Min > maxTableElems32 {
 			diags.Addf("table[%d]: table size", i)
@@ -932,6 +945,10 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	}
 
 	for i, elem := range m.Elements {
+		if elem.RefType.Kind != ValueKindInvalid && !validModuleValueType(m, elem.RefType) {
+			diags.Addf("element[%d]: unknown type", i)
+			continue
+		}
 		tableTy := RefTypeFunc(true)
 		if elem.Mode == ElemSegmentModeActive {
 			if int(elem.TableIndex) >= len(m.Tables) {
