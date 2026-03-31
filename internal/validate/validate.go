@@ -1475,7 +1475,9 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				continue
 			}
 			localInitialized[ins.LocalIndex] = true
-			// local.tee writes local and preserves operand on stack.
+			// local.tee writes the local and leaves the local's declared type on
+			// the stack, just like a subsequent local.get would.
+			setStackValue(len(stack)-1, want)
 		case InstrGlobalGet:
 			if int(ins.GlobalIndex) >= len(m.Globals) {
 				diags.Addf("%s: global index %d out of range", insCtx, ins.GlobalIndex)

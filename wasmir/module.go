@@ -631,8 +631,14 @@ const (
 	InstrI64TruncF64S
 	InstrI64TruncF64U
 	InstrF32ConvertI32S
+	InstrF32ConvertI32U
+	InstrF32ConvertI64S
+	InstrF32ConvertI64U
 	InstrF32DemoteF64
+	InstrF64ConvertI32S
+	InstrF64ConvertI32U
 	InstrF64ConvertI64S
+	InstrF64ConvertI64U
 	InstrF64PromoteF32
 	InstrF32Add
 	InstrF32Sub

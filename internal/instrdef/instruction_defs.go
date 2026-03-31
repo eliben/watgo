@@ -226,6 +226,9 @@ var instructionDefs = []InstructionDef{
 	directOp(InstrF32Min, "f32.min", 0x96, binarySig(ValueTypeF32, ValueTypeF32, ValueTypeF32)),
 	directOp(InstrF32Max, "f32.max", 0x97, binarySig(ValueTypeF32, ValueTypeF32, ValueTypeF32)),
 	directOp(InstrF32ConvertI32S, "f32.convert_i32_s", 0xb2, unarySig(ValueTypeI32, ValueTypeF32)),
+	directOp(InstrF32ConvertI32U, "f32.convert_i32_u", 0xb3, unarySig(ValueTypeI32, ValueTypeF32)),
+	directOp(InstrF32ConvertI64S, "f32.convert_i64_s", 0xb4, unarySig(ValueTypeI64, ValueTypeF32)),
+	directOp(InstrF32ConvertI64U, "f32.convert_i64_u", 0xb5, unarySig(ValueTypeI64, ValueTypeF32)),
 	directOp(InstrF32DemoteF64, "f32.demote_f64", 0xb6, unarySig(ValueTypeF64, ValueTypeF32)),
 
 	directOp(InstrF64Eq, "f64.eq", 0x61, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeI32)),
@@ -242,7 +245,10 @@ var instructionDefs = []InstructionDef{
 	directOp(InstrF64Div, "f64.div", 0xa3, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeF64)),
 	directOp(InstrF64Min, "f64.min", 0xa4, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeF64)),
 	directOp(InstrF64Max, "f64.max", 0xa5, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeF64)),
+	directOp(InstrF64ConvertI32S, "f64.convert_i32_s", 0xb7, unarySig(ValueTypeI32, ValueTypeF64)),
+	directOp(InstrF64ConvertI32U, "f64.convert_i32_u", 0xb8, unarySig(ValueTypeI32, ValueTypeF64)),
 	directOp(InstrF64ConvertI64S, "f64.convert_i64_s", 0xb9, unarySig(ValueTypeI64, ValueTypeF64)),
+	directOp(InstrF64ConvertI64U, "f64.convert_i64_u", 0xba, unarySig(ValueTypeI64, ValueTypeF64)),
 	directOp(InstrF64PromoteF32, "f64.promote_f32", 0xbb, unarySig(ValueTypeF32, ValueTypeF64)),
 
 	directOp(InstrI32ReinterpretF32, "i32.reinterpret_f32", 0xbc, unarySig(ValueTypeF32, ValueTypeI32)),
