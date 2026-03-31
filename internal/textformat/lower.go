@@ -464,9 +464,9 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.tablesByName[td.Id] = tableIdx
 			}
 		}
-		if td.Export != "" {
+		if td.Export != nil {
 			l.out.Exports = append(l.out.Exports, wasmir.Export{
-				Name:  td.Export,
+				Name:  *td.Export,
 				Kind:  wasmir.ExternalKindTable,
 				Index: tableIdx,
 			})
@@ -585,9 +585,9 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 				l.memoriesByName[md.Id] = memIdx
 			}
 		}
-		if md.Export != "" {
+		if md.Export != nil {
 			l.out.Exports = append(l.out.Exports, wasmir.Export{
-				Name:  md.Export,
+				Name:  *md.Export,
 				Kind:  wasmir.ExternalKindMemory,
 				Index: memIdx,
 			})
@@ -734,9 +734,9 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 			l.globalsByName[gd.Id] = globalIdx
 		}
 	exportGlobal:
-		if gd.Export != "" {
+		if gd.Export != nil {
 			l.out.Exports = append(l.out.Exports, wasmir.Export{
-				Name:  gd.Export,
+				Name:  *gd.Export,
 				Kind:  wasmir.ExternalKindGlobal,
 				Index: globalIdx,
 			})
@@ -950,9 +950,9 @@ func (fl *functionLowerer) lower() {
 			Kind:    wasmir.ExternalKindFunction,
 			TypeIdx: typeIdx,
 		})
-		if fl.fn.Export != "" {
+		if fl.fn.Export != nil {
 			fl.mod.out.Exports = append(fl.mod.out.Exports, wasmir.Export{
-				Name:  fl.fn.Export,
+				Name:  *fl.fn.Export,
 				Kind:  wasmir.ExternalKindFunction,
 				Index: fl.mod.functionIndexByASTIndex(fl.funcIdx),
 			})
@@ -978,9 +978,9 @@ func (fl *functionLowerer) lower() {
 		Instrs: append([]valhint.InstrHints(nil), fl.bodyHints...),
 	})
 
-	if fl.fn.Export != "" {
+	if fl.fn.Export != nil {
 		fl.mod.out.Exports = append(fl.mod.out.Exports, wasmir.Export{
-			Name:  fl.fn.Export,
+			Name:  *fl.fn.Export,
 			Kind:  wasmir.ExternalKindFunction,
 			Index: fl.mod.functionIndexByASTIndex(fl.funcIdx),
 		})

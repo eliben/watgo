@@ -419,7 +419,8 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 	}
 
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
-		f.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		name := p.matchElement(sx.list[cursor], 1, STRING)
+		f.Export = &name
 		cursor++
 	}
 
@@ -433,8 +434,8 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 			f.TyUse.Id = p.parseTypeUseClause(elem)
 		case "export":
 			name := p.matchElement(elem, 1, STRING)
-			if f.Export == "" {
-				f.Export = name
+			if f.Export == nil {
+				f.Export = &name
 			}
 		case "import":
 			modName, fieldName, ok := p.parseImportClause(elem)
@@ -567,7 +568,8 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
-		td.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		name := p.matchElement(sx.list[cursor], 1, STRING)
+		td.Export = &name
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
@@ -670,7 +672,8 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
-		md.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		name := p.matchElement(sx.list[cursor], 1, STRING)
+		md.Export = &name
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {
@@ -819,7 +822,8 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
-		gd.Export = p.matchElement(sx.list[cursor], 1, STRING)
+		name := p.matchElement(sx.list[cursor], 1, STRING)
+		gd.Export = &name
 		cursor++
 	}
 	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "import" {

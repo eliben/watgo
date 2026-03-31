@@ -81,8 +81,8 @@ type TableDecl struct {
 	Id string
 
 	// Export is the optional exported name from an inline "(export \"...\")"
-	// clause.
-	Export string
+	// clause. It is nil when no inline export was declared.
+	Export *string
 
 	// ImportModule is non-empty when this table is imported and stores the
 	// import module name.
@@ -126,8 +126,8 @@ type MemoryDecl struct {
 	Id string
 
 	// Export is the optional exported name from an inline "(export \"...\")"
-	// clause.
-	Export string
+	// clause. It is nil when no inline export was declared.
+	Export *string
 
 	// ImportModule is non-empty when this memory is imported and stores the
 	// import module name.
@@ -181,8 +181,8 @@ type GlobalDecl struct {
 	Id string
 
 	// Export is the optional exported name from an inline "(export \"...\")"
-	// clause.
-	Export string
+	// clause. It is nil when no inline export was declared.
+	Export *string
 
 	// ImportModule is non-empty when this global is imported and stores the
 	// import module name.
@@ -211,9 +211,9 @@ type Function struct {
 	// It is empty when the function is anonymous.
 	Id string
 
-	// Export is the optional exported name from an inline "(export "...")"
-	// clause. It is empty when no inline export was declared.
-	Export string
+	// Export is the optional exported name from an inline "(export \"...\")"
+	// clause. It is nil when no inline export was declared.
+	Export *string
 
 	// ImportModule is non-empty when this function is imported and stores the
 	// import module name.

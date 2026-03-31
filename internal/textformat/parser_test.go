@@ -150,7 +150,7 @@ func TestParseSmoke(t *testing.T) {
 	if func0.Id != "$add" {
 		t.Errorf("got func id %v, want $add", func0.Id)
 	}
-	if func0.Export != "add" {
+	if func0.Export == nil || *func0.Export != "add" {
 		t.Errorf("got func export %v, want add", func0.Export)
 	}
 
@@ -643,8 +643,8 @@ func TestParseModuleSExpr(t *testing.T) {
 	if len(m.Funcs) != 1 {
 		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
 	}
-	if got := m.Funcs[0].Export; got != "add" {
-		t.Fatalf("func export=%q, want add", got)
+	if got := m.Funcs[0].Export; got == nil || *got != "add" {
+		t.Fatalf("func export=%v, want add", got)
 	}
 }
 
