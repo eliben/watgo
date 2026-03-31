@@ -202,7 +202,7 @@ func (lex *lexer) skipNontokens() error {
 }
 
 func (lex *lexer) skipLineComment() {
-	for lex.r != '\n' && lex.r > 0 {
+	for lex.r != '\n' && lex.r != '\r' && lex.r >= 0 {
 		lex.next()
 	}
 }
@@ -215,7 +215,7 @@ func (lex *lexer) skipBlockComment() error {
 	lex.next()
 
 	// skip until we find ";)"
-	for lex.r > 0 {
+	for lex.r >= 0 {
 		if lex.r == ';' && lex.peekNext() == ')' {
 			lex.next()
 			lex.next()

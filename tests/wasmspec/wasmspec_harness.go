@@ -221,11 +221,19 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 		if err != nil {
 			return scriptCommand{}, err
 		}
+		var quotedWAT string
+		if isModuleQuoteExpr(sx) {
+			quotedWAT, err = parseQuotedModuleWAT(sx)
+			if err != nil {
+				return scriptCommand{}, fmt.Errorf("invalid quoted module: %w", err)
+			}
+		}
 		return scriptCommand{
 			kind:       commandModule,
 			loc:        sx.Loc(),
 			moduleExpr: sx,
 			moduleName: moduleName,
+			quotedWAT:  quotedWAT,
 		}, nil
 	case "invoke":
 		action, err := parseInvoke(sx)
@@ -1085,8 +1093,9 @@ func parseI16Literal(lit string) (uint16, bool) {
 
 // parseQuotedModuleWAT parses "(module quote <string>+)".
 // sx is the module-quote expression.
-// It returns WAT text reconstructed by joining quoted parts with newlines.
-// Example: (module quote "(func)") -> "(func)".
+// It reconstructs the quoted WAT bytes by decoding each WAT string fragment
+// and concatenating the results exactly, preserving embedded escapes such as
+// "\0a" instead of inserting extra separators between fragments.
 func parseQuotedModuleWAT(sx *textformat.SExpr) (string, error) {
 	elems := sx.Children()
 	if len(elems) < 3 {
@@ -1102,15 +1111,28 @@ func parseQuotedModuleWAT(sx *textformat.SExpr) (string, error) {
 		return "", fmt.Errorf("expected (module quote ...)")
 	}
 
-	var parts []string
+	var out []byte
 	for i := 2; i < len(elems); i++ {
 		s, err := parseStringToken(elems[i])
 		if err != nil {
 			return "", fmt.Errorf("quoted module part[%d]: %w", i-2, err)
 		}
-		parts = append(parts, s)
+		decoded, err := decodeWATStringBytes(s)
+		if err != nil {
+			return "", fmt.Errorf("quoted module part[%d] decode failed: %w", i-2, err)
+		}
+		out = append(out, decoded...)
 	}
-	return strings.Join(parts, "\n"), nil
+	return string(out), nil
+}
+
+func isModuleQuoteExpr(sx *textformat.SExpr) bool {
+	elems := sx.Children()
+	if len(elems) < 2 {
+		return false
+	}
+	kind, value, ok := elems[1].Token()
+	return ok && kind == "KEYWORD" && value == "quote"
 }
 
 // parseStringToken returns the token value for a STRING token expression.
@@ -1572,7 +1594,19 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 // runModule handles a top-level "(module ...)" command.
 // It compiles/instantiates the module and makes it the current module.
 func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
-	wasmBytes, err := r.compileModuleExpr(cmd.moduleExpr)
+	var (
+		wasmBytes []byte
+		err       error
+	)
+	if cmd.quotedWAT != "" {
+		src := cmd.quotedWAT
+		if trimmed := strings.TrimSpace(src); !strings.HasPrefix(trimmed, "(module") {
+			src = "(module\n" + src + "\n)"
+		}
+		wasmBytes, err = r.compileWAT(src)
+	} else {
+		wasmBytes, err = r.compileModuleExpr(cmd.moduleExpr)
+	}
 	if err != nil {
 		res.status = false
 		res.detail = fmt.Sprintf("module compile failed: %v", err)
