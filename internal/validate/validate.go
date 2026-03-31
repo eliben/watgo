@@ -1108,6 +1108,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		entryHeight        int
 		paramTypes         []ValueType
 		resultTypes        []ValueType
+		localInit          []bool
 		sawElse            bool
 		enteredUnreachable bool
 		unreachable        bool
@@ -1120,6 +1121,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		kind:        controlKindBlock,
 		entryHeight: 0,
 		resultTypes: append([]ValueType(nil), ft.Results...),
+		localInit:   append([]bool(nil), localInitialized...),
 	})
 
 	currentFrameUnreachable := func() bool {
@@ -1339,6 +1341,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				entryHeight:        len(stack) - len(params),
 				paramTypes:         params,
 				resultTypes:        results,
+				localInit:          append([]bool(nil), localInitialized...),
 				enteredUnreachable: currentFrameUnreachable(),
 				unreachable:        currentFrameUnreachable(),
 			})
@@ -1373,6 +1376,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				entryHeight:        len(stack) - len(params),
 				paramTypes:         params,
 				resultTypes:        results,
+				localInit:          append([]bool(nil), localInitialized...),
 				enteredUnreachable: currentFrameUnreachable(),
 				unreachable:        currentFrameUnreachable(),
 			})
@@ -1412,6 +1416,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				entryHeight:        len(stack) - len(params),
 				paramTypes:         params,
 				resultTypes:        results,
+				localInit:          append([]bool(nil), localInitialized...),
 				enteredUnreachable: currentFrameUnreachable(),
 				unreachable:        currentFrameUnreachable(),
 			})
@@ -1431,6 +1436,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			validateFrameResult(insCtx, frame, "then-branch")
 			truncateStack(frame.entryHeight + len(frame.paramTypes))
+			localInitialized = append(localInitialized[:0], frame.localInit...)
 			frame.sawElse = true
 			frame.unreachable = frame.enteredUnreachable
 			controlStack[len(controlStack)-1] = frame
@@ -3886,6 +3892,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 					validateFrameResult(insCtx, frame, "loop")
 				}
 
+				localInitialized = append(localInitialized[:0], frame.localInit...)
 				truncateStack(frame.entryHeight)
 				appendStackValues(valuesOf(frame.resultTypes))
 				continue
