@@ -6,19 +6,23 @@ type Type interface {
 }
 
 var basicTypes = map[string]bool{
-	"i32":       true,
-	"i64":       true,
-	"f32":       true,
-	"f64":       true,
-	"v128":      true,
-	"funcref":   true,
-	"nullref":   true,
-	"externref": true,
-	"anyref":    true,
-	"eqref":     true,
-	"i31ref":    true,
-	"structref": true,
-	"arrayref":  true,
+	"i32":           true,
+	"i64":           true,
+	"f32":           true,
+	"f64":           true,
+	"v128":          true,
+	"funcref":       true,
+	"nullfuncref":   true,
+	"nullref":       true,
+	"externref":     true,
+	"exnref":        true,
+	"nullexnref":    true,
+	"nullexternref": true,
+	"anyref":        true,
+	"eqref":         true,
+	"i31ref":        true,
+	"structref":     true,
+	"arrayref":      true,
 }
 
 // BasicType is a type that can be described by a single keyword, e.g.

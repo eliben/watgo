@@ -181,6 +181,8 @@ function decodeValue(arg) {
     case 'structref':
     case 'arrayref':
     case 'nullref':
+    case 'nullfuncref':
+    case 'nullexternref':
     case 'v128':
       if (arg.null) {
         return null;
@@ -243,6 +245,12 @@ function encodeValue(valueType, value) {
         return { type: valueType, null: true };
       }
       throw new Error('non-null nullref result');
+    case 'nullfuncref':
+    case 'nullexternref':
+      if (value === null) {
+        return { type: valueType, null: true };
+      }
+      throw new Error(`non-null ${valueType} result`);
     case 'i31ref':
       if (value === null) {
         return { type: valueType, null: true };

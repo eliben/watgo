@@ -764,6 +764,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	var diags diag.ErrorList
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
+	declaredFuncs := declaredFunctionRefs(m)
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 	if m.StartFuncIndex != nil {
 		if *m.StartFuncIndex >= totalFuncCount {
@@ -845,7 +846,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		if hints != nil && i < len(hints.Funcs) {
 			funcHints = &hints.Funcs[i]
 		}
-		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, funcHints)
+		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, declaredFuncs, funcHints)
 		for _, err := range funcErrs {
 			diags.Addf("%s: %v", fnCtx, err)
 		}
@@ -1024,7 +1025,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, hints *valhint.FuncHints) diag.ErrorList {
+func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
 	funcImportCount := uint32(len(funcImportTypeIdx))
@@ -3832,6 +3833,10 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: ref.func function index %d out of range", insCtx, ins.FuncIndex)
 				continue
 			}
+			if !declaredFuncs[ins.FuncIndex] {
+				diags.Addf("%s: undeclared function reference", insCtx)
+				continue
+			}
 			typeIdx, ok := functionTypeIndexAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
 			if !ok {
 				diags.Addf("%s: ref.func function index %d has invalid type", insCtx, ins.FuncIndex)
@@ -3947,6 +3952,38 @@ func moduleFunctionCount(m *Module) uint32 {
 		}
 	}
 	return count
+}
+
+// declaredFunctionRefs returns the function indices declared for ref.func in
+// function bodies. We derive this from module-level declaration sites only:
+// function exports, global initializers, and element segments.
+func declaredFunctionRefs(m *Module) map[uint32]bool {
+	declared := make(map[uint32]bool)
+	for _, exp := range m.Exports {
+		if exp.Kind == ExternalKindFunction {
+			declared[exp.Index] = true
+		}
+	}
+	for _, g := range m.Globals {
+		for _, ins := range g.Init {
+			if ins.Kind == InstrRefFunc {
+				declared[ins.FuncIndex] = true
+			}
+		}
+	}
+	for _, elem := range m.Elements {
+		for _, idx := range elem.FuncIndices {
+			declared[idx] = true
+		}
+		for _, expr := range elem.Exprs {
+			for _, ins := range expr {
+				if ins.Kind == InstrRefFunc {
+					declared[ins.FuncIndex] = true
+				}
+			}
+		}
+	}
+	return declared
 }
 
 func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) (FuncType, *Function, bool) {

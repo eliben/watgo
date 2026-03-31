@@ -3751,9 +3751,13 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 			return wasmir.RefTypeFunc(true), true
 		case "extern":
 			return wasmir.RefTypeExtern(true), true
+		case "exn":
+			return wasmir.RefTypeExtern(true), true
 		case "none":
 			return wasmir.RefTypeNone(true), true
 		case "noextern":
+			return wasmir.RefTypeNoExtern(true), true
+		case "noexn":
 			return wasmir.RefTypeNoExtern(true), true
 		case "nofunc":
 			return wasmir.RefTypeNoFunc(true), true
@@ -4135,8 +4139,16 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 			return wasmir.RefTypeFunc(true), true
 		case "nullref":
 			return wasmir.RefTypeNone(true), true
+		case "nullfuncref":
+			return wasmir.RefTypeNoFunc(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
+		case "exnref":
+			return wasmir.RefTypeExtern(true), true
+		case "nullexnref":
+			return wasmir.RefTypeNoExtern(true), true
+		case "nullexternref":
+			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
 			return wasmir.RefTypeAny(true), true
 		case "eqref":
@@ -4169,8 +4181,16 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 			return wasmir.RefTypeFunc(true), true
 		case "nullref":
 			return wasmir.RefTypeNone(true), true
+		case "nullfuncref":
+			return wasmir.RefTypeNoFunc(true), true
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
+		case "exnref":
+			return wasmir.RefTypeExtern(true), true
+		case "nullexnref":
+			return wasmir.RefTypeNoExtern(true), true
+		case "nullexternref":
+			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
 			return wasmir.RefTypeAny(true), true
 		case "eqref":
@@ -4200,9 +4220,13 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 		return wasmir.RefTypeFunc(nullable), true
 	case "extern":
 		return wasmir.RefTypeExtern(nullable), true
+	case "exn":
+		return wasmir.RefTypeExtern(nullable), true
 	case "none":
 		return wasmir.RefTypeNone(nullable), true
 	case "noextern":
+		return wasmir.RefTypeNoExtern(nullable), true
+	case "noexn":
 		return wasmir.RefTypeNoExtern(nullable), true
 	case "nofunc":
 		return wasmir.RefTypeNoFunc(nullable), true
