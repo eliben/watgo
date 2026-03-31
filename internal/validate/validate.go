@@ -1675,9 +1675,57 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(base)
 			appendStackValues(valuesOf(calleeType.Results))
+		case InstrReturnCall:
+			if ins.FuncIndex >= totalFuncCount {
+				diags.Addf("%s: return_call function index %d out of range", insCtx, ins.FuncIndex)
+				continue
+			}
+			calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
+			calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
+			if !ok {
+				diags.Addf("%s: return_call target %s has invalid type index", insCtx, calleeCtx)
+				continue
+			}
+			if !ensureCurrentFrameOperands(len(calleeType.Params), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: return_call to %s needs %d operands", insCtx, calleeCtx, len(calleeType.Params))
+				continue
+			}
+			base := len(stack) - len(calleeType.Params)
+			operandsOK := true
+			for j := range calleeType.Params {
+				want := valueAt(calleeType.Params, j)
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
+					diags.Addf("%s: return_call to %s expects operand %s to be %s", insCtx, calleeCtx, operandLabelFromDef(calleeDef, j), validatedValueName(want))
+					operandsOK = false
+					break
+				}
+			}
+			if !operandsOK {
+				continue
+			}
+			if len(calleeType.Results) != len(ft.Results) {
+				diags.Addf("%s: return_call result arity mismatch", insCtx)
+				continue
+			}
+			resultsOK := true
+			for j := range ft.Results {
+				if !matchesExpectedValueInModule(m, validatedValueFromType(calleeType.Results[j]), valueAt(ft.Results, j)) {
+					diags.Addf("%s: return_call result %d must be %s", insCtx, j, validatedValueName(valueAt(ft.Results, j)))
+					resultsOK = false
+					break
+				}
+			}
+			if !resultsOK {
+				continue
+			}
+			markCurrentFrameUnreachable()
 		case InstrCallIndirect:
 			if int(ins.TableIndex) >= len(m.Tables) {
 				diags.Addf("%s: call_indirect table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if !matchesExpectedValueInModule(m, validatedValueFromType(m.Tables[ins.TableIndex].RefType), validatedValueFromType(RefTypeFunc(true))) {
+				diags.Addf("%s: call_indirect table must have function references", insCtx)
 				continue
 			}
 			if int(ins.CallTypeIndex) >= len(m.Types) {
@@ -1714,6 +1762,63 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(base)
 			appendStackValues(valuesOf(calleeType.Results))
+		case InstrReturnCallIndirect:
+			if int(ins.TableIndex) >= len(m.Tables) {
+				diags.Addf("%s: return_call_indirect table index %d out of range", insCtx, ins.TableIndex)
+				continue
+			}
+			if !matchesExpectedValueInModule(m, validatedValueFromType(m.Tables[ins.TableIndex].RefType), validatedValueFromType(RefTypeFunc(true))) {
+				diags.Addf("%s: return_call_indirect table must have function references", insCtx)
+				continue
+			}
+			if int(ins.CallTypeIndex) >= len(m.Types) {
+				diags.Addf("%s: return_call_indirect type index %d out of range", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			calleeType := m.Types[ins.CallTypeIndex]
+			if calleeType.Kind != TypeDefKindFunc {
+				diags.Addf("%s: return_call_indirect type index %d is not a function type", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			need := len(calleeType.Params) + 1
+			if !ensureCurrentFrameOperands(need, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: return_call_indirect needs %d operands", insCtx, need)
+				continue
+			}
+			addrType := tableAddressType(m, ins.TableIndex)
+			if !stackValueHasType(len(stack)-1, addrType) {
+				diags.Addf("%s: return_call_indirect expects %s table index operand", insCtx, addrType)
+				continue
+			}
+			base := len(stack) - 1 - len(calleeType.Params)
+			ok := true
+			for j := range calleeType.Params {
+				want := valueAt(calleeType.Params, j)
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
+					diags.Addf("%s: return_call_indirect expects operand %d to be %s", insCtx, j, validatedValueName(want))
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			if len(calleeType.Results) != len(ft.Results) {
+				diags.Addf("%s: return_call_indirect result arity mismatch", insCtx)
+				continue
+			}
+			resultsOK := true
+			for j := range ft.Results {
+				if !matchesExpectedValueInModule(m, validatedValueFromType(calleeType.Results[j]), valueAt(ft.Results, j)) {
+					diags.Addf("%s: return_call_indirect result %d must be %s", insCtx, j, validatedValueName(valueAt(ft.Results, j)))
+					resultsOK = false
+					break
+				}
+			}
+			if !resultsOK {
+				continue
+			}
+			markCurrentFrameUnreachable()
 		case InstrCallRef:
 			if int(ins.CallTypeIndex) >= len(m.Types) {
 				diags.Addf("%s: call_ref type index %d out of range", insCtx, ins.CallTypeIndex)
@@ -1729,7 +1834,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 				diags.Addf("%s: call_ref needs %d operands", insCtx, need)
 				continue
 			}
-			calleeRefWant := validatedValue{Type: RefTypeIndexed(ins.CallTypeIndex, false)}
+			calleeRefWant := validatedValue{Type: RefTypeIndexed(ins.CallTypeIndex, true)}
 			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), calleeRefWant) {
 				diags.Addf("%s: call_ref expects operand of type %s", insCtx, validatedValueName(calleeRefWant))
 				continue
@@ -1749,6 +1854,55 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(base)
 			appendStackValues(valuesOf(calleeType.Results))
+		case InstrReturnCallRef:
+			if int(ins.CallTypeIndex) >= len(m.Types) {
+				diags.Addf("%s: return_call_ref type index %d out of range", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			calleeType := m.Types[ins.CallTypeIndex]
+			if calleeType.Kind != TypeDefKindFunc {
+				diags.Addf("%s: return_call_ref type index %d is not a function type", insCtx, ins.CallTypeIndex)
+				continue
+			}
+			need := len(calleeType.Params) + 1
+			if !ensureCurrentFrameOperands(need, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: return_call_ref needs %d operands", insCtx, need)
+				continue
+			}
+			calleeRefWant := validatedValue{Type: RefTypeIndexed(ins.CallTypeIndex, true)}
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), calleeRefWant) {
+				diags.Addf("%s: return_call_ref expects operand of type %s", insCtx, validatedValueName(calleeRefWant))
+				continue
+			}
+			base := len(stack) - 1 - len(calleeType.Params)
+			ok := true
+			for j := range calleeType.Params {
+				want := valueAt(calleeType.Params, j)
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
+					diags.Addf("%s: return_call_ref expects operand %d to be %s", insCtx, j, validatedValueName(want))
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			if len(calleeType.Results) != len(ft.Results) {
+				diags.Addf("%s: return_call_ref result arity mismatch", insCtx)
+				continue
+			}
+			resultsOK := true
+			for j := range ft.Results {
+				if !matchesExpectedValueInModule(m, validatedValueFromType(calleeType.Results[j]), valueAt(ft.Results, j)) {
+					diags.Addf("%s: return_call_ref result %d must be %s", insCtx, j, validatedValueName(valueAt(ft.Results, j)))
+					resultsOK = false
+					break
+				}
+			}
+			if !resultsOK {
+				continue
+			}
+			markCurrentFrameUnreachable()
 		case InstrStructNew:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {

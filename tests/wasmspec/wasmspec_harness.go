@@ -2482,6 +2482,9 @@ func matchesExpectedFailureText(got, want string) bool {
 	if wantLower == "null reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}
+	if wantLower == "null function reference" {
+		return strings.Contains(gotLower, "dereferencing a null pointer")
+	}
 	if wantLower == "null i31 reference" {
 		return strings.Contains(gotLower, "dereferencing a null pointer")
 	}

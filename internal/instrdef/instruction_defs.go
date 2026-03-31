@@ -226,6 +226,7 @@ var instructionDefs = []InstructionDef{
 	directOp(InstrF32Min, "f32.min", 0x96, binarySig(ValueTypeF32, ValueTypeF32, ValueTypeF32)),
 	directOp(InstrF32Max, "f32.max", 0x97, binarySig(ValueTypeF32, ValueTypeF32, ValueTypeF32)),
 	directOp(InstrF32ConvertI32S, "f32.convert_i32_s", 0xb2, unarySig(ValueTypeI32, ValueTypeF32)),
+	directOp(InstrF32DemoteF64, "f32.demote_f64", 0xb6, unarySig(ValueTypeF64, ValueTypeF32)),
 
 	directOp(InstrF64Eq, "f64.eq", 0x61, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeI32)),
 	directOp(InstrF64Le, "f64.le", 0x65, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeI32)),
@@ -242,6 +243,7 @@ var instructionDefs = []InstructionDef{
 	directOp(InstrF64Min, "f64.min", 0xa4, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeF64)),
 	directOp(InstrF64Max, "f64.max", 0xa5, binarySig(ValueTypeF64, ValueTypeF64, ValueTypeF64)),
 	directOp(InstrF64ConvertI64S, "f64.convert_i64_s", 0xb9, unarySig(ValueTypeI64, ValueTypeF64)),
+	directOp(InstrF64PromoteF32, "f64.promote_f32", 0xbb, unarySig(ValueTypeF32, ValueTypeF64)),
 
 	directOp(InstrI32ReinterpretF32, "i32.reinterpret_f32", 0xbc, unarySig(ValueTypeF32, ValueTypeI32)),
 	directOp(InstrI64ReinterpretF64, "i64.reinterpret_f64", 0xbd, unarySig(ValueTypeF64, ValueTypeI64)),
@@ -554,6 +556,7 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(specialInstr(InstrBrOnCastFail, "br_on_cast_fail"), 0xfb, 0x19),
 	withBinaryOpcode(specialInstr(InstrBrTable, "br_table"), 0, 0x0e),
 	withBinaryOpcode(specialInstr(InstrCallIndirect, "call_indirect"), 0, 0x11),
+	withBinaryOpcode(specialInstr(InstrReturnCallIndirect, "return_call_indirect"), 0, 0x13),
 	withBinaryOpcode(specialInstr(InstrMemoryCopy, "memory.copy"), 0xfc, 0x0a),
 	withBinaryOpcode(specialInstr(InstrMemoryFill, "memory.fill"), 0xfc, 0x0b),
 	withBinaryOpcode(specialInstr(InstrMemoryGrow, "memory.grow"), 0, 0x40),
@@ -580,7 +583,9 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(plainOperandInstr(InstrBrOnNonNull, "br_on_non_null", 1, LoweringOperandBranchDepth), 0, 0xd6),
 	withBinaryOpcode(plainOperandInstr(InstrBrOnNull, "br_on_null", 1, LoweringOperandBranchDepth), 0, 0xd5),
 	withBinaryOpcode(plainOperandInstr(InstrCall, "call", 1, LoweringOperandCall), 0, 0x10),
+	withBinaryOpcode(plainOperandInstr(InstrReturnCall, "return_call", 1, LoweringOperandCall), 0, 0x12),
 	withBinaryOpcode(plainOperandInstr(InstrCallRef, "call_ref", 1, LoweringOperandCallRef), 0, 0x14),
+	withBinaryOpcode(plainOperandInstr(InstrReturnCallRef, "return_call_ref", 1, LoweringOperandCallRef), 0, 0x15),
 	withBinaryOpcode(plainOperandInstr(InstrDataDrop, "data.drop", 1, LoweringOperandDataIndex), 0xfc, 0x09),
 	withBinaryOpcode(plainOperandInstr(InstrElemDrop, "elem.drop", 1, LoweringOperandElemIndex), 0xfc, 0x0d),
 	withBinaryOpcode(plainOperandInstr(InstrF32Const, "f32.const", 1, LoweringOperandF32Const), 0, 0x43),

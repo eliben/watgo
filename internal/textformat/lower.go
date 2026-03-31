@@ -1136,6 +1136,9 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 	case "call_indirect":
 		fl.lowerFoldedCallIndirect(fi)
 		return
+	case "return_call_indirect":
+		fl.lowerFoldedReturnCallIndirect(fi)
+		return
 	case "select":
 		fl.lowerFoldedSelect(fi)
 		return
@@ -1263,20 +1266,34 @@ func hasSelectResultClause(fi *FoldedInstr) bool {
 // lowerFoldedCallIndirect lowers folded "(call_indirect ...)" preserving
 // operand evaluation order for nested argument expressions.
 func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
+	fl.lowerFoldedIndirectCall(fi, wasmir.InstrCallIndirect, "call_indirect")
+}
+
+// lowerFoldedReturnCallIndirect lowers folded "(return_call_indirect ...)"
+// preserving operand evaluation order for nested argument expressions.
+func (fl *functionLowerer) lowerFoldedReturnCallIndirect(fi *FoldedInstr) {
+	fl.lowerFoldedIndirectCall(fi, wasmir.InstrReturnCallIndirect, "return_call_indirect")
+}
+
+// lowerFoldedIndirectCall lowers folded indirect-call forms with optional
+// table operand and type-use clauses.
+func (fl *functionLowerer) lowerFoldedIndirectCall(fi *FoldedInstr, kind wasmir.InstrKind, opName string) {
 	var typeRef string
 	tableIndex := uint32(0)
 	seenTableOperand := false
 	var params []wasmir.ValueType
 	var results []wasmir.ValueType
+	seenResultClause := false
+	seenOperands := false
 	for _, arg := range fi.Args {
 		if arg.Operand != nil {
 			if seenTableOperand {
-				fl.diagf(arg.Operand.Loc(), "call_indirect expects at most one table operand")
+				fl.diagf(arg.Operand.Loc(), "%s expects at most one table operand", opName)
 				continue
 			}
 			idx, ok := lowerTableIndexOperand(arg.Operand, fl.mod.tablesByName)
 			if !ok {
-				fl.diagf(arg.Operand.Loc(), "invalid call_indirect table operand")
+				fl.diagf(arg.Operand.Loc(), "invalid %s table operand", opName)
 				continue
 			}
 			tableIndex = idx
@@ -1285,52 +1302,64 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 		}
 		nested, ok := arg.Instr.(*FoldedInstr)
 		if !ok {
+			seenOperands = true
 			fl.lowerInstruction(arg.Instr)
 			continue
 		}
-		if nested.Name == "type" {
-			if typeRef != "" {
-				fl.diagf(nested.Loc(), "duplicate call_indirect type clause")
+		switch nested.Name {
+		case "type":
+			if seenOperands || len(params) > 0 || len(results) > 0 || typeRef != "" {
+				fl.diagf(nested.Loc(), "unexpected token in %s signature", opName)
 				continue
 			}
 			ref, ok := parseFoldedTypeClauseRef(nested)
 			if !ok {
-				fl.diagf(nested.Loc(), "invalid call_indirect type clause")
+				fl.diagf(nested.Loc(), "invalid %s type clause", opName)
 				continue
 			}
 			typeRef = ref
-			continue
-		}
-		if nested.Name == "param" {
+		case "param":
+			if seenOperands || seenResultClause {
+				fl.diagf(nested.Loc(), "unexpected token in %s signature", opName)
+				continue
+			}
 			for _, paramArg := range nested.Args {
+				if _, isID := paramArg.Operand.(*IdOperand); isID {
+					fl.diagf(paramArg.Operand.Loc(), "named %s params are not supported", opName)
+					continue
+				}
 				vt, ok := lowerFoldedBlockTypeArg(paramArg, fl.mod.typesByName)
 				if !ok {
-					fl.diagf(nested.Loc(), "invalid call_indirect param clause")
+					fl.diagf(nested.Loc(), "invalid %s param clause", opName)
 					params = nil
 					break
 				}
 				params = append(params, vt)
 			}
-			continue
-		}
-		if nested.Name == "result" {
+		case "result":
+			if seenOperands {
+				fl.diagf(nested.Loc(), "unexpected token in %s body", opName)
+				continue
+			}
+			seenResultClause = true
 			for _, resultArg := range nested.Args {
 				vt, ok := lowerFoldedBlockTypeArg(resultArg, fl.mod.typesByName)
 				if !ok {
-					fl.diagf(nested.Loc(), "invalid call_indirect result clause")
+					fl.diagf(nested.Loc(), "invalid %s result clause", opName)
 					results = nil
 					break
 				}
 				results = append(results, vt)
 			}
-			continue
+		default:
+			seenOperands = true
+			fl.lowerInstruction(nested)
 		}
-		fl.lowerInstruction(nested)
 	}
 	if typeRef == "" {
 		typeIdx := fl.mod.internFuncType(params, results, "")
 		fl.emitInstr(wasmir.Instruction{
-			Kind:          wasmir.InstrCallIndirect,
+			Kind:          kind,
 			CallTypeIndex: typeIdx,
 			TableIndex:    tableIndex,
 			SourceLoc:     fi.loc.String(),
@@ -1339,17 +1368,17 @@ func (fl *functionLowerer) lowerFoldedCallIndirect(fi *FoldedInstr) {
 	}
 	typeIdx, refType, ok := fl.resolveTypeRef(typeRef)
 	if !ok {
-		fl.diagf(fi.Loc(), "unknown call_indirect type use %q", typeRef)
+		fl.diagf(fi.Loc(), "unknown %s type use %q", opName, typeRef)
 		return
 	}
 	if len(params) > 0 || len(results) > 0 {
 		if !equalValueTypeSlices(params, refType.Params) || !equalValueTypeSlices(results, refType.Results) {
-			fl.diagf(fi.Loc(), "call_indirect type clause mismatch referenced type")
+			fl.diagf(fi.Loc(), "%s type clause mismatch referenced type", opName)
 			return
 		}
 	}
 	fl.emitInstr(wasmir.Instruction{
-		Kind:          wasmir.InstrCallIndirect,
+		Kind:          kind,
 		CallTypeIndex: typeIdx,
 		TableIndex:    tableIndex,
 		SourceLoc:     fi.loc.String(),

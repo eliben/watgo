@@ -204,8 +204,11 @@ const (
 	InstrLocalSet
 	InstrLocalTee
 	InstrCall
+	InstrReturnCall
 	InstrCallIndirect
+	InstrReturnCallIndirect
 	InstrCallRef
+	InstrReturnCallRef
 	InstrBlock
 	InstrLoop
 	InstrIf
@@ -628,7 +631,9 @@ const (
 	InstrI64TruncF64S
 	InstrI64TruncF64U
 	InstrF32ConvertI32S
+	InstrF32DemoteF64
 	InstrF64ConvertI64S
+	InstrF64PromoteF32
 	InstrF32Add
 	InstrF32Sub
 	InstrF32Mul

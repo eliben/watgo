@@ -1277,6 +1277,12 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, FuncIndex: funcIndex}, nil
+	case wasmir.InstrReturnCall:
+		funcIndex, err := readU32Immediate(r, def.TextName, "immediate")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, FuncIndex: funcIndex}, nil
 	case wasmir.InstrCallIndirect:
 		typeIndex, err := readU32Immediate(r, def.TextName, "type")
 		if err != nil {
@@ -1287,7 +1293,23 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex, TableIndex: tableIndex}, nil
+	case wasmir.InstrReturnCallIndirect:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		tableIndex, err := readU32Immediate(r, def.TextName, "table")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex, TableIndex: tableIndex}, nil
 	case wasmir.InstrCallRef:
+		typeIndex, err := readU32Immediate(r, def.TextName, "type")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex}, nil
+	case wasmir.InstrReturnCallRef:
 		typeIndex, err := readU32Immediate(r, def.TextName, "type")
 		if err != nil {
 			return wasmir.Instruction{}, err
