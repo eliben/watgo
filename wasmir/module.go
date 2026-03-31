@@ -649,9 +649,12 @@ const (
 	InstrF32Eq
 	InstrF32Lt
 	InstrF32Gt
+	InstrF32Le
+	InstrF32Ge
 	InstrF32Ne
 	InstrF32Min
 	InstrF32Max
+	InstrF32Copysign
 	InstrF32Ceil
 	InstrF32Floor
 	InstrF32Trunc
@@ -669,7 +672,12 @@ const (
 	InstrF64Trunc
 	InstrF64Nearest
 	InstrF64Eq
+	InstrF64Ne
+	InstrF64Lt
+	InstrF64Gt
 	InstrF64Le
+	InstrF64Ge
+	InstrF64Copysign
 	InstrI32ReinterpretF32
 	InstrI64ReinterpretF64
 	InstrF32ReinterpretI32
