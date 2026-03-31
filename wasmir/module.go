@@ -1084,6 +1084,10 @@ type Instruction struct {
 	// true.
 	BlockTypeIndex uint32
 
+	// SelectType is the optional explicit result type immediate used by typed
+	// select. Nil means the instruction uses the untyped select form.
+	SelectType *ValueType
+
 	// I32Const is the immediate for InstrI32Const.
 	I32Const int32
 

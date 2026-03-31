@@ -2420,11 +2420,28 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			v2 := stackValue(len(stack) - 2)
 			v1 := stackValue(len(stack) - 3)
+			truncateStack(len(stack) - 3)
+			if ins.SelectType != nil {
+				if !validModuleValueType(m, *ins.SelectType) {
+					diags.Addf("%s: invalid select result type %s", insCtx, *ins.SelectType)
+					continue
+				}
+				want := validatedValueFromType(*ins.SelectType)
+				if !matchesExpectedValueInModule(m, v1, want) || !matchesExpectedValueInModule(m, v2, want) {
+					diags.Addf("%s: select expects operands of type %s", insCtx, validatedValueName(want))
+					continue
+				}
+				appendStackValue(want)
+				continue
+			}
 			if !sameValidatedValue(v1, v2) {
 				diags.Addf("%s: select expects same-typed value operands", insCtx)
 				continue
 			}
-			truncateStack(len(stack) - 3)
+			if (!v1.Unknown && v1.Type.IsRef()) || (!v2.Unknown && v2.Type.IsRef()) {
+				diags.Addf("%s: select expects non-reference value operands", insCtx)
+				continue
+			}
 			switch {
 			case v1.Unknown && !v2.Unknown:
 				appendStackValue(v2)

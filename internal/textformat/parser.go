@@ -1316,8 +1316,17 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	}
 
 	name := elem.tok.value
+	// A few instructions have custom flat syntax that can absorb trailing
+	// clauses such as `(result ...)` or `(type ...)`. Give those parsers a
+	// first chance here; when they return ok=false we intentionally fall
+	// through to the ordinary plain-instruction switch below.
 	if instructionHasSyntaxClass(name, instrdef.InstrSyntaxStructured) || name == "else" || name == "end" {
 		if instr, next, ok := p.parsePlainStructuredInstr(name, elems, cursor); ok {
+			return instr, next
+		}
+	}
+	if name == "select" {
+		if instr, next, ok := p.parsePlainSelectInstr(elems, cursor); ok {
 			return instr, next
 		}
 	}
@@ -1639,6 +1648,34 @@ func (p *Parser) parsePlainCallIndirectInstr(elems []*SExpr, cursor int) (Instru
 	}
 
 	return &FoldedInstr{Name: "call_indirect", Args: args, loc: elems[cursor].loc}, next
+}
+
+// parsePlainSelectInstr parses raw select syntax with optional trailing result
+// clauses used by typed select.
+//
+// Examples:
+//
+//	select
+//	select (result i32)
+//	select (result i32) (result)
+func (p *Parser) parsePlainSelectInstr(elems []*SExpr, cursor int) (Instruction, int, bool) {
+	args := make([]FoldedArg, 0, 2)
+	next := cursor + 1
+	for next < len(elems) {
+		clause := elems[next]
+		if !clause.IsList() || clause.HeadKeyword() != "result" {
+			break
+		}
+		nested := p.parseFoldedInstr(clause)
+		if nested != nil {
+			args = append(args, FoldedArg{Instr: nested})
+		}
+		next++
+	}
+	if len(args) == 0 {
+		return nil, cursor, false
+	}
+	return &FoldedInstr{Name: "select", Args: args, loc: elems[cursor].loc}, next, true
 }
 
 // parsePlainControlTypeOperand parses a single-result blocktype clause used by

@@ -438,17 +438,17 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				break
 			}
 			imp.Kind = wasmir.ExternalKindTable
-				table := wasmir.Table{
-					AddressType:  addrType,
-					Min:          min,
-					RefType:      refType,
-					ImportModule: moduleName,
-					ImportName:   name,
-				}
-				if hasMax {
-					table.Max = &max
-				}
-				imp.Table = table
+			table := wasmir.Table{
+				AddressType:  addrType,
+				Min:          min,
+				RefType:      refType,
+				ImportModule: moduleName,
+				ImportName:   name,
+			}
+			if hasMax {
+				table.Max = &max
+			}
+			imp.Table = table
 		case importKindMemoryCode:
 			addrType, min, hasMax, max, err := decodeMemoryLimits(r)
 			if err != nil {
@@ -456,16 +456,16 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 				break
 			}
 			imp.Kind = wasmir.ExternalKindMemory
-				mem := wasmir.Memory{
-					AddressType:  addrType,
-					Min:          min,
-					ImportModule: moduleName,
-					ImportName:   name,
-				}
-				if hasMax {
-					mem.Max = &max
-				}
-				imp.Memory = mem
+			mem := wasmir.Memory{
+				AddressType:  addrType,
+				Min:          min,
+				ImportModule: moduleName,
+				ImportName:   name,
+			}
+			if hasMax {
+				mem.Max = &max
+			}
+			imp.Memory = mem
 		case importKindGlobalCode:
 			ty, err := decodeValueTypeFromReader(r)
 			if err != nil {
@@ -550,11 +550,11 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 				diags.Addf("table[%d]: invalid init expr: %v", i, err)
 				break
 			}
-				table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType, Init: init}
-				if hasMax {
-					table.Max = &max
-				}
-				out = append(out, table)
+			table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType, Init: init}
+			if hasMax {
+				table.Max = &max
+			}
+			out = append(out, table)
 			continue
 		}
 		refType, err := decodeValueTypeFromLeadingByte(r, first)
@@ -570,11 +570,11 @@ func decodeTableSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Table {
 			diags.Addf("table[%d]: invalid limits: %v", i, err)
 			break
 		}
-			table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType}
-			if hasMax {
-				table.Max = &max
-			}
-			out = append(out, table)
+		table := wasmir.Table{AddressType: addrType, Min: min, RefType: refType}
+		if hasMax {
+			table.Max = &max
+		}
+		out = append(out, table)
 	}
 	return out
 }
@@ -592,11 +592,11 @@ func decodeMemorySection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Memory
 			diags.Addf("memory[%d]: invalid limits: %v", i, err)
 			break
 		}
-			mem := wasmir.Memory{AddressType: addrType, Min: min}
-			if hasMax {
-				mem.Max = &max
-			}
-			out = append(out, mem)
+		mem := wasmir.Memory{AddressType: addrType, Min: min}
+		if hasMax {
+			mem.Max = &max
+		}
+		out = append(out, mem)
 	}
 	return out
 }
@@ -1167,6 +1167,20 @@ func decodeInstructionFromOpcode(r *bytes.Reader, op byte) (wasmir.Instruction, 
 		}
 		return decodeInstructionFromDef(r, def)
 	default:
+		if op == 0x1c {
+			n, err := readU32Immediate(r, "select", "result arity")
+			if err != nil {
+				return wasmir.Instruction{}, err
+			}
+			if n != 1 {
+				return wasmir.Instruction{}, fmt.Errorf("select invalid result arity %d", n)
+			}
+			vt, err := decodeValueTypeFromReader(r)
+			if err != nil {
+				return wasmir.Instruction{}, fmt.Errorf("select invalid result type: %w", err)
+			}
+			return wasmir.Instruction{Kind: wasmir.InstrSelect, SelectType: &vt}, nil
+		}
 		def, ok := instrdef.LookupInstructionByBinary(0, uint32(op))
 		if !ok {
 			return wasmir.Instruction{}, fmt.Errorf("unsupported opcode 0x%x", op)
@@ -1573,7 +1587,7 @@ func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instru
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
-			ins.BlockType = &vt
+		ins.BlockType = &vt
 		return ins, nil
 	}
 	if err := r.UnreadByte(); err != nil {

@@ -711,6 +711,9 @@ func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment
 // encodeSimpleInstruction emits one no-immediate instruction that is described
 // in wasmir's shared instruction catalog.
 func encodeSimpleInstruction(out *bytes.Buffer, instr wasmir.Instruction) bool {
+	if instr.Kind == wasmir.InstrSelect && instr.SelectType != nil {
+		return false
+	}
 	def, ok := instrdef.LookupInstructionByKind(instr.Kind)
 	if !ok || def.Binary.Encoding != instrdef.BinaryEncodingSimple {
 		return false
@@ -750,6 +753,16 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 		writeInstructionOpcode(out, instr.Kind)
 		encodeBlockType(out, funcIdx, instrIdx, instructionName(instr.Kind), instr, diags)
+	case wasmir.InstrSelect:
+		if instr.SelectType != nil {
+			out.WriteByte(0x1c)
+			writeULEB128(out, 1)
+			if !encodeValueType(out, *instr.SelectType) {
+				diags.Addf("func[%d] instruction[%d]: unsupported select result type %s", funcIdx, instrIdx, *instr.SelectType)
+			}
+			return
+		}
+		writeInstructionOpcode(out, instr.Kind)
 	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.BranchDepth)

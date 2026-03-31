@@ -1139,6 +1139,10 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.lowerFoldedCallIndirect(fi)
 		return
 	}
+	if fi.Name == "select" {
+		fl.lowerFoldedSelect(fi)
+		return
+	}
 	if fi.Name == "br_on_cast" || fi.Name == "br_on_cast_fail" {
 		fl.lowerFoldedBrOnCast(fi)
 		return
@@ -1181,6 +1185,81 @@ func isStaticallyBottomInstr(in Instruction) bool {
 		switch ins.Name {
 		case "unreachable", "return", "br", "br_table":
 			return true
+		}
+	}
+	return false
+}
+
+// lowerFoldedSelect lowers both folded and raw typed-select syntax.
+//
+// Text select may be:
+//   - implicit: (select v1 v2 cond)
+//   - typed:    (select (result t) v1 v2 cond)
+//   - raw:      select (result t) (result)
+//
+// The explicit result clauses contribute a total of exactly one result type.
+func (fl *functionLowerer) lowerFoldedSelect(fi *FoldedInstr) {
+	var resultTypes []wasmir.ValueType
+	explicitInstrArgs := 0
+	bottomInstrArgs := 0
+	seenOperands := false
+
+	for _, arg := range fi.Args {
+		if arg.Instr != nil {
+			nested, ok := arg.Instr.(*FoldedInstr)
+			if ok && nested.Name == "result" && !seenOperands {
+				for _, resultArg := range nested.Args {
+					vt, ok := lowerFoldedBlockTypeArg(resultArg, fl.mod.typesByName)
+					if !ok {
+						fl.diagf(nested.Loc(), "invalid select result clause")
+						resultTypes = nil
+						break
+					}
+					resultTypes = append(resultTypes, vt)
+				}
+				continue
+			}
+
+			seenOperands = true
+			explicitInstrArgs++
+			if isStaticallyBottomInstr(arg.Instr) {
+				bottomInstrArgs++
+			}
+			fl.lowerInstruction(arg.Instr)
+			continue
+		}
+		if arg.Operand != nil {
+			seenOperands = true
+			fl.diagf(arg.Operand.Loc(), "select does not accept plain operands")
+			continue
+		}
+		fl.diagf(fi.Loc(), "invalid folded argument in %q", fi.Name)
+	}
+
+	if len(resultTypes) > 1 || (len(fi.Args) > 0 && len(resultTypes) == 0 && hasSelectResultClause(fi)) {
+		fl.diagf(fi.Loc(), "invalid result arity")
+		return
+	}
+
+	ins := wasmir.Instruction{Kind: wasmir.InstrSelect, SourceLoc: fi.loc.String()}
+	if len(resultTypes) == 1 {
+		vt := resultTypes[0]
+		ins.SelectType = &vt
+	}
+	fl.emitInstrWithHint(ins, valhint.InstrHints{
+		ExplicitInstrArgs: uint8(explicitInstrArgs),
+		BottomInstrArgs:   uint8(bottomInstrArgs),
+	})
+}
+
+func hasSelectResultClause(fi *FoldedInstr) bool {
+	for _, arg := range fi.Args {
+		nested, ok := arg.Instr.(*FoldedInstr)
+		if ok && nested.Name == "result" {
+			return true
+		}
+		if arg.Operand != nil || arg.Instr != nil {
+			return false
 		}
 	}
 	return false
