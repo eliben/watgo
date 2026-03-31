@@ -1123,31 +1123,26 @@ func (fl *functionLowerer) lowerFoldedInstr(fi *FoldedInstr) {
 		fl.diagf("", "nil folded instruction")
 		return
 	}
-	if fi.Name == "if" {
+	switch fi.Name {
+	case "if":
 		fl.lowerFoldedIf(fi)
 		return
-	}
-	if fi.Name == "block" {
+	case "block":
 		fl.lowerFoldedBlock(fi, false)
 		return
-	}
-	if fi.Name == "loop" {
+	case "loop":
 		fl.lowerFoldedBlock(fi, true)
 		return
-	}
-	if fi.Name == "call_indirect" {
+	case "call_indirect":
 		fl.lowerFoldedCallIndirect(fi)
 		return
-	}
-	if fi.Name == "select" {
+	case "select":
 		fl.lowerFoldedSelect(fi)
 		return
-	}
-	if fi.Name == "br_on_cast" || fi.Name == "br_on_cast_fail" {
+	case "br_on_cast", "br_on_cast_fail":
 		fl.lowerFoldedBrOnCast(fi)
 		return
-	}
-	if fi.Name == "ref.test" || fi.Name == "ref.cast" {
+	case "ref.test", "ref.cast":
 		fl.lowerFoldedRefTypeTestCast(fi)
 		return
 	}
