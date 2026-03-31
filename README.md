@@ -5,7 +5,7 @@
 
 ----
 
-**W**eb**A**ssembly **T**oolkit for **Go** (**watgo**) to parse [WASM]([url](https://www.w3.org/TR/wasm-core-2/)) text or decode WASM binary into internal data
+**W**eb**A**ssembly **T**oolkit for **Go** (**watgo**) to parse [WASM](https://www.w3.org/TR/wasm-core-2/) text or decode WASM binary into internal data
 structures, allowing conversions, etc.
 
 ### WASM feature support and proposals
