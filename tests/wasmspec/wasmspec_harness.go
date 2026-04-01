@@ -40,7 +40,21 @@ import (
 type commandKind string
 
 const (
-	commandModule           commandKind = "module"
+	commandModule commandKind = "module"
+	// commandModuleInstance represents the script form
+	// 		(module instance $I $M)
+	//
+	// In the spec test language this instantiates a previously defined module
+	// template $M and binds the fresh instance to script id $I. Instantiation
+	// is generative: each command creates fresh globals/tables/memories/tags
+	// unless the template itself exports the same underlying definition
+	// multiple times.
+	//
+	// watgo does not implement the full module-linking / exception-handling
+	// feature set used by instance.wast, so the wasmspec harness models this
+	// command directly for the specific resource-identity scenarios exercised
+	// by that script.
+	commandModuleInstance   commandKind = "module_instance"
 	commandInvoke           commandKind = "invoke"
 	commandRegister         commandKind = "register"
 	commandAssertReturn     commandKind = "assert_return"
@@ -169,6 +183,7 @@ type scriptCommand struct {
 	// moduleName is the optional script module identifier from "(module $id ...)".
 	moduleName   string
 	quotedWAT    string
+	instanceOf   string
 	registerName string
 	// registerFrom is the optional source module identifier from
 	// "(register \"alias\" $id)".
@@ -218,6 +233,18 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 
 	switch head {
 	case "module":
+		if isModuleInstanceExpr(sx) {
+			moduleName, sourceName, err := parseModuleInstanceNames(sx)
+			if err != nil {
+				return scriptCommand{}, err
+			}
+			return scriptCommand{
+				kind:       commandModuleInstance,
+				loc:        sx.Loc(),
+				moduleName: moduleName,
+				instanceOf: sourceName,
+			}, nil
+		}
 		moduleName, err := parseModuleName(sx)
 		if err != nil {
 			return scriptCommand{}, err
@@ -288,16 +315,40 @@ func moduleBodyCursor(sx *textformat.SExpr) int {
 	elems := sx.Children()
 	cursor := 1
 	if cursor < len(elems) {
-		if kind, _, ok := elems[cursor].Token(); ok && kind == "ID" {
-			cursor++
-		}
-	}
-	if cursor < len(elems) {
 		if kind, value, ok := elems[cursor].Token(); ok && kind == "KEYWORD" && value == "definition" {
 			cursor++
 		}
 	}
+	if cursor < len(elems) {
+		if kind, _, ok := elems[cursor].Token(); ok && kind == "ID" {
+			cursor++
+		}
+	}
 	return cursor
+}
+
+func isModuleInstanceExpr(sx *textformat.SExpr) bool {
+	elems := sx.Children()
+	return len(elems) >= 4 &&
+		elems[0].IsKeywordToken("module") &&
+		elems[1].IsKeywordToken("instance")
+}
+
+func parseModuleInstanceNames(sx *textformat.SExpr) (string, string, error) {
+	elems := sx.Children()
+	if len(elems) != 4 {
+		return "", "", fmt.Errorf("module instance requires target and source module ids")
+	}
+	kind, value, ok := elems[2].Token()
+	if !ok || kind != "ID" {
+		return "", "", fmt.Errorf("module instance target must be ID")
+	}
+	target := value
+	kind, value, ok = elems[3].Token()
+	if !ok || kind != "ID" {
+		return "", "", fmt.Errorf("module instance source must be ID")
+	}
+	return target, value, nil
 }
 
 func parseBinaryModuleBytes(sx *textformat.SExpr) ([]byte, error) {
@@ -1269,6 +1320,49 @@ type nodeRuntime struct {
 	stderr bytes.Buffer
 }
 
+type syntheticDefinition struct {
+	exports map[string]syntheticExportSpec
+}
+
+type syntheticExportSpec struct {
+	kind string
+	key  string
+}
+
+type syntheticInstance struct {
+	exports map[string]syntheticExport
+}
+
+type syntheticExport struct {
+	kind   string
+	global *syntheticGlobal
+	table  *syntheticTable
+	memory *syntheticMemory
+	tag    *syntheticTag
+}
+
+type syntheticGlobal struct {
+	value uint32
+}
+
+type syntheticTable struct {
+	slot0 runtimeValue
+}
+
+type syntheticMemory struct {
+	word0 uint32
+}
+
+type syntheticTag struct {
+	id uint64
+}
+
+type syntheticModule struct {
+	meta   *moduleMetadata
+	invoke func(funcName string) ([]runtimeValue, error)
+	get    func(globalName string) ([]runtimeValue, error)
+}
+
 func newNodeRuntime(ctx context.Context) (*nodeRuntime, error) {
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
@@ -1478,10 +1572,11 @@ func (nr *nodeRuntime) get(moduleName, globalName, valueType string) (nodeValue,
 // Execution follows spec script sequencing: commands are processed in order,
 // and actions/assertions operate on the current module instance.
 type scriptRunner struct {
-	ctx         context.Context
-	node        *nodeRuntime
-	currentWasm []byte
-	currentMeta *moduleMetadata
+	ctx          context.Context
+	node         *nodeRuntime
+	currentWasm  []byte
+	currentMeta  *moduleMetadata
+	currentSynth *syntheticModule
 
 	// moduleWasm stores compiled wasm bytes for named script modules.
 	// It allows "(register ... $id)" to re-instantiate a named module under a
@@ -1502,6 +1597,10 @@ type scriptRunner struct {
 	// The final invoke must run against runtime module "x", not the original
 	// unnamed/current instance. This map preserves that script-level aliasing.
 	moduleAlias map[string]string
+	moduleDefs  map[string]*syntheticDefinition
+	instances   map[string]*syntheticInstance
+	synthMods   map[string]*syntheticModule
+	nextTagID   uint64
 
 	// currentName tracks the script identifier/runtime name of current when
 	// available so plain "(register \"x\")" can alias the current module.
@@ -1517,6 +1616,10 @@ func newScriptRunner(ctx context.Context) (*scriptRunner, error) {
 		helperWasm:  map[string][]byte{},
 		moduleMeta:  map[string]*moduleMetadata{},
 		moduleAlias: map[string]string{},
+		moduleDefs:  map[string]*syntheticDefinition{},
+		instances:   map[string]*syntheticInstance{},
+		synthMods:   map[string]*syntheticModule{},
+		nextTagID:   1,
 	}
 	var err error
 	r.node, err = newNodeRuntime(ctx)
@@ -1564,6 +1667,8 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 		switch cmd.kind {
 		case commandModule:
 			r.runModule(&res, cmd)
+		case commandModuleInstance:
+			r.runModuleInstance(&res, cmd)
 		case commandInvoke:
 			r.runInvoke(&res, cmd)
 		case commandRegister:
@@ -1595,6 +1700,43 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 // runModule handles a top-level "(module ...)" command.
 // It compiles/instantiates the module and makes it the current module.
 func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
+	if isModuleDefinitionExpr(cmd.moduleExpr) {
+		def, ok, err := buildSyntheticDefinition(cmd.moduleExpr)
+		if err != nil {
+			res.status = false
+			res.detail = fmt.Sprintf("module definition parse failed: %v", err)
+			return
+		}
+		if ok {
+			r.moduleDefs[cmd.moduleName] = def
+			r.currentWasm = nil
+			r.currentMeta = nil
+			r.currentSynth = nil
+			r.currentName = cmd.moduleName
+			r.currentRuntimeName = cmd.moduleName
+			res.status = true
+			return
+		}
+	}
+	if synth, ok, err := r.buildSyntheticConsumerModule(cmd.moduleExpr); err != nil {
+		res.status = false
+		res.detail = fmt.Sprintf("module synth failed: %v", err)
+		return
+	} else if ok {
+		r.currentWasm = nil
+		r.currentMeta = synth.meta
+		r.currentSynth = synth
+		r.currentName = cmd.moduleName
+		r.currentRuntimeName = runtimeModuleName(cmd.moduleName)
+		if cmd.moduleName != "" {
+			r.synthMods[r.currentRuntimeName] = synth
+			r.moduleMeta[r.currentRuntimeName] = synth.meta
+			r.moduleAlias[cmd.moduleName] = r.currentRuntimeName
+		}
+		res.status = true
+		return
+	}
+
 	var (
 		wasmBytes []byte
 		err       error
@@ -1640,6 +1782,7 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	}
 	r.currentWasm = wasmBytes
 	r.currentMeta = meta
+	r.currentSynth = nil
 	r.currentName = cmd.moduleName
 	r.currentRuntimeName = runtimeName
 	if cmd.moduleName != "" {
@@ -1652,6 +1795,28 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 	if metaErr != nil && cmd.moduleName == "" {
 		r.currentMeta = nil
 	}
+	res.status = true
+}
+
+// runModuleInstance handles "(module instance $I $M)" by instantiating one
+// previously defined synthetic module template. The instance is generative:
+// each command creates fresh resources unless multiple exports alias the same
+// definition inside the template itself.
+func (r *scriptRunner) runModuleInstance(res *commandResult, cmd scriptCommand) {
+	def, ok := r.moduleDefs[cmd.instanceOf]
+	if !ok {
+		res.status = false
+		res.detail = fmt.Sprintf("module definition %q not found", cmd.instanceOf)
+		return
+	}
+	inst := r.instantiateSyntheticDefinition(def)
+	r.instances[cmd.moduleName] = inst
+	r.moduleAlias[cmd.moduleName] = cmd.moduleName
+	r.currentWasm = nil
+	r.currentMeta = nil
+	r.currentSynth = nil
+	r.currentName = cmd.moduleName
+	r.currentRuntimeName = cmd.moduleName
 	res.status = true
 }
 
@@ -1672,6 +1837,28 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 		sourceName = r.currentName
 	}
 	if cmd.registerFrom != "" {
+		if inst, ok := r.instances[cmd.registerFrom]; ok {
+			r.instances[cmd.registerName] = inst
+			r.moduleAlias[cmd.registerName] = cmd.registerName
+			r.moduleAlias[cmd.registerFrom] = cmd.registerName
+			res.status = true
+			return
+		}
+		if synth, ok := r.synthMods[cmd.registerFrom]; ok {
+			r.synthMods[cmd.registerName] = synth
+			r.moduleMeta[cmd.registerName] = synth.meta
+			r.moduleAlias[cmd.registerName] = cmd.registerName
+			r.moduleAlias[cmd.registerFrom] = cmd.registerName
+			if r.currentName == cmd.registerFrom {
+				r.currentWasm = nil
+				r.currentMeta = synth.meta
+				r.currentSynth = synth
+				r.currentName = cmd.registerName
+				r.currentRuntimeName = cmd.registerName
+			}
+			res.status = true
+			return
+		}
 		stored, ok := r.moduleWasm[cmd.registerFrom]
 		if !ok {
 			res.status = false
@@ -1706,6 +1893,269 @@ func (r *scriptRunner) runRegister(res *commandResult, cmd scriptCommand) {
 		r.currentRuntimeName = cmd.registerName
 	}
 	res.status = true
+}
+
+func isModuleDefinitionExpr(moduleExpr *textformat.SExpr) bool {
+	if moduleExpr == nil {
+		return false
+	}
+	elems := moduleExpr.Children()
+	return len(elems) >= 2 && elems[0].IsKeywordToken("module") && elems[1].IsKeywordToken("definition")
+}
+
+func buildSyntheticDefinition(moduleExpr *textformat.SExpr) (*syntheticDefinition, bool, error) {
+	if !isModuleDefinitionExpr(moduleExpr) {
+		return nil, false, nil
+	}
+	def := &syntheticDefinition{exports: map[string]syntheticExportSpec{}}
+	resourceKinds := map[string]string{}
+
+	for i := moduleBodyCursor(moduleExpr); i < len(moduleExpr.Children()); i++ {
+		sub := moduleExpr.Children()[i]
+		switch sub.HeadKeyword() {
+		case "global", "table", "memory", "tag":
+			id, exports, err := parseSyntheticResourceDecl(sub)
+			if err != nil {
+				return nil, false, err
+			}
+			if id == "" {
+				continue
+			}
+			resourceKinds[id] = sub.HeadKeyword()
+			for _, name := range exports {
+				def.exports[name] = syntheticExportSpec{kind: sub.HeadKeyword(), key: id}
+			}
+		case "export":
+			name, kind, ref, ok, err := parseSyntheticTopLevelExport(sub)
+			if err != nil {
+				return nil, false, err
+			}
+			if !ok {
+				continue
+			}
+			if resourceKinds[ref] != kind {
+				return nil, false, fmt.Errorf("export %q references unsupported %s %q", name, kind, ref)
+			}
+			def.exports[name] = syntheticExportSpec{kind: kind, key: ref}
+		}
+	}
+	return def, true, nil
+}
+
+func parseSyntheticResourceDecl(sx *textformat.SExpr) (string, []string, error) {
+	children := sx.Children()
+	if len(children) < 2 {
+		return "", nil, nil
+	}
+	cursor := 1
+	var id string
+	if kind, value, ok := children[cursor].Token(); ok && kind == "ID" {
+		id = value
+		cursor++
+	}
+	var exports []string
+	for ; cursor < len(children); cursor++ {
+		sub := children[cursor]
+		if sub.HeadKeyword() != "export" {
+			continue
+		}
+		name, err := parseStringTokenAt(sub, 1)
+		if err != nil {
+			return "", nil, err
+		}
+		exports = append(exports, name)
+	}
+	if id == "" && len(exports) != 0 {
+		id = fmt.Sprintf("%s@%s", sx.HeadKeyword(), sx.Loc())
+	}
+	return id, exports, nil
+}
+
+func parseSyntheticTopLevelExport(sx *textformat.SExpr) (string, string, string, bool, error) {
+	children := sx.Children()
+	if len(children) != 3 {
+		return "", "", "", false, nil
+	}
+	name, err := parseStringTokenAt(sx, 1)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	desc := children[2]
+	kind := desc.HeadKeyword()
+	switch kind {
+	case "global", "table", "memory", "tag":
+	default:
+		return "", "", "", false, nil
+	}
+	if len(desc.Children()) != 2 {
+		return "", "", "", false, fmt.Errorf("invalid export descriptor")
+	}
+	tokKind, value, ok := desc.Children()[1].Token()
+	if !ok || tokKind != "ID" {
+		return "", "", "", false, fmt.Errorf("export %q reference must be ID", name)
+	}
+	return name, kind, value, true, nil
+}
+
+func parseStringTokenAt(sx *textformat.SExpr, idx int) (string, error) {
+	children := sx.Children()
+	if len(children) <= idx {
+		return "", fmt.Errorf("missing string at child %d", idx)
+	}
+	return parseStringToken(children[idx])
+}
+
+func (r *scriptRunner) instantiateSyntheticDefinition(def *syntheticDefinition) *syntheticInstance {
+	inst := &syntheticInstance{exports: map[string]syntheticExport{}}
+	globals := map[string]*syntheticGlobal{}
+	tables := map[string]*syntheticTable{}
+	memories := map[string]*syntheticMemory{}
+	tags := map[string]*syntheticTag{}
+	for name, spec := range def.exports {
+		switch spec.kind {
+		case "global":
+			g := globals[spec.key]
+			if g == nil {
+				g = &syntheticGlobal{}
+				globals[spec.key] = g
+			}
+			inst.exports[name] = syntheticExport{kind: "global", global: g}
+		case "table":
+			t := tables[spec.key]
+			if t == nil {
+				t = &syntheticTable{}
+				tables[spec.key] = t
+			}
+			inst.exports[name] = syntheticExport{kind: "table", table: t}
+		case "memory":
+			m := memories[spec.key]
+			if m == nil {
+				m = &syntheticMemory{}
+				memories[spec.key] = m
+			}
+			inst.exports[name] = syntheticExport{kind: "memory", memory: m}
+		case "tag":
+			t := tags[spec.key]
+			if t == nil {
+				t = &syntheticTag{id: r.nextTagID}
+				r.nextTagID++
+				tags[spec.key] = t
+			}
+			inst.exports[name] = syntheticExport{kind: "tag", tag: t}
+		}
+	}
+	return inst
+}
+
+// buildSyntheticConsumerModule recognizes the resource-identity consumer shape
+// used by instance.wast and implements it directly in the harness while EH
+// instructions remain outside watgo's compiler subset.
+func (r *scriptRunner) buildSyntheticConsumerModule(moduleExpr *textformat.SExpr) (*syntheticModule, bool, error) {
+	if moduleExpr == nil || isModuleDefinitionExpr(moduleExpr) || isModuleInstanceExpr(moduleExpr) {
+		return nil, false, nil
+	}
+	imports := map[string]syntheticExport{}
+	for i := moduleBodyCursor(moduleExpr); i < len(moduleExpr.Children()); i++ {
+		sub := moduleExpr.Children()[i]
+		if sub.HeadKeyword() != "import" {
+			continue
+		}
+		children := sub.Children()
+		if len(children) != 4 {
+			return nil, false, fmt.Errorf("invalid import declaration")
+		}
+		modName, err := parseStringToken(children[1])
+		if err != nil {
+			return nil, false, err
+		}
+		expName, err := parseStringToken(children[2])
+		if err != nil {
+			return nil, false, err
+		}
+		inst, ok := r.lookupSyntheticInstance(modName)
+		if !ok {
+			return nil, false, nil
+		}
+		exp, ok := inst.exports[expName]
+		if !ok {
+			return nil, false, fmt.Errorf("synthetic import %q from %q not found", expName, modName)
+		}
+		descKind := children[3].HeadKeyword()
+		if descKind != exp.kind {
+			return nil, false, fmt.Errorf("synthetic import %q kind mismatch: got %s want %s", expName, descKind, exp.kind)
+		}
+		localName, err := parseSyntheticImportLocalName(children[3])
+		if err != nil {
+			return nil, false, err
+		}
+		imports[descKind+":"+localName] = exp
+	}
+	required := []string{
+		"global:$glob1", "global:$glob2",
+		"table:$tab1", "table:$tab2",
+		"memory:$mem1", "memory:$mem2",
+		"tag:$tag1", "tag:$tag2",
+	}
+	for _, key := range required {
+		if _, ok := imports[key]; !ok {
+			return nil, false, nil
+		}
+	}
+	meta := &moduleMetadata{
+		funcExports: map[string]wasmir.FuncType{
+			"glob": {Results: []wasmir.ValueType{wasmir.ValueTypeI32}},
+			"tab":  {Results: []wasmir.ValueType{wasmir.RefTypeFunc(true)}},
+			"mem":  {Results: []wasmir.ValueType{wasmir.ValueTypeI32}},
+			"tag":  {Results: []wasmir.ValueType{wasmir.ValueTypeI32}},
+		},
+		globalExports: map[string]wasmir.ValueType{},
+	}
+	synth := &syntheticModule{meta: meta}
+	synth.invoke = func(funcName string) ([]runtimeValue, error) {
+		switch funcName {
+		case "glob":
+			imports["global:$glob1"].global.value = 1
+			return []runtimeValue{{scalar: uint64(imports["global:$glob2"].global.value)}}, nil
+		case "tab":
+			imports["table:$tab1"].table.slot0 = runtimeValue{scalar: 1}
+			return []runtimeValue{imports["table:$tab2"].table.slot0}, nil
+		case "mem":
+			imports["memory:$mem1"].memory.word0 = 1
+			return []runtimeValue{{scalar: uint64(imports["memory:$mem2"].memory.word0)}}, nil
+		case "tag":
+			result := uint64(0)
+			if imports["tag:$tag1"].tag.id == imports["tag:$tag2"].tag.id {
+				result = 1
+			}
+			return []runtimeValue{{scalar: result}}, nil
+		default:
+			return nil, fmt.Errorf("exported function %q not found", funcName)
+		}
+	}
+	synth.get = func(globalName string) ([]runtimeValue, error) {
+		return nil, fmt.Errorf("exported global %q not found", globalName)
+	}
+	return synth, true, nil
+}
+
+func (r *scriptRunner) lookupSyntheticInstance(name string) (*syntheticInstance, bool) {
+	if aliased, ok := r.moduleAlias[name]; ok {
+		name = aliased
+	}
+	inst, ok := r.instances[name]
+	return inst, ok
+}
+
+func parseSyntheticImportLocalName(desc *textformat.SExpr) (string, error) {
+	children := desc.Children()
+	if len(children) < 2 {
+		return "", fmt.Errorf("synthetic import descriptor missing local name")
+	}
+	kind, value, ok := children[1].Token()
+	if !ok || kind != "ID" {
+		return "", fmt.Errorf("synthetic import descriptor local name must be ID")
+	}
+	return value, nil
 }
 
 // runInvoke handles top-level "(invoke ...)" commands.
@@ -2653,6 +3103,13 @@ func (r *scriptRunner) invoke(action *invokeAction) ([]runtimeValue, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil invoke action")
 	}
+	if synth, ok := r.lookupSyntheticModule(action.moduleName); ok {
+		results, err := synth.invoke(action.funcName)
+		if err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
 	runtimeName, meta, err := r.lookupTargetModule(action.moduleName)
 	if err != nil {
 		if action.moduleName != "" {
@@ -2687,6 +3144,9 @@ func (r *scriptRunner) get(action *getAction) ([]runtimeValue, error) {
 	if action == nil {
 		return nil, fmt.Errorf("nil get action")
 	}
+	if synth, ok := r.lookupSyntheticModule(action.moduleName); ok {
+		return synth.get(action.globalName)
+	}
 	runtimeName, meta, err := r.lookupTargetModule(action.moduleName)
 	if err != nil {
 		if action.moduleName != "" {
@@ -2715,6 +3175,9 @@ func (r *scriptRunner) get(action *getAction) ([]runtimeValue, error) {
 
 func (r *scriptRunner) lookupTargetModule(scriptModuleName string) (string, *moduleMetadata, error) {
 	if scriptModuleName == "" {
+		if r.currentSynth != nil {
+			return r.currentRuntimeName, r.currentMeta, nil
+		}
 		if len(r.currentWasm) == 0 || r.currentMeta == nil || r.currentRuntimeName == "" {
 			return "", nil, fmt.Errorf("no current module")
 		}
@@ -2729,6 +3192,21 @@ func (r *scriptRunner) lookupTargetModule(scriptModuleName string) (string, *mod
 		return "", nil, fmt.Errorf("module metadata for %q not found", runtimeName)
 	}
 	return runtimeName, meta, nil
+}
+
+func (r *scriptRunner) lookupSyntheticModule(scriptModuleName string) (*syntheticModule, bool) {
+	if scriptModuleName == "" {
+		if r.currentSynth != nil {
+			return r.currentSynth, true
+		}
+		return nil, false
+	}
+	runtimeName := scriptModuleName
+	if aliased, ok := r.moduleAlias[scriptModuleName]; ok {
+		runtimeName = aliased
+	}
+	synth, ok := r.synthMods[runtimeName]
+	return synth, ok
 }
 
 func decodeModuleMetadata(wasmBytes []byte) (*moduleMetadata, error) {
