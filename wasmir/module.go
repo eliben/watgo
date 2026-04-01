@@ -651,6 +651,7 @@ const (
 	InstrF32Gt
 	InstrF32Le
 	InstrF32Ge
+	InstrF32Abs
 	InstrF32Ne
 	InstrF32Min
 	InstrF32Max
@@ -664,6 +665,7 @@ const (
 	InstrF64Mul
 	InstrF64Div
 	InstrF64Sqrt
+	InstrF64Abs
 	InstrF64Neg
 	InstrF64Min
 	InstrF64Max
