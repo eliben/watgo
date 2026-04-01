@@ -624,12 +624,20 @@ const (
 	InstrI32TruncF32U
 	InstrI32TruncF64S
 	InstrI32TruncF64U
+	InstrI32TruncSatF32S
+	InstrI32TruncSatF32U
+	InstrI32TruncSatF64S
+	InstrI32TruncSatF64U
 	InstrI64ExtendI32S
 	InstrI64ExtendI32U
 	InstrI64TruncF32S
 	InstrI64TruncF32U
 	InstrI64TruncF64S
 	InstrI64TruncF64U
+	InstrI64TruncSatF32S
+	InstrI64TruncSatF32U
+	InstrI64TruncSatF64S
+	InstrI64TruncSatF64U
 	InstrF32ConvertI32S
 	InstrF32ConvertI32U
 	InstrF32ConvertI64S

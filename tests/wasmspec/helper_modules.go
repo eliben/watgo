@@ -156,6 +156,7 @@ func (r *scriptRunner) planInvoke(sig wasmir.FuncType, scriptArgs []scriptValue)
 // behavior, such as float NaN payloads, v128 values, or anyref classification.
 func (r *scriptRunner) buildInvokeHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	hasV128Args := funcTypeHasV128Args(sig)
+	hasFloatArgs := funcTypeHasFloatArgs(sig)
 	needsExactTypeIdentity := funcTypeNeedsExactTypeIdentity(sig)
 
 	switch {
@@ -171,7 +172,7 @@ func (r *scriptRunner) buildInvokeHelper(sig wasmir.FuncType, scriptArgs []scrip
 		return r.buildFloatResultHelper(sig, scriptArgs)
 	case len(sig.Results) == 1 && sig.Results[0].Kind == wasmir.ValueKindV128:
 		return r.buildV128ResultHelper(sig, scriptArgs)
-	case hasV128Args:
+	case hasV128Args || hasFloatArgs:
 		return r.buildPassthroughHelper(sig, scriptArgs)
 	default:
 		return nil, helperDecodeNormal, nil
@@ -462,6 +463,15 @@ func isFloatType(vt wasmir.ValueType) bool {
 
 func isAnyrefType(vt wasmir.ValueType) bool {
 	return vt.Kind == wasmir.ValueKindRef && vt.HeapType.Kind == wasmir.HeapKindAny
+}
+
+func funcTypeHasFloatArgs(sig wasmir.FuncType) bool {
+	for _, vt := range sig.Params {
+		if isFloatType(vt) {
+			return true
+		}
+	}
+	return false
 }
 
 // encodeDirectInvokeArgs prepares the ordinary invoke path where the target

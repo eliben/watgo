@@ -3057,7 +3057,8 @@ func matchesExpectedFailureText(got, want string) bool {
 			strings.Contains(gotLower, "remainder by zero")
 	}
 	if wantLower == "integer overflow" {
-		return strings.Contains(gotLower, "divide result unrepresentable")
+		return strings.Contains(gotLower, "divide result unrepresentable") ||
+			strings.Contains(gotLower, "float unrepresentable in integer range")
 	}
 	if wantLower == "invalid conversion to integer" {
 		return strings.Contains(gotLower, "float unrepresentable in integer range")
