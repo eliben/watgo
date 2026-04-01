@@ -88,7 +88,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 
 		switch sectionID {
 		case 0:
-			// Ignore custom sections in this MVP decoder.
+			decodeCustomSection(sr, &diags)
 		case sectionTypeID:
 			if seenType {
 				diags.Addf("duplicate type section")
@@ -242,6 +242,22 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 		return out, diags
 	}
 	return out, nil
+}
+
+func decodeCustomSection(r *bytes.Reader, diags *diag.ErrorList) {
+	nameLen, err := readU32(r)
+	if err != nil {
+		diags.Addf("custom section: invalid name length: %v", err)
+		return
+	}
+	name, err := readN(r, int(nameLen))
+	if err != nil {
+		diags.Addf("custom section: invalid name: %v", err)
+		return
+	}
+	if !utf8.Valid(name) {
+		diags.Addf("custom section: malformed UTF-8 in name")
+	}
 }
 
 func sectionOrderRank(sectionID byte) int {
