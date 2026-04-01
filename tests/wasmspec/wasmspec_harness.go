@@ -207,7 +207,18 @@ func parseScript(src string) ([]scriptCommand, error) {
 
 	var out []scriptCommand
 	var diags diag.ErrorList
-	for i, sx := range top {
+	for i := 0; i < len(top); i++ {
+		sx := top[i]
+		if isInlineModuleFieldExpr(sx) {
+			cmd, next, err := parseInlineModuleCommand(top, i)
+			if err != nil {
+				diags.Addf("command[%d] at %s: %v", i, sx.Loc(), err)
+				continue
+			}
+			out = append(out, cmd)
+			i = next - 1
+			continue
+		}
 		cmd, err := parseCommand(sx)
 		if err != nil {
 			diags.Addf("command[%d] at %s: %v", i, sx.Loc(), err)
@@ -219,6 +230,30 @@ func parseScript(src string) ([]scriptCommand, error) {
 		return nil, diags
 	}
 	return out, nil
+}
+
+// parseInlineModuleCommand coalesces consecutive top-level module fields into
+// one synthetic module command.
+//
+// Wasmspec allows scripts consisting of raw module fields such as:
+//   (func) (memory 0) (func (export "f"))
+// which is shorthand for one anonymous "(module ...)" command. We preserve the
+// original field text and let runModule wrap it in "(module ...)" later.
+func parseInlineModuleCommand(top []*textformat.SExpr, start int) (scriptCommand, int, error) {
+	var fields []string
+	i := start
+	for ; i < len(top) && isInlineModuleFieldExpr(top[i]); i++ {
+		text, err := sexprToWAT(top[i].WithoutAnnotations())
+		if err != nil {
+			return scriptCommand{}, start, fmt.Errorf("inline module field[%d]: %w", i-start, err)
+		}
+		fields = append(fields, text)
+	}
+	return scriptCommand{
+		kind:      commandModule,
+		loc:       top[start].Loc(),
+		quotedWAT: strings.Join(fields, "\n"),
+	}, i, nil
 }
 
 // parseCommand decodes one top-level command expression.
@@ -309,6 +344,18 @@ func parseModuleName(sx *textformat.SExpr) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func isInlineModuleFieldExpr(sx *textformat.SExpr) bool {
+	if sx == nil {
+		return false
+	}
+	switch sx.WithoutAnnotations().HeadKeyword() {
+	case "type", "rec", "import", "func", "table", "memory", "global", "export", "start", "elem", "data", "tag":
+		return true
+	default:
+		return false
+	}
 }
 
 func moduleBodyCursor(sx *textformat.SExpr) int {

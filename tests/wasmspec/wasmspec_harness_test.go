@@ -58,3 +58,22 @@ func TestParseScript_AssertReturnV128Const(t *testing.T) {
 		t.Fatalf("got lanes %v, want %v", got[0].v128, want)
 	}
 }
+
+func TestParseScript_InlineModuleFields(t *testing.T) {
+	src := `(func) (memory 0) (func (export "f"))`
+
+	commands, err := parseScript(src)
+	if err != nil {
+		t.Fatalf("parseScript failed: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("got %d commands, want 1", len(commands))
+	}
+	cmd := commands[0]
+	if cmd.kind != commandModule {
+		t.Fatalf("got kind %q, want %q", cmd.kind, commandModule)
+	}
+	if got, want := cmd.quotedWAT, "(func)\n(memory 0)\n(func (export \"f\"))"; got != want {
+		t.Fatalf("got quotedWAT %q, want %q", got, want)
+	}
+}
