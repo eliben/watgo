@@ -1280,6 +1280,8 @@ func sexprToWAT(sx *textformat.SExpr) (string, error) {
 			// source text. Re-quote without re-escaping so sequences like "\a7"
 			// remain byte escapes in reconstructed WAT.
 			return `"` + value + `"`, nil
+		case "ID":
+			return formatIDTokenForWAT(value), nil
 		case "EMPTY":
 			return "()", nil
 		default:
@@ -1297,6 +1299,65 @@ func sexprToWAT(sx *textformat.SExpr) (string, error) {
 		parts = append(parts, text)
 	}
 	return "(" + strings.Join(parts, " ") + ")", nil
+}
+
+func formatIDTokenForWAT(value string) string {
+	if value == "" || value[0] != '$' {
+		return value
+	}
+	id := value[1:]
+	if id != "" {
+		rawOK := true
+		for _, r := range id {
+			if !isWATIDChar(r) {
+				rawOK = false
+				break
+			}
+		}
+		if rawOK {
+			return value
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(`$"`)
+	for i := 0; i < len(id); i++ {
+		ch := id[i]
+		switch ch {
+		case '\t':
+			b.WriteString(`\09`)
+		case '\n':
+			b.WriteString(`\0a`)
+		case '\r':
+			b.WriteString(`\0d`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		default:
+			if ch >= 0x20 && ch < 0x7f {
+				b.WriteByte(ch)
+			} else {
+				fmt.Fprintf(&b, `\%02x`, ch)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func isWATIDChar(r rune) bool {
+	if '0' <= r && r <= '9' || 'A' <= r && r <= 'Z' || 'a' <= r && r <= 'z' {
+		return true
+	}
+	switch r {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '/':
+		return true
+	case ':', '<', '=', '>', '?', '@', '\\', '^', '_', '`', '|', '~':
+		return true
+	default:
+		return false
+	}
 }
 
 // commandResult stores harness outcome for one command in execution order.

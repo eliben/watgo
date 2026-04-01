@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
@@ -4079,6 +4080,29 @@ func decodeWATStringBytes(s string) ([]byte, error) {
 			lo := hexNibble(s[i+2])
 			out = append(out, (hi<<4)|lo)
 			i += 2
+			continue
+		}
+		if next == 'u' && i+2 < len(s) && s[i+2] == '{' {
+			end := strings.IndexByte(s[i+3:], '}')
+			if end < 0 {
+				return nil, fmt.Errorf("malformed Unicode escape")
+			}
+			hexDigits := s[i+3 : i+3+end]
+			if hexDigits == "" {
+				return nil, fmt.Errorf("malformed Unicode escape")
+			}
+			value, err := strconv.ParseUint(hexDigits, 16, 32)
+			if err != nil || value > utf8.MaxRune {
+				return nil, fmt.Errorf("malformed Unicode escape")
+			}
+			r := rune(value)
+			if !utf8.ValidRune(r) {
+				return nil, fmt.Errorf("malformed Unicode escape")
+			}
+			var buf [utf8.UTFMax]byte
+			n := utf8.EncodeRune(buf[:], r)
+			out = append(out, buf[:n]...)
+			i += 2 + end + 1
 			continue
 		}
 		switch next {

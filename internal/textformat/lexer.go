@@ -148,6 +148,9 @@ func (lex *lexer) nextToken() token {
 	}
 
 	if lex.r == '$' {
+		if lex.peekNext() == '"' {
+			return lex.scanQuotedID()
+		}
 		return lex.scanId()
 	} else if isDigit(lex.r) || isSign(lex.r) {
 		return lex.scanNumber()
@@ -239,10 +242,56 @@ func (lex *lexer) skipBlockComment() error {
 func (lex *lexer) scanId() token {
 	startpos := lex.rpos
 	startloc := lex.loc
+	lex.next() // consume '$'
+	if !isIdChar(lex.r) {
+		return lex.errorToken("empty identifier", startloc)
+	}
 	for isIdChar(lex.r) {
 		lex.next()
 	}
 	return token{ID, lex.buf[startpos:lex.rpos], startloc}
+}
+
+func (lex *lexer) scanQuotedID() token {
+	startloc := lex.loc
+	lex.next() // consume '$'
+	strTok := lex.scanString()
+	if strTok.name == ERROR {
+		return strTok
+	}
+	// String-valued identifiers use the source spellings $"...".
+	//
+	// The lexer canonicalizes them immediately into ordinary ID tokens whose
+	// value is the decoded identifier text prefixed with '$'. This makes later
+	// parser/lowering stages treat:
+	//   $"fi"
+	//   $"\66\69"
+	//   $"\u{66}\u{69}"
+	// as the same identifier without every consumer having to understand string
+	// escape syntax separately.
+	//
+	// The raw STRING token payload preserves WAT escapes; decodeWATStringBytes
+	// interprets them into bytes before we validate UTF-8 and form the final ID.
+	if strTok.value == "" {
+		return lex.errorToken("empty identifier", startloc)
+	}
+	if strings.ContainsRune(strTok.value, '\n') || strings.ContainsRune(strTok.value, '\t') {
+		return lex.errorToken("empty identifier", startloc)
+	}
+	decoded, err := decodeWATStringBytes(strTok.value)
+	if err != nil {
+		if strings.Contains(err.Error(), "UTF-8") {
+			return lex.errorToken("malformed UTF-8", startloc)
+		}
+		return lex.errorToken(err.Error(), startloc)
+	}
+	if len(decoded) == 0 {
+		return lex.errorToken("empty identifier", startloc)
+	}
+	if !utf8.Valid(decoded) {
+		return lex.errorToken("malformed UTF-8", startloc)
+	}
+	return token{ID, "$" + string(decoded), startloc}
 }
 
 func (lex *lexer) scanKeyword() token {
