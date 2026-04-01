@@ -10,6 +10,9 @@ import (
 // The text AST preserves source syntax shape, so instructions may be either:
 //   - PlainInstr: linear token form like "local.get 0" / "i32.add"
 //   - FoldedInstr: folded S-expression form like "(i32.add (local.get 0) ...)"
+//   - InstrSeq: a small sequence wrapper for text contexts that syntactically
+//     accept more than one instruction expression, such as global initializers
+//     in invalid spec tests
 //
 // Lowering is the phase that normalizes both forms into canonical wasmir
 // instructions.
@@ -82,6 +85,22 @@ func (*FoldedInstr) isInstr() {}
 // It returns an empty string when location is unavailable.
 func (fi *FoldedInstr) Loc() string {
 	return fi.loc.String()
+}
+
+// InstrSeq preserves a short source-level instruction sequence in places where
+// the grammar usually expects a single expression, but the spec tests may
+// intentionally provide multiple expressions to exercise invalid-module cases.
+type InstrSeq struct {
+	Instrs []Instruction
+	loc    location
+}
+
+func (*InstrSeq) isInstr() {}
+
+// Loc returns the source location of this instruction sequence as
+// "line:column". It returns an empty string when location is unavailable.
+func (is *InstrSeq) Loc() string {
+	return is.loc.String()
 }
 
 // Operand is one operand in plain or folded instruction forms.

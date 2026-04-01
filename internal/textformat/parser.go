@@ -865,12 +865,29 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		p.emitError(sx.loc, "global declaration missing initializer")
 		return gd
 	}
-	initSx := sx.list[cursor]
-	if !initSx.IsList() {
-		p.emitError(initSx.loc, "global initializer must be instruction expression")
+	if len(sx.list[cursor:]) == 1 {
+		// The common case is a single folded const-expression initializer.
+		initSx := sx.list[cursor]
+		if !initSx.IsList() {
+			p.emitError(initSx.loc, "global initializer must be instruction expression")
+			return gd
+		}
+		gd.Init = p.parseFoldedInstr(initSx)
 		return gd
 	}
-	gd.Init = p.parseFoldedInstr(initSx)
+	// Keep multiple trailing instruction expressions as a small sequence node
+	// instead of silently ignoring the extras. This is mainly for invalid spec
+	// tests such as `(global i32 (i32.const 0) (nop))`, where the parser should
+	// preserve the full initializer shape so later stages can reject it.
+	seq := &InstrSeq{loc: sx.list[cursor].loc}
+	for _, initSx := range sx.list[cursor:] {
+		if !initSx.IsList() {
+			p.emitError(initSx.loc, "global initializer must be instruction expression")
+			return gd
+		}
+		seq.Instrs = append(seq.Instrs, p.parseFoldedInstr(initSx))
+	}
+	gd.Init = seq
 	return gd
 }
 

@@ -923,6 +923,12 @@ type DataSegment struct {
 	// MemoryIndex is the target memory index for active segments.
 	MemoryIndex uint32
 
+	// OffsetExpr is the active-segment offset constant expression, when
+	// preserved as instructions. It may contain forms such as global.get that
+	// are valid in constant expressions but cannot be pre-evaluated to
+	// OffsetI64 during text lowering or binary decoding.
+	OffsetExpr []Instruction
+
 	// OffsetType is the const type used by the active segment offset expr.
 	OffsetType ValueType
 
@@ -965,6 +971,12 @@ type ElementSegment struct {
 
 	// TableIndex is the target table index.
 	TableIndex uint32
+
+	// OffsetExpr is the active-segment offset constant expression, when
+	// preserved as instructions. It may contain forms such as global.get that
+	// are valid in constant expressions but cannot be pre-evaluated to
+	// OffsetI64 during text lowering or binary decoding.
+	OffsetExpr []Instruction
 
 	// OffsetType is the const type used by the active segment offset expr.
 	OffsetType ValueType

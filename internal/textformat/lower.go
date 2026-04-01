@@ -245,14 +245,21 @@ func (l *moduleLowerer) collectElemDecls(astm *Module) {
 			if int(tableIndex) < len(l.out.Tables) {
 				offsetType = l.out.Tables[tableIndex].AddressType
 			}
-			offsetValue, ok := l.evalMemoryOffsetConst(ed.Offset, offsetType)
+			offsetExpr, ok := l.lowerConstInstr(ed.Offset)
 			if !ok {
-				l.diags.Addf("elem[%d]: offset must be %s.const", i, offsetType)
+				l.diags.Addf("elem[%d]: unsupported constant offset expression", i)
 				continue
 			}
 			seg.TableIndex = tableIndex
+			seg.OffsetExpr = append([]wasmir.Instruction(nil), offsetExpr.Instrs...)
+			if offsetExpr.Type != offsetType {
+				l.diags.Addf("elem[%d]: offset must have type %s", i, offsetType)
+				continue
+			}
 			seg.OffsetType = offsetType
-			seg.OffsetI64 = offsetValue
+			if offsetValue, ok := l.evalMemoryOffsetConst(ed.Offset, offsetType); ok {
+				seg.OffsetI64 = offsetValue
+			}
 		}
 		if len(ed.Exprs) > 0 {
 			hasSegRefType := false
@@ -533,6 +540,13 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 				l.diags.Addf("table[%d]: unsupported initializer", i)
 				continue
 			}
+			if len(ci.Instrs) == 1 && ci.Instrs[0].Kind == wasmir.InstrGlobalGet {
+				globalIdx := ci.Instrs[0].GlobalIndex
+				if int(globalIdx) >= len(l.out.Globals) || l.out.Globals[globalIdx].ImportModule == "" {
+					l.diags.Addf("table[%d]: unsupported initializer", i)
+					continue
+				}
+			}
 			if !matchesExpectedValueType(ci.Type, refType) {
 				l.diags.Addf("table[%d]: type mismatch", i)
 				continue
@@ -664,15 +678,22 @@ func (l *moduleLowerer) collectDataDecls(astm *Module) {
 		if int(memoryIndex) < len(l.out.Memories) {
 			offsetType = normalizedMemoryAddressType(l.out.Memories[memoryIndex])
 		}
-		offset, ok := l.evalMemoryOffsetConst(dd.Offset, offsetType)
+		offsetExpr, ok := l.lowerConstInstr(dd.Offset)
 		if !ok {
-			l.diags.Addf("data[%d]: offset must be %s.const", i, offsetType)
+			l.diags.Addf("data[%d]: unsupported constant offset expression", i)
 			continue
 		}
 		seg.Mode = wasmir.DataSegmentModeActive
 		seg.MemoryIndex = memoryIndex
+		seg.OffsetExpr = append([]wasmir.Instruction(nil), offsetExpr.Instrs...)
+		if offsetExpr.Type != offsetType {
+			l.diags.Addf("data[%d]: offset must have type %s", i, offsetType)
+			continue
+		}
 		seg.OffsetType = offsetType
-		seg.OffsetI64 = offset
+		if offset, ok := l.evalMemoryOffsetConst(dd.Offset, offsetType); ok {
+			seg.OffsetI64 = offset
+		}
 		dataIndex := uint32(len(l.out.Data))
 		l.out.Data = append(l.out.Data, seg)
 		if dd.Id != "" {
@@ -3349,6 +3370,20 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 		return l.lowerPlainConstInstr(in.Name, in.Operands)
 	case *FoldedInstr:
 		return l.lowerFoldedConstInstr(in)
+	case *InstrSeq:
+		if len(in.Instrs) == 0 {
+			return &loweredConstInstr{}, true
+		}
+		out := &loweredConstInstr{}
+		for _, child := range in.Instrs {
+			ci, ok := l.lowerConstInstr(child)
+			if !ok {
+				return nil, false
+			}
+			out.Instrs = append(out.Instrs, ci.Instrs...)
+			out.Type = ci.Type
+		}
+		return out, true
 	default:
 		return nil, false
 	}
@@ -3451,6 +3486,10 @@ func (l *moduleLowerer) lowerPlainConstInstr(name string, operands []Operand) (*
 
 func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstInstr, bool) {
 	switch fi.Name {
+	case "i32.add", "i32.sub", "i32.mul":
+		return l.lowerFoldedConstBinary(fi, wasmir.ValueTypeI32)
+	case "i64.add", "i64.sub", "i64.mul":
+		return l.lowerFoldedConstBinary(fi, wasmir.ValueTypeI64)
 	case "struct.new":
 		if len(fi.Args) < 1 || fi.Args[0].Operand == nil || fi.Args[0].Instr != nil {
 			return nil, false
@@ -3590,6 +3629,43 @@ func (l *moduleLowerer) lowerFoldedConstInstr(fi *FoldedInstr) (*loweredConstIns
 		}
 		return l.lowerPlainConstInstr(fi.Name, operands)
 	}
+}
+
+func (l *moduleLowerer) lowerFoldedConstBinary(fi *FoldedInstr, ty wasmir.ValueType) (*loweredConstInstr, bool) {
+	if len(fi.Args) != 2 || fi.Args[0].Instr == nil || fi.Args[1].Instr == nil ||
+		fi.Args[0].Operand != nil || fi.Args[1].Operand != nil {
+		return nil, false
+	}
+	left, ok := l.lowerConstInstr(fi.Args[0].Instr)
+	if !ok || !matchesExpectedValueType(left.Type, ty) {
+		return nil, false
+	}
+	right, ok := l.lowerConstInstr(fi.Args[1].Instr)
+	if !ok || !matchesExpectedValueType(right.Type, ty) {
+		return nil, false
+	}
+	var kind wasmir.InstrKind
+	switch fi.Name {
+	case "i32.add":
+		kind = wasmir.InstrI32Add
+	case "i32.sub":
+		kind = wasmir.InstrI32Sub
+	case "i32.mul":
+		kind = wasmir.InstrI32Mul
+	case "i64.add":
+		kind = wasmir.InstrI64Add
+	case "i64.sub":
+		kind = wasmir.InstrI64Sub
+	case "i64.mul":
+		kind = wasmir.InstrI64Mul
+	default:
+		return nil, false
+	}
+	out := &loweredConstInstr{Type: ty}
+	out.Instrs = append(out.Instrs, left.Instrs...)
+	out.Instrs = append(out.Instrs, right.Instrs...)
+	out.Instrs = append(out.Instrs, wasmir.Instruction{Kind: kind})
+	return out, true
 }
 
 func (l *moduleLowerer) lowerConstRefNullType(op Operand) (wasmir.ValueType, bool) {

@@ -542,6 +542,10 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 }
 
 func encodeElemOffsetExpr(out *bytes.Buffer, elemIdx int, elem wasmir.ElementSegment, diags *diag.ErrorList) {
+	if len(elem.OffsetExpr) > 0 {
+		encodeConstExprInstrs(out, fmt.Sprintf("element[%d] offset", elemIdx), elem.OffsetExpr, diags)
+		return
+	}
 	switch elem.OffsetType {
 	case wasmir.ValueTypeI32:
 		writeInstructionOpcode(out, wasmir.InstrI32Const)
@@ -693,6 +697,10 @@ func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
 }
 
 func encodeDataOffsetExpr(out *bytes.Buffer, dataIdx int, seg wasmir.DataSegment, diags *diag.ErrorList) {
+	if len(seg.OffsetExpr) > 0 {
+		encodeConstExprInstrs(out, fmt.Sprintf("data[%d] offset", dataIdx), seg.OffsetExpr, diags)
+		return
+	}
 	switch seg.OffsetType {
 	case wasmir.ValueTypeI32:
 		writeInstructionOpcode(out, wasmir.InstrI32Const)
@@ -993,7 +1001,9 @@ func encodeConstExprInstr(out *bytes.Buffer, where string, init wasmir.Instructi
 		writeInstructionOpcode(out, init.Kind)
 		writeULEB128(out, init.TypeIndex)
 		writeULEB128(out, init.FixedCount)
-	case wasmir.InstrExternConvertAny, wasmir.InstrAnyConvertExtern, wasmir.InstrRefI31:
+	case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
+		wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul,
+		wasmir.InstrExternConvertAny, wasmir.InstrAnyConvertExtern, wasmir.InstrRefI31:
 		writeInstructionOpcode(out, init.Kind)
 	default:
 		diags.Addf("%s: unsupported initializer instruction kind %d", where, init.Kind)

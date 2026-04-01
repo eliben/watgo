@@ -757,22 +757,16 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 		}
 		switch flags {
 		case elemSegmentFlagActiveTable0FuncIndices:
-			offsetInstr, err := decodeConstExpr(r)
+			offsetExpr, err := decodeConstExprInstrs(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
-				break
-			}
-			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
-			if !ok {
-				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			funcIndices := decodeElemFuncIndices(r, i, diags)
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  0,
-				OffsetType:  offsetType,
-				OffsetI64:   offsetValue,
+				OffsetExpr:  offsetExpr,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagPassiveFuncIndices:
@@ -796,14 +790,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid table index: %v", i, err)
 				break
 			}
-			offsetInstr, err := decodeConstExpr(r)
+			offsetExpr, err := decodeConstExprInstrs(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
-				break
-			}
-			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
-			if !ok {
-				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			elemKind, err := readByte(r)
@@ -819,8 +808,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModeActive,
 				TableIndex:  tableIndex,
-				OffsetType:  offsetType,
-				OffsetI64:   offsetValue,
+				OffsetExpr:  offsetExpr,
 				FuncIndices: funcIndices,
 			})
 		case elemSegmentFlagDeclarativeFuncIndices:
@@ -844,14 +832,9 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				diags.Addf("element[%d]: invalid table index: %v", i, err)
 				break
 			}
-			offsetInstr, err := decodeConstExpr(r)
+			offsetExpr, err := decodeConstExprInstrs(r)
 			if err != nil {
 				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
-				break
-			}
-			offsetType, offsetValue, ok := decodeElemOffsetExpr(offsetInstr)
-			if !ok {
-				diags.Addf("element[%d]: offset expr must be i32.const or i64.const", i)
 				break
 			}
 			refType, err := decodeRefTypeFromReader(r)
@@ -881,8 +864,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:       wasmir.ElemSegmentModeActive,
 				TableIndex: tableIndex,
-				OffsetType: offsetType,
-				OffsetI64:  offsetValue,
+				OffsetExpr: offsetExpr,
 				Exprs:      exprs,
 				RefType:    refType,
 			})
@@ -962,23 +944,13 @@ func decodeDataSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.DataSegm
 				}
 				seg.MemoryIndex = memoryIndex
 			}
-			offsetInstr, err := decodeConstExpr(r)
+			offsetExpr, err := decodeConstExprInstrs(r)
 			if err != nil {
 				diags.Addf("data[%d]: invalid offset expr: %v", i, err)
 				segOK = false
 				break
 			}
-			switch offsetInstr.Kind {
-			case wasmir.InstrI32Const:
-				seg.OffsetType = wasmir.ValueTypeI32
-				seg.OffsetI64 = int64(offsetInstr.I32Const)
-			case wasmir.InstrI64Const:
-				seg.OffsetType = wasmir.ValueTypeI64
-				seg.OffsetI64 = offsetInstr.I64Const
-			default:
-				diags.Addf("data[%d]: offset expr must be i32.const or i64.const", i)
-				segOK = false
-			}
+			seg.OffsetExpr = offsetExpr
 		default:
 			diags.Addf("data[%d]: unsupported flags 0x%x", i, flags)
 			segOK = false
@@ -1023,17 +995,6 @@ func decodeElemFuncIndices(r *bytes.Reader, elemIdx uint32, diags *diag.ErrorLis
 		funcIndices = append(funcIndices, idx)
 	}
 	return funcIndices
-}
-
-func decodeElemOffsetExpr(instr wasmir.Instruction) (wasmir.ValueType, int64, bool) {
-	switch instr.Kind {
-	case wasmir.InstrI32Const:
-		return wasmir.ValueTypeI32, int64(instr.I32Const), true
-	case wasmir.InstrI64Const:
-		return wasmir.ValueTypeI64, instr.I64Const, true
-	default:
-		return wasmir.ValueType{}, 0, false
-	}
 }
 
 func decodeMemInstr(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instruction, error) {
@@ -1818,6 +1779,12 @@ func decodeConstExprInstr(r *bytes.Reader, op byte) (wasmir.Instruction, error) 
 		wasmir.InstrI64Const,
 		wasmir.InstrF32Const,
 		wasmir.InstrF64Const,
+		wasmir.InstrI32Add,
+		wasmir.InstrI32Sub,
+		wasmir.InstrI32Mul,
+		wasmir.InstrI64Add,
+		wasmir.InstrI64Sub,
+		wasmir.InstrI64Mul,
 		wasmir.InstrRefNull,
 		wasmir.InstrRefFunc,
 		wasmir.InstrGlobalGet,

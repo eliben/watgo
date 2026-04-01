@@ -924,7 +924,15 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 			diags.Addf("data[%d]: unknown memory", i)
 			continue
 		}
-		if data.OffsetType != memoryAddressType(m, data.MemoryIndex) {
+		wantOffsetType := memoryAddressType(m, data.MemoryIndex)
+		if len(data.OffsetExpr) > 0 {
+			gotOffsetType, ok := globalInitType(m, data.OffsetExpr)
+			if !ok {
+				diags.Addf("data[%d]: constant expression required", i)
+			} else if gotOffsetType != wantOffsetType {
+				diags.Addf("data[%d]: offset type mismatch", i)
+			}
+		} else if data.OffsetType != wantOffsetType {
 			diags.Addf("data[%d]: offset type mismatch", i)
 		}
 	}
@@ -957,7 +965,15 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 				continue
 			}
 			tableTy = m.Tables[elem.TableIndex].RefType
-			if elem.OffsetType != tableAddressType(m, elem.TableIndex) {
+			wantOffsetType := tableAddressType(m, elem.TableIndex)
+			if len(elem.OffsetExpr) > 0 {
+				gotOffsetType, ok := globalInitType(m, elem.OffsetExpr)
+				if !ok {
+					diags.Addf("element[%d]: constant expression required", i)
+				} else if gotOffsetType != wantOffsetType {
+					diags.Addf("element[%d]: offset type mismatch", i)
+				}
+			} else if elem.OffsetType != wantOffsetType {
 				diags.Addf("element[%d]: offset type mismatch", i)
 			}
 			if len(elem.FuncIndices) > 0 && tableTy.HeapType.Kind != HeapKindFunc && tableTy.HeapType.Kind != HeapKindTypeIndex {
@@ -4127,6 +4143,26 @@ func globalInitType(m *Module, init []Instruction) (ValueType, bool) {
 				return ValueType{}, false
 			}
 			push(g.Type)
+		case InstrI32Add, InstrI32Sub, InstrI32Mul:
+			right, ok := pop()
+			if !ok || right != ValueTypeI32 {
+				return ValueType{}, false
+			}
+			left, ok := pop()
+			if !ok || left != ValueTypeI32 {
+				return ValueType{}, false
+			}
+			push(ValueTypeI32)
+		case InstrI64Add, InstrI64Sub, InstrI64Mul:
+			right, ok := pop()
+			if !ok || right != ValueTypeI64 {
+				return ValueType{}, false
+			}
+			left, ok := pop()
+			if !ok || left != ValueTypeI64 {
+				return ValueType{}, false
+			}
+			push(ValueTypeI64)
 		case InstrArrayNew:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok || td.Kind != TypeDefKindArray {
