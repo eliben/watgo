@@ -149,10 +149,10 @@ func (lex *lexer) nextToken() token {
 
 	if lex.r == '$' {
 		return lex.scanId()
-	} else if isLetter(lex.r) {
-		return lex.scanKeyword()
 	} else if isDigit(lex.r) || isSign(lex.r) {
 		return lex.scanNumber()
+	} else if isIdChar(lex.r) {
+		return lex.scanKeyword()
 	} else if lex.r == '(' {
 		lex.next()
 		return token{LPAREN, "(", rloc}

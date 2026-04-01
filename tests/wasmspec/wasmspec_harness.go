@@ -210,6 +210,7 @@ func parseScript(src string) ([]scriptCommand, error) {
 // sx is one top-level S-expression from a .wast script.
 // It returns the decoded command or an error if unsupported/invalid.
 func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
+	sx = sx.WithoutAnnotations()
 	head, ok := headKeyword(sx)
 	if !ok {
 		return scriptCommand{}, fmt.Errorf("expected list command with keyword head")

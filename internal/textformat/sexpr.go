@@ -91,3 +91,65 @@ func (sx *SExpr) Token() (kind string, value string, ok bool) {
 func (sx *SExpr) Loc() string {
 	return sx.loc.String()
 }
+
+// WithoutAnnotations returns a deep copy of sx with valid annotation forms
+// removed recursively from all lists.
+//
+// WebAssembly annotations behave like parser-directed comments. They can wrap
+// top-level script commands or appear anywhere inside module syntax, so callers
+// normalize them away before ordinary parsing. Malformed annotation spellings
+// are intentionally preserved so later parsing still reports them as errors.
+func (sx *SExpr) WithoutAnnotations() *SExpr {
+	if sx == nil {
+		return nil
+	}
+	if sx.IsToken() {
+		return &SExpr{tok: sx.tok, loc: sx.loc}
+	}
+
+	out := &SExpr{loc: sx.loc, list: make([]*SExpr, 0, len(sx.list))}
+	for _, sub := range sx.list {
+		if isValidAnnotationSExpr(sub) {
+			continue
+		}
+		out.list = append(out.list, sub.WithoutAnnotations())
+	}
+	return out
+}
+
+// isValidAnnotationSExpr reports whether sx is one valid annotation node that
+// should be removed before ordinary parsing.
+//
+// The parser only strips forms it can identify unambiguously from s-expression
+// structure:
+//   - (@name ...)
+//   - (@"name" ...)
+//
+// Malformed spellings such as "(@)", "(@ x)", or "(@ \"x\")" are not treated
+// as annotations here, because spec tests expect them to remain parse errors.
+func isValidAnnotationSExpr(sx *SExpr) bool {
+	if sx == nil || !sx.IsList() || len(sx.list) == 0 {
+		return false
+	}
+
+	head := sx.list[0]
+	if !head.IsTokenKind(KEYWORD) {
+		return false
+	}
+	if strings.HasPrefix(head.tok.value, "@") && head.tok.value != "@" {
+		return true
+	}
+	if head.tok.value != "@" || len(sx.list) < 2 {
+		return false
+	}
+
+	name := sx.list[1]
+	if !name.IsTokenKind(STRING) || name.tok.value == "" {
+		return false
+	}
+
+	// (@"name") is valid, but (@ "name") is malformed. By the time we are
+	// looking at s-expressions, the only remaining way to distinguish them is
+	// whether the string token started immediately after the '@' token.
+	return name.loc.line == head.loc.line && name.loc.column == head.loc.column+1
+}

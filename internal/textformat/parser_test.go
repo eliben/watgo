@@ -101,6 +101,36 @@ func TestSexprLists(t *testing.T) {
 	}
 }
 
+func TestSExprWithoutAnnotations(t *testing.T) {
+	sx := mustParseSingleSExpr(t, `((@a) module (@"tag") $m ((@a) func) (@a))`)
+
+	got := sx.WithoutAnnotations()
+	if got.HeadKeyword() != "module" {
+		t.Fatalf("head=%q, want module", got.HeadKeyword())
+	}
+	if len(got.Children()) != 3 {
+		t.Fatalf("got %d children, want 3", len(got.Children()))
+	}
+	if !got.Children()[1].IsTokenKind(ID) || got.Children()[1].tok.value != "$m" {
+		t.Fatalf("got child[1]=%v, want $m identifier", got.Children()[1])
+	}
+	if got.Children()[2].HeadKeyword() != "func" {
+		t.Fatalf("child[2] head=%q, want func", got.Children()[2].HeadKeyword())
+	}
+}
+
+func TestParseModuleSExpr_MalformedBareAtStringIsNotStripped(t *testing.T) {
+	sx := mustParseSingleSExpr(t, `(module (@ "tag") (func))`)
+
+	_, err := ParseModuleSExpr(sx)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported module field") {
+		t.Fatalf("got error %q, want unsupported-module-field error", err.Error())
+	}
+}
+
 func TestErrorUnterminatedLparen(t *testing.T) {
 	var tests = []struct {
 		input string
@@ -639,6 +669,36 @@ func TestParseModuleSExpr(t *testing.T) {
 	m, err := ParseModuleSExpr(sxs[0])
 	if err != nil {
 		t.Fatalf("ParseModuleSExpr failed: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+	if got := m.Funcs[0].Export; got == nil || *got != "add" {
+		t.Fatalf("func export=%v, want add", got)
+	}
+}
+
+func TestParseModuleSExpr_AllowsAnnotations(t *testing.T) {
+	src := `((@a) module (@"tag") $m
+  ((@a) func (@a) (export "add") (@a) (result i32) (@a)
+    ((@a) i32.const (@a) 7 (@a))
+  )
+)`
+
+	sxs, err := ParseTopLevelSExprs(src)
+	if err != nil {
+		t.Fatalf("ParseTopLevelSExprs failed: %v", err)
+	}
+	if len(sxs) != 1 {
+		t.Fatalf("got %d top-level expressions, want 1", len(sxs))
+	}
+
+	m, err := ParseModuleSExpr(sxs[0])
+	if err != nil {
+		t.Fatalf("ParseModuleSExpr failed: %v", err)
+	}
+	if got := m.Id; got != "$m" {
+		t.Fatalf("module id=%q, want $m", got)
 	}
 	if len(m.Funcs) != 1 {
 		t.Fatalf("got %d funcs, want 1", len(m.Funcs))

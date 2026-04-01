@@ -87,13 +87,19 @@ func ParseModule(buf string) (*Module, error) {
 	return ParseModuleSExpr(sxs[0])
 }
 
-// ParseModuleSExpr parses a single module SExpr.
-// It returns a parsed module and nil on success. On any failure, it returns
-// diag.ErrorList.
+// ParseModuleSExpr parses a single module SExpr. It returns a parsed module and
+// nil on success. On any failure, it returns diag.ErrorList.
+//
+// Valid annotation forms are ignored by normalizing them out of the
+// s-expression tree before parsing. This matches the current implementation
+// strategy for the annotation proposal in wasmspec: annotations are accepted
+// syntactically but have no semantic effect. Malformed annotation spellings are
+// not normalized away, so they still surface as parse errors.
 func ParseModuleSExpr(sx *SExpr) (*Module, error) {
 	if sx == nil {
 		return nil, diag.Fromf("module s-expression is nil")
 	}
+	sx = sx.WithoutAnnotations()
 	p := &Parser{}
 	m := p.parseModule(sx)
 
