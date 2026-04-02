@@ -33,6 +33,7 @@ import (
 //		cmd: <module> | <register> | <assertion>
 //		assertion: (assert_return ...)
 //	               | (assert_trap ...)
+//		           | (assert_exception ...)
 //		           | (assert_exhaustion ...)
 //		           | (assert_unlinkable ...)
 //		           | (assert_invalid ...)
@@ -59,6 +60,7 @@ const (
 	commandRegister         commandKind = "register"
 	commandAssertReturn     commandKind = "assert_return"
 	commandAssertTrap       commandKind = "assert_trap"
+	commandAssertException  commandKind = "assert_exception"
 	commandAssertExhaustion commandKind = "assert_exhaustion"
 	commandAssertUnlinkable commandKind = "assert_unlinkable"
 	commandAssertInvalid    commandKind = "assert_invalid"
@@ -160,6 +162,7 @@ type getAction struct {
 //	assertion:
 //	  (assert_return <action> <result>*)
 //	  (assert_trap <action> <failure>)
+//	  (assert_exception <action>)
 //	  (assert_exhaustion <action> <failure>)
 //	  (assert_unlinkable <module> <failure>)
 //	  (assert_invalid <module> <failure>)
@@ -171,6 +174,7 @@ type getAction struct {
 //   - commandRegister: registerName
 //   - commandAssertReturn: action/getAction + expectValues
 //   - commandAssertTrap: action + expectText
+//   - commandAssertException: action
 //   - commandAssertExhaustion: action + expectText
 //   - commandAssertUnlinkable: moduleExpr + expectText
 //   - commandAssertInvalid: moduleExpr + expectText
@@ -316,6 +320,8 @@ func parseCommand(sx *textformat.SExpr) (scriptCommand, error) {
 		return parseAssertReturn(sx)
 	case "assert_trap":
 		return parseAssertTrap(sx)
+	case "assert_exception":
+		return parseAssertException(sx)
 	case "assert_exhaustion":
 		return parseAssertExhaustion(sx)
 	case "assert_unlinkable":
@@ -608,6 +614,26 @@ func parseAssertTrap(sx *textformat.SExpr) (scriptCommand, error) {
 		action:     action,
 		moduleExpr: moduleExpr,
 		expectText: text,
+	}, nil
+}
+
+// parseAssertException parses "(assert_exception <action>)".
+//
+// Spec scripts use this assertion to distinguish thrown wasm exceptions from
+// ordinary traps such as `unreachable` or divide-by-zero.
+func parseAssertException(sx *textformat.SExpr) (scriptCommand, error) {
+	elems := sx.Children()
+	if len(elems) != 2 {
+		return scriptCommand{}, fmt.Errorf("assert_exception requires exactly one action")
+	}
+	action, err := parseInvoke(elems[1])
+	if err != nil {
+		return scriptCommand{}, fmt.Errorf("invalid assert_exception action: %w", err)
+	}
+	return scriptCommand{
+		kind:   commandAssertException,
+		loc:    sx.Loc(),
+		action: &action,
 	}, nil
 }
 
@@ -1787,6 +1813,8 @@ func (r *scriptRunner) run(commands []scriptCommand, opts runOptions) []commandR
 			r.runAssertReturn(&res, cmd)
 		case commandAssertTrap:
 			r.runAssertTrap(&res, cmd)
+		case commandAssertException:
+			r.runAssertException(&res, cmd)
 		case commandAssertExhaustion:
 			r.runAssertExhaustion(&res, cmd)
 		case commandAssertUnlinkable:
@@ -2957,6 +2985,25 @@ func (r *scriptRunner) runAssertTrap(res *commandResult, cmd scriptCommand) {
 	res.status = true
 }
 
+// runAssertException handles "(assert_exception (invoke ...))".
+//
+// This assertion is specific to the exceptions proposal: the action must fail
+// by throwing a wasm exception, not by trapping for an ordinary runtime reason.
+func (r *scriptRunner) runAssertException(res *commandResult, cmd scriptCommand) {
+	_, err := r.invoke(cmd.action)
+	if err == nil {
+		res.status = false
+		res.detail = "expected exception, got success"
+		return
+	}
+	if !isWasmExceptionError(err) {
+		res.status = false
+		res.detail = fmt.Sprintf("expected exception, got %q", err.Error())
+		return
+	}
+	res.status = true
+}
+
 // runAssertExhaustion handles "(assert_exhaustion (invoke ...) \"...\")".
 // It requires invocation failure due to resource exhaustion and checks text.
 func (r *scriptRunner) runAssertExhaustion(res *commandResult, cmd scriptCommand) {
@@ -2972,6 +3019,13 @@ func (r *scriptRunner) runAssertExhaustion(res *commandResult, cmd scriptCommand
 		return
 	}
 	res.status = true
+}
+
+func isWasmExceptionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "wasm exception")
 }
 
 // runAssertUnlinkable handles "(assert_unlinkable (module ...) \"...\")".

@@ -77,3 +77,25 @@ func TestParseScript_InlineModuleFields(t *testing.T) {
 		t.Fatalf("got quotedWAT %q, want %q", got, want)
 	}
 }
+
+func TestParseScript_AssertException(t *testing.T) {
+	src := `(assert_exception (invoke "boom"))`
+
+	commands, err := parseScript(src)
+	if err != nil {
+		t.Fatalf("parseScript failed: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("got %d commands, want 1", len(commands))
+	}
+	cmd := commands[0]
+	if cmd.kind != commandAssertException {
+		t.Fatalf("got kind %q, want %q", cmd.kind, commandAssertException)
+	}
+	if cmd.action == nil {
+		t.Fatal("action is nil, want parsed invoke action")
+	}
+	if cmd.action.funcName != "boom" {
+		t.Fatalf("got funcName %q, want %q", cmd.action.funcName, "boom")
+	}
+}

@@ -421,9 +421,14 @@ rl.on('line', (line) => {
     const msg = JSON.parse(line);
     response = handleMessage(msg);
   } catch (err) {
+    const isWasmException =
+      typeof WebAssembly.Exception === 'function' &&
+      err instanceof WebAssembly.Exception;
     response = {
       ok: false,
-      error: err && err.message ? err.message : String(err),
+      error: isWasmException
+        ? `wasm exception${err && err.message ? `: ${err.message}` : ''}`
+        : err && err.message ? err.message : String(err),
     };
   }
   fs.writeSync(process.stdout.fd, JSON.stringify(response) + '\n');
