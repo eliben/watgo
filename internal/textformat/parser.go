@@ -741,8 +741,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 //   - (data <string>+)
 func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	dd := &DataDecl{loc: sx.loc}
-	if len(sx.list) < 2 {
-		p.emitError(sx.loc, "data declaration missing payload")
+	if len(sx.list) == 1 {
 		return dd
 	}
 
@@ -751,6 +750,10 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 		dd.Id = sx.list[cursor].tok.value
 		cursor++
 	}
+	if cursor >= len(sx.list) {
+		return dd
+	}
+
 	if sx.list[cursor].HeadKeyword() == "memory" {
 		memClause := sx.list[cursor]
 		if len(memClause.list) != 2 {
@@ -766,7 +769,6 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	}
 
 	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "data declaration missing payload")
 		return dd
 	}
 
