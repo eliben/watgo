@@ -2100,6 +2100,18 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			truncateStack(base)
 			markCurrentFrameUnreachable()
+		case InstrThrowRef:
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: throw_ref needs 1 operand", insCtx)
+				continue
+			}
+			want := validatedValueFromType(RefTypeExn(true))
+			if !matchesExpectedValueInModule(m, stackValue(len(stack)-1), want) {
+				diags.Addf("%s: throw_ref expects operand of type %s", insCtx, validatedValueName(want))
+				continue
+			}
+			truncateStack(len(stack) - 1)
+			markCurrentFrameUnreachable()
 		case InstrStructNew:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {

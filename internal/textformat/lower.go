@@ -1357,12 +1357,12 @@ func isStaticallyBottomInstr(in Instruction) bool {
 	switch ins := in.(type) {
 	case *PlainInstr:
 		switch ins.Name {
-		case "unreachable", "return", "throw", "br", "br_table":
+		case "unreachable", "return", "throw", "throw_ref", "br", "br_table":
 			return true
 		}
 	case *FoldedInstr:
 		switch ins.Name {
-		case "unreachable", "return", "throw", "br", "br_table":
+		case "unreachable", "return", "throw", "throw_ref", "br", "br_table":
 			return true
 		}
 	}

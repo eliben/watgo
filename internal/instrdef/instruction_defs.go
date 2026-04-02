@@ -129,6 +129,7 @@ var instructionDefs = []InstructionDef{
 	directOp(InstrUnreachable, "unreachable", 0x00, noFixedSig()),
 	directOp(InstrNop, "nop", 0x01, sigNoOp()),
 	directOp(InstrElse, "else", 0x05, noFixedSig()),
+	directOp(InstrThrowRef, "throw_ref", 0x0a, noFixedSig()),
 	directOp(InstrEnd, "end", 0x0b, noFixedSig()),
 	directOp(InstrReturn, "return", 0x0f, noFixedSig()),
 	directOp(InstrDrop, "drop", 0x1a, noFixedSig()),

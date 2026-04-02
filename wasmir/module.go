@@ -230,6 +230,7 @@ const (
 	InstrCallRef
 	InstrReturnCallRef
 	InstrThrow
+	InstrThrowRef
 	InstrTryTable
 	InstrBlock
 	InstrLoop
