@@ -1295,7 +1295,7 @@ func decodeInstructionExpr(r *bytes.Reader, funcIdx uint32, diags *diag.ErrorLis
 		}
 
 		switch ins.Kind {
-		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
+		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf, wasmir.InstrTryTable:
 			out = append(out, ins)
 			depth++
 		case wasmir.InstrElse:
@@ -1381,6 +1381,12 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 		ins, err := readControlBlockType(r, def.Kind)
 		if err != nil {
 			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid block type: %w", def.TextName, err)
+		}
+		return ins, nil
+	case wasmir.InstrTryTable:
+		ins, err := readTryTableImmediate(r)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("%s missing/invalid immediate: %w", def.TextName, err)
 		}
 		return ins, nil
 	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
@@ -1822,6 +1828,61 @@ func readControlBlockType(r *bytes.Reader, kind wasmir.InstrKind) (wasmir.Instru
 	return ins, nil
 }
 
+func readTryTableImmediate(r *bytes.Reader) (wasmir.Instruction, error) {
+	ins, err := readControlBlockType(r, wasmir.InstrTryTable)
+	if err != nil {
+		return wasmir.Instruction{}, err
+	}
+	n, err := readU32Immediate(r, "try_table", "catch vector length")
+	if err != nil {
+		return wasmir.Instruction{}, err
+	}
+	capN, err := boundedVectorCapacity(r, n)
+	if err != nil {
+		return wasmir.Instruction{}, fmt.Errorf("try_table invalid catch vector length: %w", err)
+	}
+	ins.TryTableCatches = make([]wasmir.TryTableCatch, 0, capN)
+	for i := uint32(0); i < n; i++ {
+		catch, err := readTryTableCatch(r)
+		if err != nil {
+			return wasmir.Instruction{}, fmt.Errorf("try_table invalid catch[%d]: %w", i, err)
+		}
+		ins.TryTableCatches = append(ins.TryTableCatches, catch)
+	}
+	return ins, nil
+}
+
+func readTryTableCatch(r *bytes.Reader) (wasmir.TryTableCatch, error) {
+	kindByte, err := readByte(r)
+	if err != nil {
+		return wasmir.TryTableCatch{}, err
+	}
+	catch := wasmir.TryTableCatch{Kind: wasmir.TryTableCatchKind(kindByte)}
+	switch catch.Kind {
+	case wasmir.TryTableCatchKindTag, wasmir.TryTableCatchKindTagRef:
+		tagIndex, err := readU32Immediate(r, "try_table catch", "tag")
+		if err != nil {
+			return wasmir.TryTableCatch{}, err
+		}
+		labelDepth, err := readU32Immediate(r, "try_table catch", "label")
+		if err != nil {
+			return wasmir.TryTableCatch{}, err
+		}
+		catch.TagIndex = tagIndex
+		catch.LabelDepth = labelDepth
+		return catch, nil
+	case wasmir.TryTableCatchKindAll, wasmir.TryTableCatchKindAllRef:
+		labelDepth, err := readU32Immediate(r, "try_table catch", "label")
+		if err != nil {
+			return wasmir.TryTableCatch{}, err
+		}
+		catch.LabelDepth = labelDepth
+		return catch, nil
+	default:
+		return wasmir.TryTableCatch{}, fmt.Errorf("unknown catch kind %d", kindByte)
+	}
+}
+
 func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
 	instrs, err := decodeConstExprInstrs(r)
 	if err != nil {
@@ -1960,12 +2021,16 @@ func decodeValueType(code byte) (wasmir.ValueType, bool) {
 		return wasmir.RefTypeNoExtern(true), true
 	case refTypeNoFuncCode:
 		return wasmir.RefTypeNoFunc(true), true
+	case refTypeNoExnCode:
+		return wasmir.RefTypeNoExn(true), true
 	case refTypeNoneCode:
 		return wasmir.RefTypeNone(true), true
 	case refTypeFuncRefCode:
 		return wasmir.RefTypeFunc(true), true
 	case valueTypeExternRefCode:
 		return wasmir.RefTypeExtern(true), true
+	case refTypeExnCode:
+		return wasmir.RefTypeExn(true), true
 	default:
 		return wasmir.ValueType{}, false
 	}
@@ -2075,6 +2140,8 @@ func decodeHeapTypeImmediate(typeIndex int64, nullable bool) (wasmir.ValueType, 
 			return wasmir.RefTypeAny(nullable), nil
 		case -14:
 			return wasmir.RefTypeNoExtern(nullable), nil
+		case -12:
+			return wasmir.RefTypeNoExn(nullable), nil
 		case -13:
 			return wasmir.RefTypeNoFunc(nullable), nil
 		case -15:
@@ -2083,6 +2150,8 @@ func decodeHeapTypeImmediate(typeIndex int64, nullable bool) (wasmir.ValueType, 
 			return wasmir.RefTypeFunc(nullable), nil
 		case -17:
 			return wasmir.RefTypeExtern(nullable), nil
+		case -23:
+			return wasmir.RefTypeExn(nullable), nil
 		default:
 			return wasmir.ValueType{}, fmt.Errorf("unsupported negative heap type %d", typeIndex)
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
+	"github.com/eliben/watgo/wasmir"
 )
 
 type Parser struct {
@@ -1806,6 +1807,13 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	}
 
 	name := head.tok.value
+	if name == "try_table" {
+		return p.parseFoldedTryTableInstr(sx)
+	}
+	if name == "catch" || name == "catch_ref" || name == "catch_all" || name == "catch_all_ref" {
+		p.emitError(head.loc, "unexpected token")
+		return nil
+	}
 	if name == "block" || name == "loop" || name == "then" || name == "else" {
 		return p.parseFoldedStructuredInstr(sx, name)
 	}
@@ -1832,6 +1840,153 @@ func (p *Parser) parseFoldedInstr(sx *SExpr) Instruction {
 	}
 
 	return &FoldedInstr{Name: name, Args: args, loc: head.loc}
+}
+
+// parseFoldedTryTableInstr parses the folded exception-handling form
+//
+//	(try_table (result ...) (catch ...) body...)
+//
+// and preserves catch clauses as structured immediate metadata rather than as
+// ordinary nested instructions.
+func (p *Parser) parseFoldedTryTableInstr(sx *SExpr) Instruction {
+	out := &TryTableInstr{loc: sx.list[0].loc}
+	seenBody := false
+
+	for i := 1; i < len(sx.list); i++ {
+		elem := sx.list[i]
+		if !elem.IsList() || len(elem.list) == 0 {
+			p.emitError(elem.loc, "try_table expects nested clauses or instructions")
+			continue
+		}
+
+		switch elem.HeadKeyword() {
+		case "type":
+			if seenBody || len(out.Catches) > 0 {
+				p.emitError(elem.loc, "unexpected token in try_table signature")
+				continue
+			}
+			if len(elem.list) != 2 || !elem.list[1].IsTokenAny(ID, INT) {
+				p.emitError(elem.loc, "invalid try_table type clause")
+				continue
+			}
+			out.TypeRef = elem.list[1].tok.value
+		case "param":
+			if seenBody || len(out.Catches) > 0 {
+				p.emitError(elem.loc, "unexpected token in try_table signature")
+				continue
+			}
+			if len(elem.list) == 1 {
+				p.emitError(elem.loc, "invalid try_table param clause")
+				continue
+			}
+			for _, arg := range elem.list[1:] {
+				ty := p.parseType(arg)
+				if ty == nil {
+					p.emitError(arg.loc, "invalid try_table param type")
+					continue
+				}
+				out.ParamTypes = append(out.ParamTypes, ty)
+			}
+		case "result":
+			if seenBody {
+				p.emitError(elem.loc, "unexpected token in try_table body")
+				continue
+			}
+			if len(elem.list) == 1 {
+				p.emitError(elem.loc, "invalid try_table result clause")
+				continue
+			}
+			for _, arg := range elem.list[1:] {
+				ty := p.parseType(arg)
+				if ty == nil {
+					p.emitError(arg.loc, "invalid try_table result type")
+					continue
+				}
+				out.ResultTypes = append(out.ResultTypes, ty)
+			}
+		case "catch", "catch_ref", "catch_all", "catch_all_ref":
+			if seenBody {
+				p.emitError(elem.loc, "unexpected token in try_table body")
+				continue
+			}
+			clause, ok := p.parseTryTableCatchClause(elem)
+			if !ok {
+				continue
+			}
+			out.Catches = append(out.Catches, clause)
+		default:
+			seenBody = true
+			bodyInstr := p.parseFoldedInstr(elem)
+			if bodyInstr == nil {
+				p.emitError(elem.loc, "invalid try_table body instruction")
+				continue
+			}
+			out.Body = append(out.Body, bodyInstr)
+		}
+	}
+
+	return out
+}
+
+func (p *Parser) parseTryTableCatchClause(sx *SExpr) (TryTableCatchClause, bool) {
+	var out TryTableCatchClause
+	out.loc = sx.loc
+
+	switch sx.HeadKeyword() {
+	case "catch":
+		out.Kind = wasmir.TryTableCatchKindTag
+		if len(sx.list) != 3 {
+			p.emitError(sx.loc, "catch expects tag and label")
+			return out, false
+		}
+		out.Tag = p.parseOperand(sx.list[1])
+		out.Label = p.parseOperand(sx.list[2])
+	case "catch_ref":
+		out.Kind = wasmir.TryTableCatchKindTagRef
+		if len(sx.list) != 3 {
+			p.emitError(sx.loc, "catch_ref expects tag and label")
+			return out, false
+		}
+		out.Tag = p.parseOperand(sx.list[1])
+		out.Label = p.parseOperand(sx.list[2])
+	case "catch_all":
+		out.Kind = wasmir.TryTableCatchKindAll
+		if len(sx.list) != 2 {
+			p.emitError(sx.loc, "catch_all expects label")
+			return out, false
+		}
+		out.Label = p.parseOperand(sx.list[1])
+	case "catch_all_ref":
+		out.Kind = wasmir.TryTableCatchKindAllRef
+		if len(sx.list) != 2 {
+			p.emitError(sx.loc, "catch_all_ref expects label")
+			return out, false
+		}
+		out.Label = p.parseOperand(sx.list[1])
+	default:
+		p.emitError(sx.loc, "unexpected token")
+		return out, false
+	}
+
+	if out.Tag != nil {
+		switch out.Tag.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(sx.loc, "invalid catch tag")
+			return out, false
+		}
+	}
+	if out.Label == nil {
+		p.emitError(sx.loc, "invalid catch label")
+		return out, false
+	}
+	switch out.Label.(type) {
+	case *IdOperand, *IntOperand:
+		return out, true
+	default:
+		p.emitError(sx.loc, "invalid catch label")
+		return out, false
+	}
 }
 
 // parseFoldedStructuredInstr parses a folded structured instruction or clause

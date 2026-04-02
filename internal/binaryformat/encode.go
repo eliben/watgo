@@ -47,6 +47,7 @@ const (
 	packedTypeI16Code      byte = 0x77
 	packedTypeI8Code       byte = 0x78
 	refTypeNoFuncCode      byte = 0x73
+	refTypeNoExnCode       byte = 0x74
 	refTypeNoExternCode    byte = 0x72
 	refTypeNoneCode        byte = 0x71
 	refTypeArrayCode       byte = 0x6a
@@ -54,6 +55,7 @@ const (
 	refTypeI31Code         byte = 0x6c
 	refTypeEqCode          byte = 0x6d
 	refTypeAnyCode         byte = 0x6e
+	refTypeExnCode         byte = 0x69
 	valueTypeExternRefCode byte = 0x6f
 
 	exportKindFunctionCode byte = 0x00
@@ -793,6 +795,13 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 		writeInstructionOpcode(out, instr.Kind)
 		encodeBlockType(out, funcIdx, instrIdx, instructionName(instr.Kind), instr, diags)
+	case wasmir.InstrTryTable:
+		writeInstructionOpcode(out, instr.Kind)
+		encodeBlockType(out, funcIdx, instrIdx, "try_table", instr, diags)
+		writeULEB128(out, uint32(len(instr.TryTableCatches)))
+		for _, catch := range instr.TryTableCatches {
+			encodeTryTableCatch(out, catch)
+		}
 	case wasmir.InstrSelect:
 		if instr.SelectType != nil {
 			out.WriteByte(0x1c)
@@ -987,6 +996,17 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	}
 }
 
+func encodeTryTableCatch(out *bytes.Buffer, catch wasmir.TryTableCatch) {
+	out.WriteByte(byte(catch.Kind))
+	switch catch.Kind {
+	case wasmir.TryTableCatchKindTag, wasmir.TryTableCatchKindTagRef:
+		writeULEB128(out, catch.TagIndex)
+		writeULEB128(out, catch.LabelDepth)
+	case wasmir.TryTableCatchKindAll, wasmir.TryTableCatchKindAllRef:
+		writeULEB128(out, catch.LabelDepth)
+	}
+}
+
 func encodeConstExprInstrs(out *bytes.Buffer, where string, instrs []wasmir.Instruction, diags *diag.ErrorList) {
 	for _, init := range instrs {
 		encodeConstExprInstr(out, where, init, diags)
@@ -1083,6 +1103,8 @@ func valueTypeCode(vt wasmir.ValueType) (byte, bool) {
 			return refTypeFuncRefCode, true
 		case wasmir.HeapKindExtern:
 			return valueTypeExternRefCode, true
+		case wasmir.HeapKindExn:
+			return refTypeExnCode, true
 		default:
 			return 0, false
 		}
@@ -1163,6 +1185,8 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 	switch vt.HeapType.Kind {
 	case wasmir.HeapKindNoFunc:
 		return refTypeNoFuncCode, true
+	case wasmir.HeapKindNoExn:
+		return refTypeNoExnCode, true
 	case wasmir.HeapKindNoExtern:
 		return refTypeNoExternCode, true
 	case wasmir.HeapKindNone:
@@ -1181,6 +1205,8 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 		return refTypeFuncRefCode, true
 	case wasmir.HeapKindExtern:
 		return refTypeExternRefCode, true
+	case wasmir.HeapKindExn:
+		return refTypeExnCode, true
 	default:
 		return 0, false
 	}

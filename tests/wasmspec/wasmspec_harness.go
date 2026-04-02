@@ -1510,7 +1510,9 @@ func newNodeRuntime(ctx context.Context) (*nodeRuntime, error) {
 	}
 	scriptPath := filepath.Join(filepath.Dir(thisFile), "node_wasm_runner.js")
 
-	cmd := exec.CommandContext(ctx, nodePath, scriptPath)
+	// The exception-handling proposal still requires the V8 exnref flag in the
+	// Node runtime used by the spec harness.
+	cmd := exec.CommandContext(ctx, nodePath, "--experimental-wasm-exnref", scriptPath)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("node stdin pipe failed: %w", err)

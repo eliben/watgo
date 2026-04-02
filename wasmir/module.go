@@ -25,6 +25,8 @@ const (
 	HeapKindNone
 	HeapKindNoExtern
 	HeapKindNoFunc
+	HeapKindExn
+	HeapKindNoExn
 	HeapKindAny
 	HeapKindEq
 	HeapKindI31
@@ -79,6 +81,14 @@ func RefTypeNoExtern(nullable bool) ValueType {
 
 func RefTypeNoFunc(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoFunc}}
+}
+
+func RefTypeExn(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExn}}
+}
+
+func RefTypeNoExn(nullable bool) ValueType {
+	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoExn}}
 }
 
 func RefTypeAny(nullable bool) ValueType {
@@ -158,6 +168,16 @@ func (vt ValueType) String() string {
 				return "(ref null nofunc)"
 			}
 			return "(ref nofunc)"
+		case HeapKindExn:
+			if vt.Nullable {
+				return "exnref"
+			}
+			return "(ref exn)"
+		case HeapKindNoExn:
+			if vt.Nullable {
+				return "(ref null noexn)"
+			}
+			return "(ref noexn)"
 		case HeapKindAny:
 			if vt.Nullable {
 				return "anyref"
@@ -210,6 +230,7 @@ const (
 	InstrCallRef
 	InstrReturnCallRef
 	InstrThrow
+	InstrTryTable
 	InstrBlock
 	InstrLoop
 	InstrIf
@@ -1151,6 +1172,9 @@ type Instruction struct {
 	// true.
 	BlockTypeIndex uint32
 
+	// TryTableCatches is the catch clause vector immediate used by InstrTryTable.
+	TryTableCatches []TryTableCatch
+
 	// SelectType is the optional explicit result type immediate used by typed
 	// select. Nil means the instruction uses the untyped select form.
 	SelectType *ValueType
@@ -1172,4 +1196,21 @@ type Instruction struct {
 
 	// SourceLoc is an optional source location string used in diagnostics.
 	SourceLoc string
+}
+
+// TryTableCatchKind classifies one try_table catch clause.
+type TryTableCatchKind uint8
+
+const (
+	TryTableCatchKindTag TryTableCatchKind = iota
+	TryTableCatchKindTagRef
+	TryTableCatchKindAll
+	TryTableCatchKindAllRef
+)
+
+// TryTableCatch is one validated catch clause immediate on InstrTryTable.
+type TryTableCatch struct {
+	Kind       TryTableCatchKind
+	TagIndex   uint32
+	LabelDepth uint32
 }

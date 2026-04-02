@@ -656,6 +656,10 @@ func matchesRefTypeInModule(m *Module, got, want ValueType) bool {
 		return got.HeapType.Kind == HeapKindExtern || got.HeapType.Kind == HeapKindNoExtern
 	case HeapKindNoExtern:
 		return got.HeapType.Kind == HeapKindNoExtern
+	case HeapKindExn:
+		return got.HeapType.Kind == HeapKindExn || got.HeapType.Kind == HeapKindNoExn
+	case HeapKindNoExn:
+		return got.HeapType.Kind == HeapKindNoExn
 	case HeapKindNoFunc:
 		return got.HeapType.Kind == HeapKindNoFunc
 	case HeapKindTypeIndex:
@@ -1144,6 +1148,7 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 		controlKindBlock controlKind = iota
 		controlKindLoop
 		controlKindIf
+		controlKindTryTable
 	)
 	type controlFrame struct {
 		kind               controlKind
@@ -1276,6 +1281,31 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			return valuesOf(target.paramTypes)
 		}
 		return valuesOf(target.resultTypes)
+	}
+
+	tryTableCatchValues := func(catch TryTableCatch) ([]validatedValue, bool) {
+		switch catch.Kind {
+		case TryTableCatchKindTag:
+			tagType, ok := tagTypeAtIndex(m, tagImportTypeIdx, catch.TagIndex)
+			if !ok {
+				return nil, false
+			}
+			return valuesOf(tagType.Params), true
+		case TryTableCatchKindTagRef:
+			tagType, ok := tagTypeAtIndex(m, tagImportTypeIdx, catch.TagIndex)
+			if !ok {
+				return nil, false
+			}
+			values := valuesOf(tagType.Params)
+			values = append(values, validatedValueFromType(RefTypeExn(false)))
+			return values, true
+		case TryTableCatchKindAll:
+			return nil, true
+		case TryTableCatchKindAllRef:
+			return []validatedValue{validatedValueFromType(RefTypeExn(false))}, true
+		default:
+			return nil, false
+		}
 	}
 
 	markCurrentFrameUnreachable := func() {
@@ -1455,6 +1485,76 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			}
 			controlStack = append(controlStack, controlFrame{
 				kind:               controlKindIf,
+				entryHeight:        len(stack) - len(params),
+				paramTypes:         params,
+				resultTypes:        results,
+				localInit:          append([]bool(nil), localInitialized...),
+				enteredUnreachable: currentFrameUnreachable(),
+				unreachable:        currentFrameUnreachable(),
+			})
+		case InstrTryTable:
+			params, results, ok := controlSignature(ins, insCtx, "try_table")
+			if !ok {
+				continue
+			}
+			catchesOK := true
+			for i, catch := range ins.TryTableCatches {
+				if int(catch.LabelDepth) >= len(controlStack) {
+					diags.Addf("%s: try_table catch %d label depth %d out of range", insCtx, i, catch.LabelDepth)
+					catchesOK = false
+					continue
+				}
+				target := controlStack[len(controlStack)-1-int(catch.LabelDepth)]
+				targetValues := branchTargetTypes(target)
+				catchValues, ok := tryTableCatchValues(catch)
+				if !ok {
+					if catch.Kind == TryTableCatchKindTag || catch.Kind == TryTableCatchKindTagRef {
+						diags.Addf("%s: try_table catch %d tag index %d out of range", insCtx, i, catch.TagIndex)
+					} else {
+						diags.Addf("%s: try_table catch %d has invalid kind %d", insCtx, i, catch.Kind)
+					}
+					catchesOK = false
+					continue
+				}
+				if len(catchValues) != len(targetValues) {
+					diags.Addf("%s: try_table catch %d target type mismatch", insCtx, i)
+					catchesOK = false
+					continue
+				}
+				for j := range targetValues {
+					if !matchesExpectedValueInModule(m, catchValues[j], targetValues[j]) {
+						diags.Addf("%s: try_table catch %d target type mismatch at %d: got %s want %s", insCtx, i, j, validatedValueName(catchValues[j]), validatedValueName(targetValues[j]))
+						catchesOK = false
+						break
+					}
+				}
+			}
+			if !catchesOK {
+				continue
+			}
+			if !ensureCurrentFrameOperands(len(params), 0, 0) {
+				diags.Addf("%s: try_table needs %d parameter operands", insCtx, len(params))
+				continue
+			}
+			base := len(stack) - len(params)
+			matched := true
+			for j := range params {
+				want := valueAt(params, j)
+				got := stackValue(base + j)
+				if !matchesExpectedValueInModule(m, got, want) {
+					diags.Addf("%s: try_table parameter %d expects %s", insCtx, j, validatedValueName(want))
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			for j := range params {
+				setStackValue(base+j, valueAt(params, j))
+			}
+			controlStack = append(controlStack, controlFrame{
+				kind:               controlKindTryTable,
 				entryHeight:        len(stack) - len(params),
 				paramTypes:         params,
 				resultTypes:        results,
@@ -3961,6 +4061,8 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 					validateFrameResult(insCtx, frame, "block")
 				case controlKindLoop:
 					validateFrameResult(insCtx, frame, "loop")
+				case controlKindTryTable:
+					validateFrameResult(insCtx, frame, "try_table")
 				}
 
 				localInitialized = append(localInitialized[:0], frame.localInit...)

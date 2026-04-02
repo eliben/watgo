@@ -36,7 +36,7 @@ type PlainInstr struct {
 	// bottomInstrArgs counts explicit folded children that are statically
 	// polymorphic bottom.
 	bottomInstrArgs int
-	loc      location
+	loc             location
 }
 
 func (*PlainInstr) isInstr() {}
@@ -85,6 +85,35 @@ func (*FoldedInstr) isInstr() {}
 // It returns an empty string when location is unavailable.
 func (fi *FoldedInstr) Loc() string {
 	return fi.loc.String()
+}
+
+// TryTableInstr preserves the folded try_table form together with its catch
+// clauses. It is kept distinct from FoldedInstr because catch clauses are not
+// ordinary nested instructions; they are immediate metadata on the structured
+// try_table instruction.
+type TryTableInstr struct {
+	TypeRef     string
+	ParamTypes  []Type
+	ResultTypes []Type
+	Catches     []TryTableCatchClause
+	Body        []Instruction
+	loc         location
+}
+
+func (*TryTableInstr) isInstr() {}
+
+// Loc returns the source location of this instruction as "line:column".
+func (ti *TryTableInstr) Loc() string {
+	return ti.loc.String()
+}
+
+// TryTableCatchClause is one parsed catch clause in the folded try_table form.
+// Tag is nil for catch_all and catch_all_ref clauses.
+type TryTableCatchClause struct {
+	Kind  wasmir.TryTableCatchKind
+	Tag   Operand
+	Label Operand
+	loc   location
 }
 
 // InstrSeq preserves a short source-level instruction sequence in places where

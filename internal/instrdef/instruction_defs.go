@@ -582,6 +582,7 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(specialInstr(InstrBrTable, "br_table"), 0, 0x0e),
 	withBinaryOpcode(specialInstr(InstrCallIndirect, "call_indirect"), 0, 0x11),
 	withBinaryOpcode(specialInstr(InstrReturnCallIndirect, "return_call_indirect"), 0, 0x13),
+	withBinaryOpcode(specialInstr(InstrTryTable, "try_table"), 0, 0x1f),
 	withBinaryOpcode(specialInstr(InstrMemoryCopy, "memory.copy"), 0xfc, 0x0a),
 	withBinaryOpcode(specialInstr(InstrMemoryFill, "memory.fill"), 0xfc, 0x0b),
 	withBinaryOpcode(specialInstr(InstrMemoryGrow, "memory.grow"), 0, 0x40),

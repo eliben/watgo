@@ -1291,6 +1291,8 @@ func (fl *functionLowerer) lowerInstruction(instr Instruction) {
 		fl.lowerPlainInstr(in)
 	case *FoldedInstr:
 		fl.lowerFoldedInstr(in)
+	case *TryTableInstr:
+		fl.lowerTryTableInstr(in)
 	default:
 		fl.diagf(instr.Loc(), "unsupported instruction type %T", instr)
 	}
@@ -1365,6 +1367,97 @@ func isStaticallyBottomInstr(in Instruction) bool {
 		}
 	}
 	return false
+}
+
+func (fl *functionLowerer) lowerTryTableInstr(ti *TryTableInstr) {
+	if ti == nil {
+		fl.diagf("", "nil try_table instruction")
+		return
+	}
+
+	paramTypes := make([]wasmir.ValueType, 0, len(ti.ParamTypes))
+	for _, ty := range ti.ParamTypes {
+		vt, ok := lowerValueType(ty, fl.mod.typesByName)
+		if !ok {
+			fl.diagf(ti.Loc(), "invalid try_table param type")
+			continue
+		}
+		paramTypes = append(paramTypes, vt)
+	}
+
+	resultTypes := make([]wasmir.ValueType, 0, len(ti.ResultTypes))
+	for _, ty := range ti.ResultTypes {
+		vt, ok := lowerValueType(ty, fl.mod.typesByName)
+		if !ok {
+			fl.diagf(ti.Loc(), "invalid try_table result type")
+			continue
+		}
+		resultTypes = append(resultTypes, vt)
+	}
+
+	catches := make([]wasmir.TryTableCatch, 0, len(ti.Catches))
+	for _, clause := range ti.Catches {
+		catch := wasmir.TryTableCatch{Kind: clause.Kind}
+		if clause.Tag != nil {
+			tagIndex, ok := lowerTagIndexOperand(clause.Tag, fl.mod.tagsByName)
+			if !ok {
+				fl.diagf(clause.loc.String(), "invalid try_table catch tag")
+				continue
+			}
+			catch.TagIndex = tagIndex
+		}
+		labelDepth, ok := fl.lowerLabelOperand(clause.Label)
+		if !ok {
+			fl.diagf(clause.loc.String(), "invalid try_table catch label")
+			continue
+		}
+		catch.LabelDepth = labelDepth
+		catches = append(catches, catch)
+	}
+
+	finalParams := paramTypes
+	finalResults := resultTypes
+	useTypeIndex := false
+	var typeIdx uint32
+	if ti.TypeRef != "" {
+		refIdx, refType, ok := fl.resolveTypeRef(ti.TypeRef)
+		if !ok {
+			fl.diagf(ti.Loc(), "unknown try_table type use %q", ti.TypeRef)
+		} else {
+			useTypeIndex = true
+			typeIdx = refIdx
+			if len(paramTypes) > 0 || len(resultTypes) > 0 {
+				if !equalValueTypeSlices(paramTypes, refType.Params) || !equalValueTypeSlices(resultTypes, refType.Results) {
+					fl.diagf(ti.Loc(), "inline function type mismatch in try_table")
+				}
+			} else {
+				finalParams = append([]wasmir.ValueType(nil), refType.Params...)
+				finalResults = append([]wasmir.ValueType(nil), refType.Results...)
+			}
+		}
+	}
+
+	ins := wasmir.Instruction{
+		Kind:            wasmir.InstrTryTable,
+		TryTableCatches: catches,
+		SourceLoc:       ti.Loc(),
+	}
+	switch {
+	case useTypeIndex:
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = typeIdx
+	case len(finalParams) > 0 || len(finalResults) > 1:
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = fl.mod.internFuncType(finalParams, finalResults, "")
+	case len(finalResults) == 1:
+		vt := finalResults[0]
+		ins.BlockType = &vt
+	}
+	fl.emitInstr(ins)
+	for _, bodyInstr := range ti.Body {
+		fl.lowerInstruction(bodyInstr)
+	}
+	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: ti.Loc()})
 }
 
 // lowerFoldedSelect lowers both folded and raw typed-select syntax.
@@ -4012,13 +4105,13 @@ func lowerRefHeapTypeOperand(op Operand) (wasmir.ValueType, bool) {
 		case "extern":
 			return wasmir.RefTypeExtern(true), true
 		case "exn":
-			return wasmir.RefTypeExtern(true), true
+			return wasmir.RefTypeExn(true), true
 		case "none":
 			return wasmir.RefTypeNone(true), true
 		case "noextern":
 			return wasmir.RefTypeNoExtern(true), true
 		case "noexn":
-			return wasmir.RefTypeNoExtern(true), true
+			return wasmir.RefTypeNoExn(true), true
 		case "nofunc":
 			return wasmir.RefTypeNoFunc(true), true
 		case "any":
@@ -4427,9 +4520,9 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
 		case "exnref":
-			return wasmir.RefTypeExtern(true), true
+			return wasmir.RefTypeExn(true), true
 		case "nullexnref":
-			return wasmir.RefTypeNoExtern(true), true
+			return wasmir.RefTypeExn(true), true
 		case "nullexternref":
 			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
@@ -4469,9 +4562,9 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 		case "externref":
 			return wasmir.RefTypeExtern(true), true
 		case "exnref":
-			return wasmir.RefTypeExtern(true), true
+			return wasmir.RefTypeExn(true), true
 		case "nullexnref":
-			return wasmir.RefTypeNoExtern(true), true
+			return wasmir.RefTypeExn(true), true
 		case "nullexternref":
 			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
@@ -4504,13 +4597,13 @@ func lowerRefHeapTypeName(name string, nullable bool, typesByName map[string]uin
 	case "extern":
 		return wasmir.RefTypeExtern(nullable), true
 	case "exn":
-		return wasmir.RefTypeExtern(nullable), true
+		return wasmir.RefTypeExn(nullable), true
 	case "none":
 		return wasmir.RefTypeNone(nullable), true
 	case "noextern":
 		return wasmir.RefTypeNoExtern(nullable), true
 	case "noexn":
-		return wasmir.RefTypeNoExtern(nullable), true
+		return wasmir.RefTypeNoExn(nullable), true
 	case "nofunc":
 		return wasmir.RefTypeNoFunc(nullable), true
 	case "any":
