@@ -18,6 +18,7 @@ type helperDecodeMode uint8
 const (
 	helperDecodeNormal helperDecodeMode = iota
 	helperDecodeV128Words
+	helperDecodeRefNullFlag
 )
 
 // helperMode carries small helper-specific protocol branches understood by the
@@ -165,6 +166,11 @@ func (r *scriptRunner) buildInvokeHelper(sig wasmir.FuncType, scriptArgs []scrip
 			return nil, helperDecodeNormal, nil
 		}
 		return r.buildAnyrefHelper(sig, scriptArgs)
+	case len(sig.Results) == 1 && isExnRefType(sig.Results[0]):
+		if needsExactTypeIdentity {
+			return nil, helperDecodeNormal, nil
+		}
+		return r.buildExnrefResultHelper(sig, scriptArgs)
 	case len(sig.Results) == 1 && isFloatType(sig.Results[0]):
 		if needsExactTypeIdentity {
 			return nil, helperDecodeNormal, nil
@@ -245,6 +251,31 @@ func (r *scriptRunner) buildFloatResultHelper(sig wasmir.FuncType, scriptArgs []
 		Args:        args,
 		ResultTypes: resultTypes,
 	}, helperDecodeNormal, nil
+}
+
+// buildExnrefResultHelper converts one exnref-like result to a ref.is_null
+// flag inside wasm so the JS embedding never has to materialize an exception
+// reference value directly.
+func (r *scriptRunner) buildExnrefResultHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+	data, err := newGeneralHelperTemplateData(sig, []wasmir.ValueType{wasmir.ValueTypeI32}, []string{"ref.is_null"})
+	if err != nil {
+		return nil, helperDecodeNormal, err
+	}
+	wasm, key, err := r.compileHelperTemplate("exnref_null_flag", generalHelperTemplate, data)
+	if err != nil {
+		return nil, helperDecodeNormal, err
+	}
+	args, err := encodeHelperInvokeArgs(scriptArgs, sig.Params)
+	if err != nil {
+		return nil, helperDecodeNormal, err
+	}
+	return &nodeInvokeHelper{
+		Key:         key,
+		Wasm:        wasm,
+		FuncName:    "call",
+		Args:        args,
+		ResultTypes: []string{"i32"},
+	}, helperDecodeRefNullFlag, nil
 }
 
 // buildV128ResultHelper stores one v128 result into scratch memory and reloads
@@ -465,6 +496,11 @@ func isAnyrefType(vt wasmir.ValueType) bool {
 	return vt.Kind == wasmir.ValueKindRef && vt.HeapType.Kind == wasmir.HeapKindAny
 }
 
+func isExnRefType(vt wasmir.ValueType) bool {
+	return vt.Kind == wasmir.ValueKindRef &&
+		(vt.HeapType.Kind == wasmir.HeapKindExn || vt.HeapType.Kind == wasmir.HeapKindNoExn)
+}
+
 func funcTypeHasFloatArgs(sig wasmir.FuncType) bool {
 	for _, vt := range sig.Params {
 		if isFloatType(vt) {
@@ -620,6 +656,18 @@ func decodeInvokeResults(values []nodeValue, mode helperDecodeMode) ([]runtimeVa
 			binary.LittleEndian.PutUint32(lanes[i*4:], uint32(bits))
 		}
 		return []runtimeValue{{v128: lanes, isV128: true}}, nil
+	case helperDecodeRefNullFlag:
+		if len(values) != 1 || values[0].Type != "i32" || values[0].Bits == "" {
+			return nil, fmt.Errorf("exnref helper returned malformed null flag")
+		}
+		bits, err := strconv.ParseUint(values[0].Bits, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("exnref helper null flag: %w", err)
+		}
+		if bits != 0 {
+			return []runtimeValue{{}}, nil
+		}
+		return []runtimeValue{{scalar: encodedRefHostTag}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported helper decode mode %d", mode)
 	}

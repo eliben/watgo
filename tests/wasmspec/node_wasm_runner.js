@@ -182,6 +182,8 @@ function decodeValue(arg) {
     case 'arrayref':
     case 'nullref':
     case 'nullfuncref':
+    case 'exnref':
+    case 'nullexnref':
     case 'nullexternref':
     case 'v128':
       if (arg.null) {
@@ -246,6 +248,8 @@ function encodeValue(valueType, value) {
       }
       throw new Error('non-null nullref result');
     case 'nullfuncref':
+    case 'exnref':
+    case 'nullexnref':
     case 'nullexternref':
       if (value === null) {
         return { type: valueType, null: true };

@@ -3479,6 +3479,10 @@ func valueTypeString(vt wasmir.ValueType) (string, error) {
 			return "funcref", nil
 		case wasmir.HeapKindExtern:
 			return "externref", nil
+		case wasmir.HeapKindExn:
+			return "exnref", nil
+		case wasmir.HeapKindNoExn:
+			return "nullexnref", nil
 		case wasmir.HeapKindNoExtern:
 			return "nullexternref", nil
 		case wasmir.HeapKindNoFunc:

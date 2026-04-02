@@ -4276,6 +4276,14 @@ func matchesExpectedValueType(got, want wasmir.ValueType) bool {
 			if got.HeapType.Kind != wasmir.HeapKindExtern && got.HeapType.Kind != wasmir.HeapKindNoExtern {
 				return false
 			}
+		case wasmir.HeapKindExn:
+			if got.HeapType.Kind != wasmir.HeapKindExn && got.HeapType.Kind != wasmir.HeapKindNoExn {
+				return false
+			}
+		case wasmir.HeapKindNoExn:
+			if got.HeapType.Kind != wasmir.HeapKindNoExn {
+				return false
+			}
 		case wasmir.HeapKindNoExtern:
 			if got.HeapType.Kind != wasmir.HeapKindNoExtern {
 				return false
@@ -4522,7 +4530,7 @@ func lowerValueType(ty Type, typesByName map[string]uint32) (wasmir.ValueType, b
 		case "exnref":
 			return wasmir.RefTypeExn(true), true
 		case "nullexnref":
-			return wasmir.RefTypeExn(true), true
+			return wasmir.RefTypeNoExn(true), true
 		case "nullexternref":
 			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
@@ -4564,7 +4572,7 @@ func lowerRefTypeInfo(ty Type, typesByName map[string]uint32) (wasmir.ValueType,
 		case "exnref":
 			return wasmir.RefTypeExn(true), true
 		case "nullexnref":
-			return wasmir.RefTypeExn(true), true
+			return wasmir.RefTypeNoExn(true), true
 		case "nullexternref":
 			return wasmir.RefTypeNoExtern(true), true
 		case "anyref":
