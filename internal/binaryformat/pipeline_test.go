@@ -97,3 +97,50 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 		t.Fatalf("decoded body kinds = %#v", body)
 	}
 }
+
+func TestPipelineEncodeDecodeThrow(t *testing.T) {
+	wat := `(module
+  (tag $e (param i32))
+  (func (export "boom")
+    i32.const 7
+    throw $e
+  )
+)`
+
+	ast, err := textformat.ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, hints, err := textformat.LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	if err := validate.ValidateModule(m, hints); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	bin, err := EncodeModule(m)
+	if err != nil {
+		t.Fatalf("EncodeModule error: %v", err)
+	}
+
+	decoded, err := DecodeModule(bin)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+	if err := validate.ValidateModule(decoded, nil); err != nil {
+		t.Fatalf("ValidateModule(decoded) error: %v", err)
+	}
+
+	if len(decoded.Tags) != 1 {
+		t.Fatalf("got %d decoded tags, want 1", len(decoded.Tags))
+	}
+	body := decoded.Funcs[0].Body
+	if len(body) != 3 {
+		t.Fatalf("got %d decoded body instructions, want 3", len(body))
+	}
+	if body[1].Kind != wasmir.InstrThrow || body[1].TagIndex != 0 {
+		t.Fatalf("decoded throw = %#v, want InstrThrow with tag index 0", body[1])
+	}
+}

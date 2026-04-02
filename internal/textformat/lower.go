@@ -1355,12 +1355,12 @@ func isStaticallyBottomInstr(in Instruction) bool {
 	switch ins := in.(type) {
 	case *PlainInstr:
 		switch ins.Name {
-		case "unreachable", "return", "br", "br_table":
+		case "unreachable", "return", "throw", "br", "br_table":
 			return true
 		}
 	case *FoldedInstr:
 		switch ins.Name {
-		case "unreachable", "return", "br", "br_table":
+		case "unreachable", "return", "throw", "br", "br_table":
 			return true
 		}
 	}
@@ -2125,6 +2125,8 @@ func loweringOperandDecoderFor(kind instrdef.LoweringOperandKind) loweringOperan
 		return decodeCallOperands
 	case instrdef.LoweringOperandCallRef:
 		return decodeCallRefOperands
+	case instrdef.LoweringOperandTagIndex:
+		return decodeThrowOperands
 	case instrdef.LoweringOperandBranchDepth:
 		return decodeBrOperands
 	case instrdef.LoweringOperandGlobalIndex:
@@ -2916,6 +2918,16 @@ func decodeCallRefOperands(fl *functionLowerer, ins *wasmir.Instruction, operand
 		return false
 	}
 	ins.CallTypeIndex = typeIndex
+	return true
+}
+
+// decodeThrowOperands decodes operands into ins.TagIndex for throw.
+func decodeThrowOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
+	tagIndex, ok := lowerTagIndexOperand(operands[0], fl.mod.tagsByName)
+	if !ok {
+		return false
+	}
+	ins.TagIndex = tagIndex
 	return true
 }
 
@@ -3900,6 +3912,20 @@ func lowerTableIndexOperand(op Operand, tablesByName map[string]uint32) (uint32,
 	switch o := op.(type) {
 	case *IdOperand:
 		idx, ok := tablesByName[o.Value]
+		return idx, ok
+	case *IntOperand:
+		return parseU32Literal(o.Value)
+	default:
+		return 0, false
+	}
+}
+
+// lowerTagIndexOperand resolves op as a tag index using tagsByName.
+// It returns the resolved index and true on success, or 0/false otherwise.
+func lowerTagIndexOperand(op Operand, tagsByName map[string]uint32) (uint32, bool) {
+	switch o := op.(type) {
+	case *IdOperand:
+		idx, ok := tagsByName[o.Value]
 		return idx, ok
 	case *IntOperand:
 		return parseU32Literal(o.Value)

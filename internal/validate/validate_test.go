@@ -211,6 +211,37 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateModule_ThrowTagOperandMismatch(t *testing.T) {
+	m := &Module{
+		Types: []FuncType{
+			{Params: []ValueType{ValueTypeI32}, Results: nil},
+			{Params: nil, Results: nil},
+		},
+		Tags: []Tag{
+			{TypeIdx: 0},
+		},
+		Funcs: []Function{
+			{
+				TypeIdx: 1,
+				Body: []Instruction{
+					{Kind: InstrI64Const, I64Const: 5},
+					{Kind: InstrThrow, TagIndex: 0},
+					{Kind: InstrEnd},
+				},
+			},
+		},
+	}
+
+	err := validate.ValidateModule(m, nil)
+	if err == nil {
+		t.Fatal("ValidateModule returned nil error, want failure")
+	}
+	errs := asErrorList(t, err)
+	if !errorListContains(errs, "throw expects operand 0 to be i32") {
+		t.Fatalf("got errors %q, want throw operand type mismatch", errs.Error())
+	}
+}
+
 func TestValidateModule_IfElseWithResult(t *testing.T) {
 	m := &Module{
 		Types: []FuncType{

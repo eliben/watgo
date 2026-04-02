@@ -30,6 +30,7 @@ const (
 	LoweringOperandLocalTee
 	LoweringOperandCall
 	LoweringOperandCallRef
+	LoweringOperandTagIndex
 	LoweringOperandBranchDepth
 	LoweringOperandGlobalIndex
 	LoweringOperandGlobalSet
@@ -610,6 +611,7 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(plainOperandInstr(InstrReturnCall, "return_call", 1, LoweringOperandCall), 0, 0x12),
 	withBinaryOpcode(plainOperandInstr(InstrCallRef, "call_ref", 1, LoweringOperandCallRef), 0, 0x14),
 	withBinaryOpcode(plainOperandInstr(InstrReturnCallRef, "return_call_ref", 1, LoweringOperandCallRef), 0, 0x15),
+	withBinaryOpcode(plainOperandInstr(InstrThrow, "throw", 1, LoweringOperandTagIndex), 0, 0x08),
 	withBinaryOpcode(plainOperandInstr(InstrDataDrop, "data.drop", 1, LoweringOperandDataIndex), 0xfc, 0x09),
 	withBinaryOpcode(plainOperandInstr(InstrElemDrop, "elem.drop", 1, LoweringOperandElemIndex), 0xfc, 0x0d),
 	withBinaryOpcode(plainOperandInstr(InstrF32Const, "f32.const", 1, LoweringOperandF32Const), 0, 0x43),

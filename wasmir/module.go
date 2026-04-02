@@ -209,6 +209,7 @@ const (
 	InstrReturnCallIndirect
 	InstrCallRef
 	InstrReturnCallRef
+	InstrThrow
 	InstrBlock
 	InstrLoop
 	InstrIf
@@ -1065,6 +1066,9 @@ type Instruction struct {
 
 	// FuncIndex is the function index immediate used by InstrCall.
 	FuncIndex uint32
+
+	// TagIndex is the tag index immediate used by InstrThrow.
+	TagIndex uint32
 
 	// RefType is the reference value type immediate used by InstrRefNull.
 	RefType ValueType

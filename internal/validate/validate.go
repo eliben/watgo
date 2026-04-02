@@ -848,7 +848,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		if hints != nil && i < len(hints.Funcs) {
 			funcHints = &hints.Funcs[i]
 		}
-		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, declaredFuncs, funcHints)
+		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, tagImportTypeIdx, declaredFuncs, funcHints)
 		for _, err := range funcErrs {
 			diags.Addf("%s: %v", fnCtx, err)
 		}
@@ -1067,7 +1067,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
+func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, tagImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
 	funcImportCount := uint32(len(funcImportTypeIdx))
@@ -1970,6 +1970,35 @@ func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx 
 			if !resultsOK {
 				continue
 			}
+			markCurrentFrameUnreachable()
+		case InstrThrow:
+			tagType, ok := tagTypeAtIndex(m, tagImportTypeIdx, ins.TagIndex)
+			if !ok {
+				diags.Addf("%s: throw tag index %d out of range", insCtx, ins.TagIndex)
+				continue
+			}
+			if len(tagType.Results) != 0 {
+				diags.Addf("%s: throw tag %d must reference a function type with no results", insCtx, ins.TagIndex)
+				continue
+			}
+			if !ensureCurrentFrameOperands(len(tagType.Params), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: throw needs %d operands", insCtx, len(tagType.Params))
+				continue
+			}
+			base := len(stack) - len(tagType.Params)
+			paramsOK := true
+			for j := range tagType.Params {
+				want := valueAt(tagType.Params, j)
+				if !matchesExpectedValueInModule(m, stackValue(base+j), want) {
+					diags.Addf("%s: throw expects operand %d to be %s", insCtx, j, validatedValueName(want))
+					paramsOK = false
+					break
+				}
+			}
+			if !paramsOK {
+				continue
+			}
+			truncateStack(base)
 			markCurrentFrameUnreachable()
 		case InstrStructNew:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
@@ -4071,6 +4100,34 @@ func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) 
 		return FuncType{}, nil, false
 	}
 	return m.Types[def.TypeIdx], def, true
+}
+
+// tagTypeAtIndex resolves an absolute tag index to its referenced function
+// type, accounting for both imported and module-defined tags.
+func tagTypeAtIndex(m *Module, tagImportTypeIdx []uint32, tagIdx uint32) (FuncType, bool) {
+	importCount := uint32(len(tagImportTypeIdx))
+	if tagIdx < importCount {
+		typeIdx := tagImportTypeIdx[tagIdx]
+		if int(typeIdx) >= len(m.Types) {
+			return FuncType{}, false
+		}
+		if m.Types[typeIdx].Kind != TypeDefKindFunc {
+			return FuncType{}, false
+		}
+		return m.Types[typeIdx], true
+	}
+	defIdx := tagIdx - importCount
+	if int(defIdx) >= len(m.Tags) {
+		return FuncType{}, false
+	}
+	typeIdx := m.Tags[defIdx].TypeIdx
+	if int(typeIdx) >= len(m.Types) {
+		return FuncType{}, false
+	}
+	if m.Types[typeIdx].Kind != TypeDefKindFunc {
+		return FuncType{}, false
+	}
+	return m.Types[typeIdx], true
 }
 
 func functionTypeIndexAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) (uint32, bool) {

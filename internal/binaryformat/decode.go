@@ -1501,6 +1501,12 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, CallTypeIndex: typeIndex}, nil
+	case wasmir.InstrThrow:
+		tagIndex, err := readU32Immediate(r, def.TextName, "tag")
+		if err != nil {
+			return wasmir.Instruction{}, err
+		}
+		return wasmir.Instruction{Kind: def.Kind, TagIndex: tagIndex}, nil
 	case wasmir.InstrRefNull:
 		refType, err := decodeRefNullImmediate(r)
 		if err != nil {

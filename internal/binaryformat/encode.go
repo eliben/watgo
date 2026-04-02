@@ -871,6 +871,9 @@ func encodeInstr(out *bytes.Buffer, funcIdx int, instrIdx int, instr wasmir.Inst
 	case wasmir.InstrReturnCallRef:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.CallTypeIndex)
+	case wasmir.InstrThrow:
+		writeInstructionOpcode(out, instr.Kind)
+		writeULEB128(out, instr.TagIndex)
 	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew, wasmir.InstrArrayNewDefault:
 		writeInstructionOpcode(out, instr.Kind)
 		writeULEB128(out, instr.TypeIndex)
