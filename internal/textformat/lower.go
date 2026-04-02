@@ -2393,6 +2393,35 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
 		return
 	}
+	if pi.Name == "memory.init" {
+		if len(pi.Operands) != 1 && len(pi.Operands) != 2 {
+			fl.diagf(instrLoc, "memory.init expects 1 or 2 operands")
+			return
+		}
+		memoryIndex := uint32(0)
+		dataOperand := pi.Operands[0]
+		if len(pi.Operands) == 2 {
+			idx, ok := lowerMemoryIndexOperand(pi.Operands[0], fl.mod.memoriesByName)
+			if !ok {
+				fl.diagf(pi.Operands[0].Loc(), "invalid memory.init memory operand")
+				return
+			}
+			memoryIndex = idx
+			dataOperand = pi.Operands[1]
+		}
+		dataIndex, ok := lowerDataIndexOperand(dataOperand, fl.mod.dataIndicesByName)
+		if !ok {
+			fl.diagf(dataOperand.Loc(), "invalid memory.init data operand")
+			return
+		}
+		fl.emitInstr(wasmir.Instruction{
+			Kind:        wasmir.InstrMemoryInit,
+			MemoryIndex: memoryIndex,
+			DataIndex:   dataIndex,
+			SourceLoc:   instrLoc,
+		})
+		return
+	}
 	if fl.lowerBySpec(pi, instrLoc) {
 		return
 	}
