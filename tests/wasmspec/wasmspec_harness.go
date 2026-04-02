@@ -3045,7 +3045,7 @@ func matchesExpectedFailureText(got, want string) bool {
 		return strings.Contains(gotLower, "invalid table access") ||
 			strings.Contains(gotLower, "table index is out of bounds")
 	}
-	if wantLower == "uninitialized element" {
+	if wantLower == "uninitialized element" || strings.HasPrefix(wantLower, "uninitialized element ") {
 		return strings.Contains(gotLower, "invalid table access") ||
 			strings.Contains(gotLower, "null function or function signature mismatch")
 	}
