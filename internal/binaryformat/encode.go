@@ -23,6 +23,7 @@ const (
 	sectionFunctionID  byte = 3
 	sectionTableID     byte = 4
 	sectionMemoryID    byte = 5
+	sectionTagID       byte = 13
 	sectionGlobalID    byte = 6
 	sectionExportID    byte = 7
 	sectionStartID     byte = 8
@@ -59,11 +60,15 @@ const (
 	exportKindTableCode    byte = 0x01
 	exportKindMemoryCode   byte = 0x02
 	exportKindGlobalCode   byte = 0x03
+	exportKindTagCode      byte = 0x04
 
 	importKindFunctionCode byte = 0x00
 	importKindTableCode    byte = 0x01
 	importKindMemoryCode   byte = 0x02
 	importKindGlobalCode   byte = 0x03
+	importKindTagCode      byte = 0x04
+
+	tagAttributeException byte = 0x00
 
 	refTypeFuncRefCode   byte = 0x70
 	refTypeExternRefCode byte = 0x6f
@@ -163,6 +168,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	memorySection := encodeMemorySection(m.Memories, &diags)
 	if len(memorySection) > 0 {
 		writeSection(&out, sectionMemoryID, memorySection)
+	}
+
+	tagSection := encodeTagSection(m.Tags, &diags)
+	if len(tagSection) > 0 {
+		writeSection(&out, sectionTagID, tagSection)
 	}
 
 	globalSection := encodeGlobalSection(m.Globals, &diags)
@@ -376,8 +386,30 @@ func encodeImportSection(imports []wasmir.Import, diags *diag.ErrorList) []byte 
 			} else {
 				payload.WriteByte(globalMutabilityConstCode)
 			}
+		case wasmir.ExternalKindTag:
+			payload.WriteByte(importKindTagCode)
+			payload.WriteByte(tagAttributeException)
+			writeULEB128(&payload, imp.TypeIdx)
 		default:
 			diags.Addf("import[%d]: unsupported kind %d", i, imp.Kind)
+		}
+	}
+	return payload.Bytes()
+}
+
+// encodeTagSection emits section 13 as a vector of tag definitions.
+func encodeTagSection(tags []wasmir.Tag, diags *diag.ErrorList) []byte {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	var payload bytes.Buffer
+	writeULEB128(&payload, uint32(len(tags)))
+	for i, tag := range tags {
+		payload.WriteByte(tagAttributeException)
+		writeULEB128(&payload, tag.TypeIdx)
+		if tag.ImportModule != "" {
+			diags.Addf("tag[%d]: imported tags must be encoded through the import section", i)
 		}
 	}
 	return payload.Bytes()
@@ -1114,6 +1146,8 @@ func exportKindCode(kind wasmir.ExternalKind) (byte, bool) {
 		return exportKindMemoryCode, true
 	case wasmir.ExternalKindGlobal:
 		return exportKindGlobalCode, true
+	case wasmir.ExternalKindTag:
+		return exportKindTagCode, true
 	default:
 		return 0, false
 	}

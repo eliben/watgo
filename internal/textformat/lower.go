@@ -46,6 +46,17 @@ type moduleLowerer struct {
 	// typesByName maps type identifiers to type indices in out.Types.
 	typesByName map[string]uint32
 
+	// tagsByName maps tag identifiers to their absolute tag indices in the
+	// module tag index space (imported tags first, then defined tags).
+	tagsByName map[string]uint32
+
+	// tagAbsIndexByAST maps each textformat Module.Tags entry index to its
+	// absolute tag index in the module tag index space.
+	tagAbsIndexByAST []uint32
+
+	// tagImportCount is the number of imported tags in the module.
+	tagImportCount uint32
+
 	// globalsByName maps global identifiers to their indices in out.Globals.
 	globalsByName map[string]uint32
 
@@ -158,6 +169,7 @@ func newModuleLowerer() *moduleLowerer {
 		hints:             &valhint.ModuleHints{},
 		funcsByName:       map[string]uint32{},
 		typesByName:       map[string]uint32{},
+		tagsByName:        map[string]uint32{},
 		globalsByName:     map[string]uint32{},
 		tablesByName:      map[string]uint32{},
 		memoriesByName:    map[string]uint32{},
@@ -173,6 +185,7 @@ func newModuleLowerer() *moduleLowerer {
 func (l *moduleLowerer) lowerModule(astm *Module) {
 	l.collectTypeDecls(astm)
 	l.collectFunctionNames(astm)
+	l.collectTagDecls(astm)
 	l.collectGlobalDecls(astm)
 	l.collectTableDecls(astm)
 	l.collectElemDecls(astm)
@@ -412,6 +425,136 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 		}
 		l.out.Types = append(l.out.Types, outType)
 	}
+}
+
+func isImportedTagDecl(t *TagDecl) bool {
+	return t != nil && t.ImportModule != ""
+}
+
+// collectTagDecls lowers module-level tag declarations and records named tag
+// indices for later export resolution.
+func (l *moduleLowerer) collectTagDecls(astm *Module) {
+	l.tagAbsIndexByAST = make([]uint32, len(astm.Tags))
+	var importCount uint32
+	for _, t := range astm.Tags {
+		if isImportedTagDecl(t) {
+			importCount++
+		}
+	}
+	l.tagImportCount = importCount
+	importNext := uint32(0)
+	defNext := importCount
+	firstSeenAt := map[string]int{}
+	for i, td := range astm.Tags {
+		if isImportedTagDecl(td) {
+			l.tagAbsIndexByAST[i] = importNext
+			importNext++
+		} else {
+			l.tagAbsIndexByAST[i] = defNext
+			defNext++
+		}
+		if td == nil || td.Id == "" {
+			continue
+		}
+		if prev, exists := firstSeenAt[td.Id]; exists {
+			l.diags.Addf("tag[%d] %s: duplicate tag id (first seen at tag[%d])", i, td.Id, prev)
+			continue
+		}
+		firstSeenAt[td.Id] = i
+		l.tagsByName[td.Id] = l.tagAbsIndexByAST[i]
+	}
+
+	for i, td := range astm.Tags {
+		if td == nil {
+			l.diags.Addf("tag[%d]: nil tag declaration", i)
+			continue
+		}
+		typeIdx := l.lowerTagTypeUse(i, td)
+		tagIdx := l.tagAbsIndexByAST[i]
+		tag := wasmir.Tag{
+			Name:    td.Id,
+			TypeIdx: typeIdx,
+		}
+		if td.ImportModule != "" {
+			tag.ImportModule = td.ImportModule
+			tag.ImportName = td.ImportName
+			l.out.Imports = append(l.out.Imports, wasmir.Import{
+				Module:  td.ImportModule,
+				Name:    td.ImportName,
+				Kind:    wasmir.ExternalKindTag,
+				TypeIdx: typeIdx,
+			})
+		} else {
+			l.out.Tags = append(l.out.Tags, tag)
+		}
+		if td.Export != nil {
+			l.out.Exports = append(l.out.Exports, wasmir.Export{
+				Name:  *td.Export,
+				Kind:  wasmir.ExternalKindTag,
+				Index: tagIdx,
+			})
+		}
+	}
+}
+
+func (l *moduleLowerer) lowerTagTypeUse(tagIdx int, td *TagDecl) uint32 {
+	if td.TyUse == nil {
+		l.diags.Addf("tag[%d]: missing tag type use", tagIdx)
+		return l.internFuncType(nil, nil, "")
+	}
+
+	params := make([]wasmir.ValueType, 0, len(td.TyUse.Params))
+	for i, pd := range td.TyUse.Params {
+		if pd == nil {
+			l.diags.Addf("tag[%d] param[%d]: nil param declaration", tagIdx, i)
+			continue
+		}
+		vt, ok := lowerValueType(pd.Ty, l.typesByName)
+		if !ok {
+			l.diags.Addf("tag[%d] param[%d]: unsupported param type %q", tagIdx, i, pd.Ty)
+			continue
+		}
+		params = append(params, vt)
+	}
+
+	results := make([]wasmir.ValueType, 0, len(td.TyUse.Results))
+	for i, rd := range td.TyUse.Results {
+		if rd == nil {
+			l.diags.Addf("tag[%d] result[%d]: nil result declaration", tagIdx, i)
+			continue
+		}
+		vt, ok := lowerValueType(rd.Ty, l.typesByName)
+		if !ok {
+			l.diags.Addf("tag[%d] result[%d]: unsupported result type %q", tagIdx, i, rd.Ty)
+			continue
+		}
+		results = append(results, vt)
+	}
+
+	if td.TyUse.Id == "" {
+		return l.internFuncType(params, results, "")
+	}
+
+	refIdx, ok := resolveTypeRef(td.TyUse.Id, l.typesByName)
+	if !ok {
+		l.diags.Addf("tag[%d]: unknown type use %q", tagIdx, td.TyUse.Id)
+		return l.internFuncType(params, results, "")
+	}
+	if int(refIdx) >= len(l.out.Types) || l.out.Types[refIdx].Kind != wasmir.TypeDefKindFunc {
+		l.diags.Addf("tag[%d]: type use %q does not reference a function type", tagIdx, td.TyUse.Id)
+		return l.internFuncType(params, results, "")
+	}
+	refType := l.out.Types[refIdx]
+	if len(params) == 0 && len(results) == 0 {
+		return refIdx
+	}
+	if !equalValueTypeSlices(params, refType.Params) {
+		l.diags.Addf("tag[%d]: type use %q parameter types mismatch referenced type", tagIdx, td.TyUse.Id)
+	}
+	if !equalValueTypeSlices(results, refType.Results) {
+		l.diags.Addf("tag[%d]: type use %q result types mismatch referenced type", tagIdx, td.TyUse.Id)
+	}
+	return refIdx
 }
 
 // collectTableDecls lowers table declarations and inline table initializers.
@@ -801,6 +944,13 @@ func (l *moduleLowerer) resolveGlobalRef(ref string) (uint32, bool) {
 	return parseU32Literal(ref)
 }
 
+func (l *moduleLowerer) resolveTagRef(ref string) (uint32, bool) {
+	if idx, ok := l.tagsByName[ref]; ok {
+		return idx, true
+	}
+	return parseU32Literal(ref)
+}
+
 // collectModuleExports lowers top-level "(export ...)" declarations.
 func (l *moduleLowerer) collectModuleExports(astm *Module) {
 	for i, ed := range astm.Exports {
@@ -841,6 +991,13 @@ func (l *moduleLowerer) collectModuleExports(astm *Module) {
 			index, ok = l.resolveMemoryRef(ed.Ref)
 			if !ok {
 				l.diags.Addf("export[%d]: unknown memory %q", i, ed.Ref)
+				continue
+			}
+		case "tag":
+			kind = wasmir.ExternalKindTag
+			index, ok = l.resolveTagRef(ed.Ref)
+			if !ok {
+				l.diags.Addf("export[%d]: unknown tag %q", i, ed.Ref)
 				continue
 			}
 		default:

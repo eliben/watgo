@@ -178,7 +178,7 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 				p.emitError(sub.loc, "import after module field")
 				continue
 			}
-			fd, td, md, gd, ok := p.parseImportField(sub)
+			fd, td, md, gd, tagd, ok := p.parseImportField(sub)
 			if !ok {
 				continue
 			}
@@ -193,6 +193,9 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			}
 			if gd != nil {
 				m.Globals = append(m.Globals, gd)
+			}
+			if tagd != nil {
+				m.Tags = append(m.Tags, tagd)
 			}
 		case "type":
 			m.Types = append(m.Types, p.parseTypeDecl(sub))
@@ -232,6 +235,12 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 			if gd.ImportModule == "" {
 				importsClosed = true
 			}
+		case "tag":
+			td := p.parseTagDecl(sub)
+			m.Tags = append(m.Tags, td)
+			if td.ImportModule == "" {
+				importsClosed = true
+			}
 		case "elem":
 			m.Elems = append(m.Elems, p.parseElemDecl(sub))
 			importsClosed = true
@@ -264,9 +273,6 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 				loc:     sub.loc,
 			}
 			importsClosed = true
-		case "tag":
-			// Exception handling tags are outside the current lowering subset.
-			// Keep parsing the rest of the module fields.
 		default:
 			p.emitError(sub.loc, "unsupported module field %q", sub.HeadKeyword())
 			importsClosed = true
@@ -283,6 +289,7 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 //   - (export "name" (global X))
 //   - (export "name" (table X))
 //   - (export "name" (memory X))
+//   - (export "name" (tag X))
 //
 // where X is an identifier or integer index token.
 func (p *Parser) parseExportDecl(sx *SExpr) *ExportDecl {
@@ -294,11 +301,10 @@ func (p *Parser) parseExportDecl(sx *SExpr) *ExportDecl {
 	desc := sx.list[2]
 	head := desc.HeadKeyword()
 	switch head {
-	case "func", "global", "table", "memory":
+	case "func", "global", "table", "memory", "tag":
 		// Supported export descriptor kinds.
 	default:
-		// Unsupported export kinds (for example tags) are ignored in this
-		// lowering subset so the rest of the module can still be processed.
+		p.emitError(desc.loc, "unsupported export descriptor")
 		return nil
 	}
 	if !desc.IsList() || len(desc.list) != 2 {
@@ -320,12 +326,12 @@ func (p *Parser) parseExportDecl(sx *SExpr) *ExportDecl {
 }
 
 // parseImportField parses one top-level "(import ...)" form.
-// It currently supports function/table/memory/global imports and returns at
-// most one descriptor of each kind plus a success flag.
-func (p *Parser) parseImportField(sx *SExpr) (*Function, *TableDecl, *MemoryDecl, *GlobalDecl, bool) {
+// It currently supports function/table/memory/global/tag imports and returns
+// at most one descriptor plus a success flag.
+func (p *Parser) parseImportField(sx *SExpr) (*Function, *TableDecl, *MemoryDecl, *GlobalDecl, *TagDecl, bool) {
 	if len(sx.list) != 4 {
 		p.emitError(sx.loc, "invalid import declaration")
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil, nil, false
 	}
 	mod := p.matchElement(sx, 1, STRING)
 	name := p.matchElement(sx, 2, STRING)
@@ -335,30 +341,81 @@ func (p *Parser) parseImportField(sx *SExpr) (*Function, *TableDecl, *MemoryDecl
 		fd := p.parseFuncImportDesc(desc)
 		fd.ImportModule = mod
 		fd.ImportName = name
-		return fd, nil, nil, nil, true
+		return fd, nil, nil, nil, nil, true
 	case "table":
 		td := p.parseTableDecl(desc)
 		td.ImportModule = mod
 		td.ImportName = name
-		return nil, td, nil, nil, true
+		return nil, td, nil, nil, nil, true
 	case "memory":
 		md := p.parseMemoryDecl(desc)
 		md.ImportModule = mod
 		md.ImportName = name
-		return nil, nil, md, nil, true
+		return nil, nil, md, nil, nil, true
 	case "global":
 		gd := p.parseGlobalImportDesc(desc)
 		gd.ImportModule = mod
 		gd.ImportName = name
-		return nil, nil, nil, gd, true
+		return nil, nil, nil, gd, nil, true
 	case "tag":
-		// Exception tags are outside the current lowering subset.
-		// Ignore tag imports so the rest of the module can be compiled/tested.
-		return nil, nil, nil, nil, true
+		td := p.parseTagDecl(desc)
+		td.ImportModule = mod
+		td.ImportName = name
+		return nil, nil, nil, nil, td, true
 	default:
 		p.emitError(desc.loc, "unsupported import descriptor")
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil, nil, false
 	}
+}
+
+// parseTagDecl parses one module-level "(tag ...)" declaration or a tag import
+// descriptor "(tag ...)" nested inside "(import ...)".
+func (p *Parser) parseTagDecl(sx *SExpr) *TagDecl {
+	td := &TagDecl{
+		TyUse: &TypeUse{},
+		loc:   sx.loc,
+	}
+	cursor := 1
+	if cursor < len(sx.list) && sx.list[cursor].IsTokenKind(ID) {
+		td.Id = sx.list[cursor].tok.value
+		cursor++
+	}
+	if cursor < len(sx.list) && sx.list[cursor].HeadKeyword() == "export" {
+		name := p.matchElement(sx.list[cursor], 1, STRING)
+		td.Export = &name
+		cursor++
+	}
+	for ; cursor < len(sx.list); cursor++ {
+		elem := sx.list[cursor]
+		switch elem.HeadKeyword() {
+		case "type":
+			td.TyUse.Id = p.parseTypeUseClause(elem)
+		case "export":
+			name := p.matchElement(elem, 1, STRING)
+			if td.Export == nil {
+				td.Export = &name
+			}
+		case "import":
+			modName, fieldName, ok := p.parseImportClause(elem)
+			if !ok {
+				p.emitError(elem.loc, "invalid tag import clause")
+				continue
+			}
+			if td.ImportModule != "" {
+				p.emitError(elem.loc, "duplicate tag import clause")
+				continue
+			}
+			td.ImportModule = modName
+			td.ImportName = fieldName
+		case "param":
+			td.TyUse.Params = append(td.TyUse.Params, p.parseParamDecl(elem)...)
+		case "result":
+			td.TyUse.Results = append(td.TyUse.Results, p.parseResultDecl(elem)...)
+		default:
+			p.emitError(elem.loc, "unsupported tag field %q", elem.HeadKeyword())
+		}
+	}
+	return td
 }
 
 // parseFuncImportDesc parses a function import descriptor "(func ...)" and

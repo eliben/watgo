@@ -44,6 +44,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	seenFunction := false
 	seenTable := false
 	seenMemory := false
+	seenTag := false
 	seenGlobal := false
 	seenExport := false
 	seenStart := false
@@ -144,6 +145,14 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			}
 			seenMemory = true
 			out.Memories = append(out.Memories, decodeMemorySection(sr, &diags)...)
+
+		case sectionTagID:
+			if seenTag {
+				diags.Addf("duplicate tag section")
+				break
+			}
+			seenTag = true
+			out.Tags = append(out.Tags, decodeTagSection(sr, &diags)...)
 
 		case sectionGlobalID:
 			if seenGlobal {
@@ -276,20 +285,22 @@ func sectionOrderRank(sectionID byte) int {
 		return 4
 	case sectionMemoryID:
 		return 5
-	case sectionGlobalID:
+	case sectionTagID:
 		return 6
-	case sectionExportID:
+	case sectionGlobalID:
 		return 7
-	case sectionStartID:
+	case sectionExportID:
 		return 8
-	case sectionElementID:
+	case sectionStartID:
 		return 9
-	case sectionDataCountID:
+	case sectionElementID:
 		return 10
-	case sectionCodeID:
+	case sectionDataCountID:
 		return 11
-	case sectionDataID:
+	case sectionCodeID:
 		return 12
+	case sectionDataID:
+		return 13
 	default:
 		return 0
 	}
@@ -581,11 +592,60 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 			imp.Kind = wasmir.ExternalKindGlobal
 			imp.GlobalType = ty
 			imp.GlobalMutable = mut == globalMutabilityVarCode
+		case importKindTagCode:
+			attr, err := readByte(r)
+			if err != nil {
+				diags.Addf("import[%d]: missing tag attribute: %v", i, err)
+				break
+			}
+			if attr != tagAttributeException {
+				diags.Addf("import[%d]: unsupported tag attribute 0x%x", i, attr)
+				break
+			}
+			typeIdx, err := readU32(r)
+			if err != nil {
+				diags.Addf("import[%d]: invalid tag type index: %v", i, err)
+				break
+			}
+			imp.Kind = wasmir.ExternalKindTag
+			imp.TypeIdx = typeIdx
 		default:
 			diags.Addf("import[%d]: unsupported kind 0x%x", i, kind)
 			break
 		}
 		out = append(out, imp)
+	}
+	return out
+}
+
+func decodeTagSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Tag {
+	n, err := readU32(r)
+	if err != nil {
+		diags.Addf("tag section: invalid vector length: %v", err)
+		return nil
+	}
+	capN, err := boundedVectorCapacity(r, n)
+	if err != nil {
+		diags.Addf("tag section: invalid vector length: %v", err)
+		return nil
+	}
+	out := make([]wasmir.Tag, 0, capN)
+	for i := uint32(0); i < n; i++ {
+		attr, err := readByte(r)
+		if err != nil {
+			diags.Addf("tag[%d]: missing attribute: %v", i, err)
+			break
+		}
+		if attr != tagAttributeException {
+			diags.Addf("tag[%d]: unsupported attribute 0x%x", i, attr)
+			break
+		}
+		typeIdx, err := readU32(r)
+		if err != nil {
+			diags.Addf("tag[%d]: invalid type index: %v", i, err)
+			break
+		}
+		out = append(out, wasmir.Tag{TypeIdx: typeIdx})
 	}
 	return out
 }
@@ -1915,6 +1975,8 @@ func decodeExportKind(code byte) (wasmir.ExternalKind, bool) {
 		return wasmir.ExternalKindMemory, true
 	case exportKindGlobalCode:
 		return wasmir.ExternalKindGlobal, true
+	case exportKindTagCode:
+		return wasmir.ExternalKindTag, true
 	default:
 		return 0, false
 	}

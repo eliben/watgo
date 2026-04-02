@@ -703,6 +703,7 @@ const (
 	ExternalKindTable
 	ExternalKindMemory
 	ExternalKindGlobal
+	ExternalKindTag
 )
 
 // Module is the semantic in-memory representation of a WebAssembly module.
@@ -729,6 +730,12 @@ type Module struct {
 
 	// Globals is the global definition list in index order.
 	Globals []Global
+
+	// Tags is the tag definition list in index order.
+	//
+	// Tag indices refer to imported tags first (from Imports), then to entries
+	// in this slice.
+	Tags []Tag
 
 	// Data is the list of module data segments.
 	Data []DataSegment
@@ -857,7 +864,7 @@ type Import struct {
 	// Kind is the external kind of this import.
 	Kind ExternalKind
 
-	// TypeIdx is used when Kind==ExternalKindFunction.
+	// TypeIdx is used when Kind==ExternalKindFunction or Kind==ExternalKindTag.
 	TypeIdx uint32
 
 	// Table is used when Kind==ExternalKindTable.
@@ -869,6 +876,21 @@ type Import struct {
 	// GlobalType and GlobalMutable are used when Kind==ExternalKindGlobal.
 	GlobalType    ValueType
 	GlobalMutable bool
+}
+
+// Tag is one module tag definition.
+type Tag struct {
+	// Name is an optional source-level identifier for diagnostics/debugging.
+	Name string
+
+	// TypeIdx indexes Module.Types and provides the tag payload signature.
+	TypeIdx uint32
+
+	// ImportModule is non-empty when this tag is imported.
+	ImportModule string
+
+	// ImportName is non-empty when this tag is imported.
+	ImportName string
 }
 
 // Table is one table definition.

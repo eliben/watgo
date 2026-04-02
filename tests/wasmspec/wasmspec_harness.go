@@ -236,7 +236,9 @@ func parseScript(src string) ([]scriptCommand, error) {
 // one synthetic module command.
 //
 // Wasmspec allows scripts consisting of raw module fields such as:
-//   (func) (memory 0) (func (export "f"))
+//
+//	(func) (memory 0) (func (export "f"))
+//
 // which is shorthand for one anonymous "(module ...)" command. We preserve the
 // original field text and let runModule wrap it in "(module ...)" later.
 func parseInlineModuleCommand(top []*textformat.SExpr, start int) (scriptCommand, int, error) {
@@ -2975,13 +2977,6 @@ func (r *scriptRunner) runAssertExhaustion(res *commandResult, cmd scriptCommand
 // runAssertUnlinkable handles "(assert_unlinkable (module ...) \"...\")".
 // It expects module linking to fail at compile-time or instantiation-time.
 func (r *scriptRunner) runAssertUnlinkable(res *commandResult, cmd scriptCommand, opts runOptions) {
-	if moduleHasTopLevelField(cmd.moduleExpr, "tag") {
-		// Exception handling tags are not in the current watgo subset.
-		// Treat these cases as unlinkable for this harness stage.
-		res.status = true
-		return
-	}
-
 	wasmBytes, err := r.compileModuleExpr(cmd.moduleExpr)
 	if err != nil {
 		if opts.strictErrorText && cmd.expectText != "" && !strings.Contains(err.Error(), cmd.expectText) {
@@ -3005,19 +3000,6 @@ func (r *scriptRunner) runAssertUnlinkable(res *commandResult, cmd scriptCommand
 		return
 	}
 	res.status = true
-}
-
-func moduleHasTopLevelField(moduleExpr *textformat.SExpr, fieldHead string) bool {
-	if moduleExpr == nil {
-		return false
-	}
-	elems := moduleExpr.Children()
-	for i := moduleBodyCursor(moduleExpr); i < len(elems); i++ {
-		if elems[i].HeadKeyword() == fieldHead {
-			return true
-		}
-	}
-	return false
 }
 
 func matchesExpectedFailureText(got, want string) bool {
@@ -3115,13 +3097,6 @@ func isEngineUnsupportedFeatureError(err error) bool {
 // runAssertInvalid handles "(assert_invalid (module ...) \"...\")".
 // It expects module compilation to fail; message matching is optional via opts.
 func (r *scriptRunner) runAssertInvalid(res *commandResult, cmd scriptCommand, opts runOptions) {
-	if moduleHasTopLevelField(cmd.moduleExpr, "tag") {
-		// Exception handling tags are outside the current watgo subset.
-		// Treat such modules as invalid for this harness stage.
-		res.status = true
-		return
-	}
-
 	var err error
 	if isModuleBinaryExpr(cmd.moduleExpr) {
 		var wasmBytes []byte

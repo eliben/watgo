@@ -764,6 +764,8 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	var diags diag.ErrorList
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
+	tagImportTypeIdx := importedTagTypeIndices(m)
+	totalTagCount := uint32(len(tagImportTypeIdx) + len(m.Tags))
 	declaredFuncs := declaredFunctionRefs(m)
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 	if m.StartFuncIndex != nil {
@@ -1003,6 +1005,26 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	for i, typeIdx := range tagImportTypeIdx {
+		if int(typeIdx) >= len(m.Types) || m.Types[typeIdx].Kind != TypeDefKindFunc {
+			diags.Addf("tag import[%d]: unknown type", i)
+			continue
+		}
+		if len(m.Types[typeIdx].Results) != 0 {
+			diags.Addf("tag import[%d]: non-empty tag result type", i)
+		}
+	}
+
+	for i, tag := range m.Tags {
+		if int(tag.TypeIdx) >= len(m.Types) || m.Types[tag.TypeIdx].Kind != TypeDefKindFunc {
+			diags.Addf("tag[%d]: unknown type", i)
+			continue
+		}
+		if len(m.Types[tag.TypeIdx].Results) != 0 {
+			diags.Addf("tag[%d]: non-empty tag result type", i)
+		}
+	}
+
 	exportNameFirstSeen := map[string]int{}
 	for i, exp := range m.Exports {
 		if prev, exists := exportNameFirstSeen[exp.Name]; exists {
@@ -1025,6 +1047,10 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 			}
 		case ExternalKindGlobal:
 			if int(exp.Index) >= len(m.Globals) {
+				diags.Addf("export[%d] index %d out of range", i, exp.Index)
+			}
+		case ExternalKindTag:
+			if exp.Index >= totalTagCount {
 				diags.Addf("export[%d] index %d out of range", i, exp.Index)
 			}
 		default:
@@ -3963,6 +3989,16 @@ func importedFunctionTypeIndices(m *Module) []uint32 {
 	out := make([]uint32, 0, len(m.Imports))
 	for _, imp := range m.Imports {
 		if imp.Kind == ExternalKindFunction {
+			out = append(out, imp.TypeIdx)
+		}
+	}
+	return out
+}
+
+func importedTagTypeIndices(m *Module) []uint32 {
+	out := make([]uint32, 0, len(m.Imports))
+	for _, imp := range m.Imports {
+		if imp.Kind == ExternalKindTag {
 			out = append(out, imp.TypeIdx)
 		}
 	}

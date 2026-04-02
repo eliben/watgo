@@ -27,6 +27,9 @@ type Module struct {
 	// Data contains parsed module-level data segment declarations.
 	Data []*DataDecl
 
+	// Tags contains parsed tag declarations in source order.
+	Tags []*TagDecl
+
 	// Globals contains parsed global declarations in source order.
 	Globals []*GlobalDecl
 
@@ -62,13 +65,41 @@ type ExportDecl struct {
 	Name string
 
 	// Kind is the export descriptor kind keyword: "func", "global", "table",
-	// or "memory".
+	// "memory", or "tag".
 	Kind string
 
 	// Ref is the exported item reference token text (identifier or index).
 	Ref string
 
 	// loc is the source location of the export declaration form head.
+	loc location
+}
+
+// TagDecl is one module-level tag declaration "(tag ...)".
+type TagDecl struct {
+	// Id is the optional tag identifier (for example "$t").
+	Id string
+
+	// Export is the optional exported name from an inline "(export \"...\")"
+	// clause. It is nil when no inline export was declared.
+	Export *string
+
+	// ImportModule is non-empty when this tag is imported and stores the import
+	// module name.
+	ImportModule string
+
+	// ImportName is non-empty when this tag is imported and stores the import
+	// field name.
+	ImportName string
+
+	// TyUse is the parsed type-use information for this tag payload type.
+	//
+	// Tags use function types as their payload signatures. The parser preserves
+	// inline "(param ...)" / "(result ...)" clauses so validation can reject
+	// unsupported non-empty result types later.
+	TyUse *TypeUse
+
+	// loc is the source location of the tag declaration form head.
 	loc location
 }
 
