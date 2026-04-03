@@ -185,7 +185,7 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 	}
 
 	if got.ExitCode != tc.expectedError {
-		t.Fatalf("exit code mismatch for %q: got %d, want %d", path, got.ExitCode, tc.expectedError)
+		t.Fatalf("exit code mismatch for %q: got %d, want %d\nstdout:\n%s\nstderr:\n%s", path, got.ExitCode, tc.expectedError, got.Stdout, got.Stderr)
 	}
 	if !wabtInterpStdoutMatches(got.Stdout, tc.expectedStdout) {
 		t.Fatalf("stdout mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got.Stdout, tc.expectedStdout)
@@ -200,7 +200,9 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 //
 // This is intentionally a very small extractor for the subset we use here. It
 // does not try to interpret the full WABT .txt test language; it only extracts
-// the module body and the final expected stdout payload.
+// the module body plus any final expected stdout/stderr payloads. Some
+// run-interp fixtures are still useful even without an explicit output block;
+// for those, the expected stdout/stderr simply stay empty.
 func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 	text := string(src)
 	const stdoutStart = "(;; STDOUT ;;;"
@@ -264,10 +266,6 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 		expectedStderr = text[stderrStartIdx+len(stderrStart) : stderrEndIdx]
 		expectedStderr = strings.TrimPrefix(expectedStderr, "\n")
 		expectedStderr = strings.TrimSuffix(expectedStderr, "\n")
-	}
-
-	if expectedStdout == "" && expectedStderr == "" {
-		return wabtInterpCase{}, fmt.Errorf("missing STDOUT/STDERR block")
 	}
 
 	moduleWAT := strings.TrimSpace(text[moduleStart:endIdx])

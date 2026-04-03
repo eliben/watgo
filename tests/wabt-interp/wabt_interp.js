@@ -41,9 +41,9 @@ if (process.argv.length !== 3) {
 
 const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const wasmPath = payload.wasmPath;
-const exportsToRun = payload.exports;
-const importedFuncs = payload.imports;
-const invocations = payload.invocations;
+const exportsToRun = payload.exports || [];
+const importedFuncs = payload.imports || [];
+const invocations = payload.invocations || [];
 const hostPrint = payload.hostPrint;
 const dummyImportFunc = payload.dummyImportFunc;
 const hostPrintResultKind = payload.hostPrintResultKind;
@@ -79,6 +79,9 @@ function valueString(kind, value) {
 }
 
 function normalizeTrapMessage(message) {
+  if (message.includes('divide by zero')) {
+    return 'integer divide by zero';
+  }
   if (message.includes('table index is out of bounds')) {
     return 'undefined table index';
   }
