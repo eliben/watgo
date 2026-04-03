@@ -238,7 +238,7 @@ func writeSection(out *bytes.Buffer, id byte, payload []byte) {
 }
 
 // encodeTypeSection emits section 1.
-func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
+func encodeTypeSection(types []wasmir.TypeDef, diags *diag.ErrorList) []byte {
 	if len(types) == 0 {
 		return nil
 	}
@@ -282,7 +282,7 @@ func encodeTypeSection(types []wasmir.FuncType, diags *diag.ErrorList) []byte {
 	return payload.Bytes()
 }
 
-func encodeOneTypeDef(payload *bytes.Buffer, i int, ft wasmir.FuncType, diags *diag.ErrorList) {
+func encodeOneTypeDef(payload *bytes.Buffer, i int, ft wasmir.TypeDef, diags *diag.ErrorList) {
 	if ft.SubType {
 		if ft.Final {
 			payload.WriteByte(typeCodeSubFinal)

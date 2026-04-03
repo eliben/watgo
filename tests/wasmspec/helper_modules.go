@@ -131,7 +131,7 @@ var anyrefHelperTemplate = template.Must(template.New("anyref").Parse(`
 
 // planInvoke decides whether a call can go straight through JS or should be
 // routed through a Go-compiled helper module first.
-func (r *scriptRunner) planInvoke(sig wasmir.FuncType, scriptArgs []scriptValue) (invokePlan, error) {
+func (r *scriptRunner) planInvoke(sig wasmir.TypeDef, scriptArgs []scriptValue) (invokePlan, error) {
 	args, err := encodeDirectInvokeArgs(scriptArgs, sig.Params)
 	if err != nil {
 		return invokePlan{}, err
@@ -155,7 +155,7 @@ func (r *scriptRunner) planInvoke(sig wasmir.FuncType, scriptArgs []scriptValue)
 // buildInvokeHelper selects a helper strategy for the given function type.
 // Helpers are used only where the JS embedding would otherwise lose exact wasm
 // behavior, such as float NaN payloads, v128 values, or anyref classification.
-func (r *scriptRunner) buildInvokeHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildInvokeHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	hasV128Args := funcTypeHasV128Args(sig)
 	hasFloatArgs := funcTypeHasFloatArgs(sig)
 	needsExactTypeIdentity := funcTypeNeedsExactTypeIdentity(sig)
@@ -187,7 +187,7 @@ func (r *scriptRunner) buildInvokeHelper(sig wasmir.FuncType, scriptArgs []scrip
 
 // buildPassthroughHelper rebuilds lowered v128 arguments inside wasm and then
 // forwards the call unchanged. This keeps JS from having to materialize v128.
-func (r *scriptRunner) buildPassthroughHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildPassthroughHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	data, err := newGeneralHelperTemplateData(sig, sig.Results, nil)
 	if err != nil {
 		return nil, helperDecodeNormal, err
@@ -215,7 +215,7 @@ func (r *scriptRunner) buildPassthroughHelper(sig wasmir.FuncType, scriptArgs []
 
 // buildFloatResultHelper reinterprets one float result to raw integer bits
 // inside wasm so the JS bridge cannot canonicalize NaNs or lose payload bits.
-func (r *scriptRunner) buildFloatResultHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildFloatResultHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	var bitsResult wasmir.ValueType
 	var post []string
 	switch sig.Results[0].Kind {
@@ -256,7 +256,7 @@ func (r *scriptRunner) buildFloatResultHelper(sig wasmir.FuncType, scriptArgs []
 // buildExnrefResultHelper converts one exnref-like result to a ref.is_null
 // flag inside wasm so the JS embedding never has to materialize an exception
 // reference value directly.
-func (r *scriptRunner) buildExnrefResultHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildExnrefResultHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	data, err := newGeneralHelperTemplateData(sig, []wasmir.ValueType{wasmir.ValueTypeI32}, []string{"ref.is_null"})
 	if err != nil {
 		return nil, helperDecodeNormal, err
@@ -280,7 +280,7 @@ func (r *scriptRunner) buildExnrefResultHelper(sig wasmir.FuncType, scriptArgs [
 
 // buildV128ResultHelper stores one v128 result into scratch memory and reloads
 // it as four i32 words that can cross the JS boundary exactly.
-func (r *scriptRunner) buildV128ResultHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildV128ResultHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	post := []string{
 		"v128.store",
 		"i32.const 0",
@@ -321,7 +321,7 @@ func (r *scriptRunner) buildV128ResultHelper(sig wasmir.FuncType, scriptArgs []s
 
 // buildAnyrefHelper runs ref.test-based classification inside wasm. For the
 // generic "other anyref" case the Node side falls back to direct encoding.
-func (r *scriptRunner) buildAnyrefHelper(sig wasmir.FuncType, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
+func (r *scriptRunner) buildAnyrefHelper(sig wasmir.TypeDef, scriptArgs []scriptValue) (*nodeInvokeHelper, helperDecodeMode, error) {
 	data, err := newAnyrefHelperTemplateData(sig)
 	if err != nil {
 		return nil, helperDecodeNormal, err
@@ -346,7 +346,7 @@ func (r *scriptRunner) buildAnyrefHelper(sig wasmir.FuncType, scriptArgs []scrip
 
 // newGeneralHelperTemplateData prepares template input for helpers that share
 // the single-import, single-export wrapper shape.
-func newGeneralHelperTemplateData(sig wasmir.FuncType, exportResults []wasmir.ValueType, postCall []string) (helperTemplateData, error) {
+func newGeneralHelperTemplateData(sig wasmir.TypeDef, exportResults []wasmir.ValueType, postCall []string) (helperTemplateData, error) {
 	targetParams, err := valueTypeStrings(sig.Params)
 	if err != nil {
 		return helperTemplateData{}, err
@@ -376,7 +376,7 @@ func newGeneralHelperTemplateData(sig wasmir.FuncType, exportResults []wasmir.Va
 
 // newAnyrefHelperTemplateData prepares template input for the anyref
 // classifier helper, which exports both "classify" and "call_raw".
-func newAnyrefHelperTemplateData(sig wasmir.FuncType) (helperTemplateData, error) {
+func newAnyrefHelperTemplateData(sig wasmir.TypeDef) (helperTemplateData, error) {
 	targetParams, err := valueTypeStrings(sig.Params)
 	if err != nil {
 		return helperTemplateData{}, err
@@ -472,7 +472,7 @@ func valueTypeStrings(types []wasmir.ValueType) ([]string, error) {
 	return out, nil
 }
 
-func funcTypeHasV128Args(sig wasmir.FuncType) bool {
+func funcTypeHasV128Args(sig wasmir.TypeDef) bool {
 	for _, vt := range sig.Params {
 		if vt.Kind == wasmir.ValueKindV128 {
 			return true
@@ -484,7 +484,7 @@ func funcTypeHasV128Args(sig wasmir.FuncType) bool {
 // funcTypeNeedsExactTypeIdentity reports function types that cannot safely be
 // wrapped by these generic helpers. Subtyped/recursive function exports must be
 // imported with their exact declared function type, not a flattened signature.
-func funcTypeNeedsExactTypeIdentity(sig wasmir.FuncType) bool {
+func funcTypeNeedsExactTypeIdentity(sig wasmir.TypeDef) bool {
 	return sig.SubType || sig.RecGroupSize > 0 || len(sig.SuperTypes) > 0
 }
 
@@ -501,7 +501,7 @@ func isExnRefType(vt wasmir.ValueType) bool {
 		(vt.HeapType.Kind == wasmir.HeapKindExn || vt.HeapType.Kind == wasmir.HeapKindNoExn)
 }
 
-func funcTypeHasFloatArgs(sig wasmir.FuncType) bool {
+func funcTypeHasFloatArgs(sig wasmir.TypeDef) bool {
 	for _, vt := range sig.Params {
 		if isFloatType(vt) {
 			return true

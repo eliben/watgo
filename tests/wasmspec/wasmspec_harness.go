@@ -1421,7 +1421,7 @@ const (
 )
 
 type moduleMetadata struct {
-	funcExports   map[string]wasmir.FuncType
+	funcExports   map[string]wasmir.TypeDef
 	globalExports map[string]wasmir.ValueType
 }
 
@@ -2242,7 +2242,7 @@ func (r *scriptRunner) buildSyntheticConsumerModule(moduleExpr *textformat.SExpr
 		}
 	}
 	meta := &moduleMetadata{
-		funcExports: map[string]wasmir.FuncType{
+		funcExports: map[string]wasmir.TypeDef{
 			"glob": {Results: []wasmir.ValueType{wasmir.ValueTypeI32}},
 			"tab":  {Results: []wasmir.ValueType{wasmir.RefTypeFunc(true)}},
 			"mem":  {Results: []wasmir.ValueType{wasmir.ValueTypeI32}},
@@ -3355,7 +3355,7 @@ func decodeModuleMetadata(wasmBytes []byte) (*moduleMetadata, error) {
 		return nil, err
 	}
 	meta := &moduleMetadata{
-		funcExports:   map[string]wasmir.FuncType{},
+		funcExports:   map[string]wasmir.TypeDef{},
 		globalExports: map[string]wasmir.ValueType{},
 	}
 	for _, exp := range m.Exports {
@@ -3405,7 +3405,7 @@ func normalizeHarnessValueType(m *wasmir.Module, vt wasmir.ValueType) wasmir.Val
 	}
 }
 
-func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.FuncType, error) {
+func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.TypeDef, error) {
 	importedFuncCount := uint32(0)
 	for _, imp := range m.Imports {
 		if imp.Kind != wasmir.ExternalKindFunction {
@@ -3413,7 +3413,7 @@ func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.FuncType, 
 		}
 		if importedFuncCount == funcIndex {
 			if int(imp.TypeIdx) >= len(m.Types) {
-				return wasmir.FuncType{}, fmt.Errorf("import function type index %d out of range", imp.TypeIdx)
+				return wasmir.TypeDef{}, fmt.Errorf("import function type index %d out of range", imp.TypeIdx)
 			}
 			return m.Types[imp.TypeIdx], nil
 		}
@@ -3421,11 +3421,11 @@ func functionTypeForIndex(m *wasmir.Module, funcIndex uint32) (wasmir.FuncType, 
 	}
 	localIndex := funcIndex - importedFuncCount
 	if funcIndex < importedFuncCount || int(localIndex) >= len(m.Funcs) {
-		return wasmir.FuncType{}, fmt.Errorf("function index %d out of range", funcIndex)
+		return wasmir.TypeDef{}, fmt.Errorf("function index %d out of range", funcIndex)
 	}
 	typeIdx := m.Funcs[localIndex].TypeIdx
 	if int(typeIdx) >= len(m.Types) {
-		return wasmir.FuncType{}, fmt.Errorf("function type index %d out of range", typeIdx)
+		return wasmir.TypeDef{}, fmt.Errorf("function type index %d out of range", typeIdx)
 	}
 	return m.Types[typeIdx], nil
 }

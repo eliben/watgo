@@ -32,7 +32,7 @@ const testMaxMemoryPages64 uint64 = 1 << 48
 
 func makeValidAddModule() *Module {
 	return &Module{
-		Types: []FuncType{{
+		Types: []TypeDef{{
 			Params:  []ValueType{ValueTypeI32, ValueTypeI32},
 			Results: []ValueType{ValueTypeI32},
 		}},
@@ -163,7 +163,7 @@ func TestValidateModule_CollectsMultipleDiagnostics(t *testing.T) {
 
 func TestValidateModule_CallTypeMismatch(t *testing.T) {
 	m := &Module{
-		Types: []FuncType{
+		Types: []TypeDef{
 			{Params: []ValueType{ValueTypeI32}, Results: []ValueType{ValueTypeI32}},
 			{Params: []ValueType{}, Results: []ValueType{ValueTypeI32}},
 			{Params: []ValueType{ValueTypeF32}, Results: []ValueType{ValueTypeI32}},
@@ -213,7 +213,7 @@ func TestValidateModule_CallTypeMismatch(t *testing.T) {
 
 func TestValidateModule_ThrowTagOperandMismatch(t *testing.T) {
 	m := &Module{
-		Types: []FuncType{
+		Types: []TypeDef{
 			{Params: []ValueType{ValueTypeI32}, Results: nil},
 			{Params: nil, Results: nil},
 		},
@@ -244,7 +244,7 @@ func TestValidateModule_ThrowTagOperandMismatch(t *testing.T) {
 
 func TestValidateModule_IfElseWithResult(t *testing.T) {
 	m := &Module{
-		Types: []FuncType{
+		Types: []TypeDef{
 			{Params: nil, Results: []ValueType{ValueTypeI64}},
 		},
 		Funcs: []Function{
@@ -287,7 +287,7 @@ func TestValidateModule_Memory64PageLimit(t *testing.T) {
 
 func TestValidateModule_SIMDMemoryOps(t *testing.T) {
 	m := &Module{
-		Types: []FuncType{{Params: nil, Results: nil}},
+		Types: []TypeDef{{Params: nil, Results: nil}},
 		Memories: []Memory{
 			{AddressType: ValueTypeI32, Min: 1},
 		},
@@ -317,7 +317,7 @@ func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
 			Init:        []byte{1},
 		}},
 		Memories: []Memory{{AddressType: ValueTypeI64, Min: 1}},
-		Types:    []FuncType{{}},
+		Types:    []TypeDef{{}},
 		Funcs: []Function{{
 			TypeIdx: 0,
 			Body: []Instruction{
@@ -349,7 +349,7 @@ func TestValidateModule_MemoryInitMemory64OperandTypes(t *testing.T) {
 func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
 	m64 := &Module{
 		Memories: []Memory{{AddressType: ValueTypeI64, Min: 1}},
-		Types:    []FuncType{{}},
+		Types:    []TypeDef{{}},
 		Funcs: []Function{{
 			TypeIdx: 0,
 			Body: []Instruction{
@@ -380,7 +380,7 @@ func TestValidateModule_MemoryCopyMemory64OperandTypes(t *testing.T) {
 
 func TestValidateModule_RejectsTooLargeMemoryAlignment(t *testing.T) {
 	m := &Module{
-		Types:    []FuncType{{}},
+		Types:    []TypeDef{{}},
 		Memories: []Memory{{AddressType: ValueTypeI32, Min: 1}},
 		Funcs: []Function{{
 			TypeIdx: 0,

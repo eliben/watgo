@@ -118,9 +118,9 @@ func elementRefType(m *Module, elemIndex uint32) (ValueType, bool) {
 	return ValueType{}, false
 }
 
-func typeDefAtIndex(m *Module, typeIndex uint32) (FuncType, bool) {
+func typeDefAtIndex(m *Module, typeIndex uint32) (TypeDef, bool) {
 	if m == nil || int(typeIndex) >= len(m.Types) {
-		return FuncType{}, false
+		return TypeDef{}, false
 	}
 	return m.Types[typeIndex], true
 }
@@ -493,11 +493,11 @@ func isModuleValueSubtype(m *Module, got, want ValueType) bool {
 	return false
 }
 
-func isTypeFinal(td FuncType) bool {
+func isTypeFinal(td TypeDef) bool {
 	return !td.SubType || td.Final
 }
 
-func isValidDeclaredSubtype(m *Module, sub, super FuncType) bool {
+func isValidDeclaredSubtype(m *Module, sub, super TypeDef) bool {
 	if sub.Kind != super.Kind {
 		return false
 	}
@@ -576,7 +576,7 @@ func validateTypeVisibilityRef(m *Module, fromIndex uint32, vt ValueType) bool {
 	return typeRefVisibleFromType(m, fromIndex, vt.HeapType.TypeIndex)
 }
 
-func validateTypeDefVisibility(m *Module, typeIndex uint32, td FuncType) bool {
+func validateTypeDefVisibility(m *Module, typeIndex uint32, td TypeDef) bool {
 	for _, super := range td.SuperTypes {
 		if !typeRefVisibleFromType(m, typeIndex, super) {
 			return false
@@ -1071,7 +1071,7 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 // validateFunctionBody validates f against function type ft.
 // It returns all diagnostics found while checking instruction ordering,
 // local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft FuncType, f Function, funcImportTypeIdx []uint32, tagImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
+func validateFunctionBody(m *Module, ft TypeDef, f Function, funcImportTypeIdx []uint32, tagImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
 	funcImportCount := uint32(len(funcImportTypeIdx))
@@ -4190,56 +4190,56 @@ func declaredFunctionRefs(m *Module) map[uint32]bool {
 	return declared
 }
 
-func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) (FuncType, *Function, bool) {
+func functionTypeAtIndex(m *Module, funcImportTypeIdx []uint32, funcIdx uint32) (TypeDef, *Function, bool) {
 	importCount := uint32(len(funcImportTypeIdx))
 	if funcIdx < importCount {
 		typeIdx := funcImportTypeIdx[funcIdx]
 		if int(typeIdx) >= len(m.Types) {
-			return FuncType{}, nil, false
+			return TypeDef{}, nil, false
 		}
 		if m.Types[typeIdx].Kind != TypeDefKindFunc {
-			return FuncType{}, nil, false
+			return TypeDef{}, nil, false
 		}
 		return m.Types[typeIdx], nil, true
 	}
 	defIdx := funcIdx - importCount
 	if int(defIdx) >= len(m.Funcs) {
-		return FuncType{}, nil, false
+		return TypeDef{}, nil, false
 	}
 	def := &m.Funcs[defIdx]
 	if int(def.TypeIdx) >= len(m.Types) {
-		return FuncType{}, nil, false
+		return TypeDef{}, nil, false
 	}
 	if m.Types[def.TypeIdx].Kind != TypeDefKindFunc {
-		return FuncType{}, nil, false
+		return TypeDef{}, nil, false
 	}
 	return m.Types[def.TypeIdx], def, true
 }
 
 // tagTypeAtIndex resolves an absolute tag index to its referenced function
 // type, accounting for both imported and module-defined tags.
-func tagTypeAtIndex(m *Module, tagImportTypeIdx []uint32, tagIdx uint32) (FuncType, bool) {
+func tagTypeAtIndex(m *Module, tagImportTypeIdx []uint32, tagIdx uint32) (TypeDef, bool) {
 	importCount := uint32(len(tagImportTypeIdx))
 	if tagIdx < importCount {
 		typeIdx := tagImportTypeIdx[tagIdx]
 		if int(typeIdx) >= len(m.Types) {
-			return FuncType{}, false
+			return TypeDef{}, false
 		}
 		if m.Types[typeIdx].Kind != TypeDefKindFunc {
-			return FuncType{}, false
+			return TypeDef{}, false
 		}
 		return m.Types[typeIdx], true
 	}
 	defIdx := tagIdx - importCount
 	if int(defIdx) >= len(m.Tags) {
-		return FuncType{}, false
+		return TypeDef{}, false
 	}
 	typeIdx := m.Tags[defIdx].TypeIdx
 	if int(typeIdx) >= len(m.Types) {
-		return FuncType{}, false
+		return TypeDef{}, false
 	}
 	if m.Types[typeIdx].Kind != TypeDefKindFunc {
-		return FuncType{}, false
+		return TypeDef{}, false
 	}
 	return m.Types[typeIdx], true
 }

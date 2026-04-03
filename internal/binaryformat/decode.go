@@ -338,7 +338,7 @@ func decodePreamble(r *bytes.Reader, diags *diag.ErrorList) {
 	}
 }
 
-func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType {
+func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.TypeDef {
 	n, err := readU32(r)
 	if err != nil {
 		diags.Addf("type section: invalid vector length: %v", err)
@@ -349,7 +349,7 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 		diags.Addf("type section: invalid vector length: %v", err)
 		return nil
 	}
-	out := make([]wasmir.FuncType, 0, capN)
+	out := make([]wasmir.TypeDef, 0, capN)
 	for i := uint32(0); i < n; i++ {
 		form, err := readByte(r)
 		if err != nil {
@@ -392,34 +392,34 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.FuncType
 	return out
 }
 
-func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir.FuncType, bool) {
+func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir.TypeDef, bool) {
 	form, err := readByte(r)
 	if err != nil {
 		diags.Addf("type[%d]: failed to read form: %v", index, err)
-		return wasmir.FuncType{}, false
+		return wasmir.TypeDef{}, false
 	}
-	typeDef := wasmir.FuncType{}
+	typeDef := wasmir.TypeDef{}
 	if form == typeCodeSub || form == typeCodeSubFinal {
 		typeDef.SubType = true
 		typeDef.Final = form == typeCodeSubFinal
 		superCount, err := readU32(r)
 		if err != nil {
 			diags.Addf("type[%d]: invalid supertype count: %v", index, err)
-			return wasmir.FuncType{}, false
+			return wasmir.TypeDef{}, false
 		}
 		typeDef.SuperTypes = make([]uint32, 0, superCount)
 		for j := uint32(0); j < superCount; j++ {
 			superIndex, err := readU32(r)
 			if err != nil {
 				diags.Addf("type[%d] super[%d]: invalid type index: %v", index, j, err)
-				return wasmir.FuncType{}, false
+				return wasmir.TypeDef{}, false
 			}
 			typeDef.SuperTypes = append(typeDef.SuperTypes, superIndex)
 		}
 		form, err = readByte(r)
 		if err != nil {
 			diags.Addf("type[%d]: failed to read subtype body: %v", index, err)
-			return wasmir.FuncType{}, false
+			return wasmir.TypeDef{}, false
 		}
 	}
 	switch form {
@@ -434,14 +434,14 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 		fieldCount, err := readU32(r)
 		if err != nil {
 			diags.Addf("type[%d]: invalid struct field count: %v", index, err)
-			return wasmir.FuncType{}, false
+			return wasmir.TypeDef{}, false
 		}
 		fields := make([]wasmir.FieldType, 0, fieldCount)
 		for j := uint32(0); j < fieldCount; j++ {
 			field, err := decodeFieldType(r)
 			if err != nil {
 				diags.Addf("type[%d] field[%d]: %v", index, j, err)
-				return wasmir.FuncType{}, false
+				return wasmir.TypeDef{}, false
 			}
 			fields = append(fields, field)
 		}
@@ -452,14 +452,14 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 		field, err := decodeFieldType(r)
 		if err != nil {
 			diags.Addf("type[%d] element: %v", index, err)
-			return wasmir.FuncType{}, false
+			return wasmir.TypeDef{}, false
 		}
 		typeDef.Kind = wasmir.TypeDefKindArray
 		typeDef.ElemField = field
 		return typeDef, true
 	default:
 		diags.Addf("type[%d]: unsupported type form 0x%x", index, form)
-		return wasmir.FuncType{}, false
+		return wasmir.TypeDef{}, false
 	}
 }
 

@@ -384,7 +384,7 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 			continue
 		}
 
-		outType := wasmir.FuncType{Name: td.Id}
+		outType := wasmir.TypeDef{Name: td.Id}
 		if td.RecGroupSize > 0 {
 			outType.RecGroupSize = uint32(td.RecGroupSize)
 		}
@@ -1061,7 +1061,7 @@ func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasm
 		}
 	}
 	typeIdx := uint32(len(l.out.Types))
-	l.out.Types = append(l.out.Types, wasmir.FuncType{
+	l.out.Types = append(l.out.Types, wasmir.TypeDef{
 		Name:    name,
 		Kind:    wasmir.TypeDefKindFunc,
 		Params:  params,
@@ -1075,7 +1075,7 @@ func (l *moduleLowerer) internFuncType(params []wasmir.ValueType, results []wasm
 //
 // Implicit function types must not reuse such entries merely because their raw
 // signatures are structurally equal.
-func typeBelongsToMultiRecGroup(types []wasmir.FuncType, idx uint32) bool {
+func typeBelongsToMultiRecGroup(types []wasmir.TypeDef, idx uint32) bool {
 	if int(idx) >= len(types) {
 		return false
 	}
@@ -1171,7 +1171,7 @@ func (fl *functionLowerer) lowerTypeUse() uint32 {
 	if fl.fn.TyUse == nil {
 		fl.diagf(fl.fn.loc.String(), "missing function type use")
 		typeIdx := uint32(len(fl.mod.out.Types))
-		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.FuncType{})
+		fl.mod.out.Types = append(fl.mod.out.Types, wasmir.TypeDef{})
 		return typeIdx
 	}
 
@@ -4211,7 +4211,7 @@ func operandText(op Operand) string {
 }
 
 // resolveTypeRef resolves a text type-use reference by identifier or index.
-func (fl *functionLowerer) resolveTypeRef(ref string) (uint32, wasmir.FuncType, bool) {
+func (fl *functionLowerer) resolveTypeRef(ref string) (uint32, wasmir.TypeDef, bool) {
 	if idx, ok := fl.mod.typesByName[ref]; ok {
 		return idx, fl.mod.out.Types[idx], true
 	}
@@ -4220,7 +4220,7 @@ func (fl *functionLowerer) resolveTypeRef(ref string) (uint32, wasmir.FuncType, 
 			return idx, fl.mod.out.Types[idx], true
 		}
 	}
-	return 0, wasmir.FuncType{}, false
+	return 0, wasmir.TypeDef{}, false
 }
 
 func equalValueTypeSlices(a, b []wasmir.ValueType) bool {

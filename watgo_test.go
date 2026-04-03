@@ -99,7 +99,7 @@ func TestParseWAT_ParseError_PublicAPI(t *testing.T) {
 
 func TestValidateModule_PublicAPI(t *testing.T) {
 	m := &wasmir.Module{
-		Types: []wasmir.FuncType{{
+		Types: []wasmir.TypeDef{{
 			Results: []wasmir.ValueType{wasmir.ValueTypeI32},
 		}},
 		Funcs: []wasmir.Function{{

@@ -4,7 +4,7 @@
 // WebAssembly spec terminology. In particular:
 //   - Module corresponds to a validated WebAssembly module, with one field per
 //     index space or top-level declaration kind.
-//   - ValueType, HeapType, FuncType, Table, Memory, Global, DataSegment, and
+//   - ValueType, HeapType, TypeDef, Table, Memory, Global, DataSegment, and
 //     ElementSegment correspond closely to the spec's value types, heap types,
 //     function types, tables, memories, globals, data segments, and element
 //     segments.
@@ -787,7 +787,7 @@ type Module struct {
 	//
 	// Today this includes function types and GC composite types (struct/array),
 	// matching the unified type index space used by the GC proposals.
-	Types []FuncType
+	Types []TypeDef
 
 	// Imports is the module's import section, in declaration order.
 	Imports []Import
@@ -831,8 +831,8 @@ type Module struct {
 	Elements []ElementSegment
 }
 
-// FuncType is one entry in Module.Types.
-type FuncType struct {
+// TypeDef is one entry in Module.Types.
+type TypeDef struct {
 	// Name is the optional source-level type identifier (for example "$t").
 	Name string
 
@@ -909,7 +909,7 @@ type Function struct {
 	Name string
 
 	// ParamNames are optional source parameter identifiers aligned with
-	// FuncType.Params. Empty entries mean the parameter had no identifier in
+	// TypeDef.Params. Empty entries mean the parameter had no identifier in
 	// source.
 	ParamNames []string
 
