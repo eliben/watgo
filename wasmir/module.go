@@ -1,8 +1,30 @@
+// Package wasmir defines watgo's public semantic WebAssembly IR.
+//
+// The types in this package are meant to be readable to users who know the
+// WebAssembly spec terminology. In particular:
+//   - Module corresponds to a validated WebAssembly module, with one field per
+//     index space or top-level declaration kind.
+//   - ValueType, HeapType, FuncType, Table, Memory, Global, DataSegment, and
+//     ElementSegment correspond closely to the spec's value types, heap types,
+//     function types, tables, memories, globals, data segments, and element
+//     segments.
+//   - Instruction is a flattened semantic instruction stream. It preserves the
+//     Wasm opcode and immediate data, but structured WAT surface syntax has
+//     already been lowered into explicit block/loop/if/else/end instructions.
+//
+// This package intentionally models the module after parsing/lowering, not as a
+// direct AST of source WAT and not as a raw binary decoder view. Names have
+// already been resolved to indices where appropriate, but the representation is
+// still close enough to the spec that readers can map most fields directly to
+// the corresponding syntax and binary forms.
 package wasmir
 
 import "fmt"
 
-// ValueKind classifies the broad kind of a WebAssembly value type.
+// ValueKind classifies the top-level kind of a WebAssembly value type.
+//
+// In spec terms, this is the outer partition between numeric/vector types and
+// reference types.
 type ValueKind uint8
 
 const (
@@ -15,7 +37,10 @@ const (
 	ValueKindRef
 )
 
-// HeapKind classifies the heap type component of a reference type.
+// HeapKind classifies the heap-type part of a reference value type.
+//
+// This corresponds to the heap type inside spec forms such as `(ref func)`,
+// `(ref eq)`, `(ref null $t)`, and similar GC / exception proposal types.
 type HeapKind uint8
 
 const (
@@ -35,7 +60,10 @@ const (
 	HeapKindTypeIndex
 )
 
-// HeapType describes the heap type referenced by a reference value type.
+// HeapType describes the heap type carried by a reference ValueType.
+//
+// For indexed reference types, Kind is HeapKindTypeIndex and TypeIndex refers
+// into Module.Types, matching the spec's indexed heap-type forms.
 type HeapType struct {
 	Kind      HeapKind
 	TypeIndex uint32
@@ -43,8 +71,11 @@ type HeapType struct {
 
 // ValueType is a WebAssembly value type.
 //
-// Numeric value types use only Kind. Reference value types use Kind=ValueKindRef
-// and carry nullability plus heap type information.
+// Numeric/vector value types use only Kind. Reference value types use
+// Kind=ValueKindRef and carry nullability plus heap type information.
+//
+// This corresponds to the spec's `valtype`, including both MVP numeric types
+// and proposal types such as `v128` and `(ref ...)`.
 type ValueType struct {
 	Kind     ValueKind
 	Nullable bool
@@ -111,8 +142,11 @@ func RefTypeStruct(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindStruct}}
 }
 
-// RefTypeIndexed returns a typed function reference to the given type index
-// with the requested nullability.
+// RefTypeIndexed returns a typed indexed reference with the requested
+// nullability.
+//
+// The TypeIndex refers into Module.Types and corresponds to spec forms such as
+// `(ref $t)` or `(ref null 3)` after name resolution.
 func RefTypeIndexed(typeIndex uint32, nullable bool) ValueType {
 	return ValueType{
 		Kind:     ValueKindRef,
@@ -718,7 +752,10 @@ const (
 	InstrEnd
 )
 
-// ExternalKind identifies the kind of an exported external definition.
+// ExternalKind identifies the kind of an imported or exported external value.
+//
+// This corresponds to the spec's external kinds for functions, tables,
+// memories, globals, and tags.
 type ExternalKind uint8
 
 const (
@@ -731,50 +768,70 @@ const (
 
 // Module is the semantic in-memory representation of a WebAssembly module.
 //
-// Index-based references are resolved through these slices:
+// Module is the main public entry point to wasmir. It corresponds closely to
+// the spec's notion of a module after text/binary decoding and name resolution.
+//
+// The slices on Module represent the module's index spaces and top-level
+// declarations. References between them are expressed with explicit indices, so
+// users can map most fields directly back to spec concepts like "type index",
+// "function index", "table index", and so on.
+//
+// Important index-space conventions:
 //   - function type indices refer into Types
-//   - function indices refer into imported functions first (from Imports), then
-//     function definitions in Funcs
+//   - function indices count imported functions first, then Funcs
+//   - tag indices count imported tags first, then Tags
+//   - table, memory, and global indices likewise include imports first when the
+//     instruction or declaration refers to that index space
 type Module struct {
-	// Types is the module's function type table.
+	// Types is the module's type section.
+	//
+	// Today this includes function types and GC composite types (struct/array),
+	// matching the unified type index space used by the GC proposals.
 	Types []FuncType
 
-	// Imports is the module's import list.
+	// Imports is the module's import section, in declaration order.
 	Imports []Import
 
-	// Funcs is the list of function definitions in index order.
+	// Funcs is the module-defined function list, in function-index order after
+	// imported functions.
 	Funcs []Function
 
-	// Tables is the table definition list in index order.
+	// Tables is the module-defined table list, in table-index order after
+	// imported tables.
 	Tables []Table
 
-	// Memories is the linear memory definition list in index order.
+	// Memories is the module-defined memory list, in memory-index order after
+	// imported memories.
 	Memories []Memory
 
-	// Globals is the global definition list in index order.
+	// Globals is the module-defined global list, in global-index order after
+	// imported globals.
 	Globals []Global
 
-	// Tags is the tag definition list in index order.
+	// Tags is the module-defined tag list, in tag-index order after imported
+	// tags.
 	//
 	// Tag indices refer to imported tags first (from Imports), then to entries
 	// in this slice.
 	Tags []Tag
 
-	// Data is the list of module data segments.
+	// Data is the module's data segment list.
 	Data []DataSegment
 
-	// Exports is the list of exported definitions.
+	// Exports is the module's export section.
 	Exports []Export
 
-	// StartFuncIndex is the module function index invoked during instantiation.
-	// Nil means the module has no start function section.
+	// StartFuncIndex is the optional start section target.
+	//
+	// When non-nil, it is the function index invoked during instantiation and
+	// corresponds to the spec's start function.
 	StartFuncIndex *uint32
 
-	// Elements is the list of active element segments used to initialize tables.
+	// Elements is the module's element segment list.
 	Elements []ElementSegment
 }
 
-// FuncType is a WebAssembly function signature.
+// FuncType is one entry in Module.Types.
 type FuncType struct {
 	// Name is the optional source-level type identifier (for example "$t").
 	Name string
@@ -793,7 +850,7 @@ type FuncType struct {
 	// SuperTypes is the declared supertype index list for GC/function subtypes.
 	SuperTypes []uint32
 
-	// Kind classifies this type table entry.
+	// Kind classifies which kind of type definition this entry represents.
 	Kind TypeDefKind
 
 	// Params is the ordered parameter type list for function types.
@@ -811,6 +868,9 @@ type FuncType struct {
 }
 
 // TypeDefKind classifies the kind of entry stored in Module.Types.
+//
+// This corresponds to the shape of the underlying type definition in the spec:
+// function, struct, or array.
 type TypeDefKind uint8
 
 const (
@@ -820,6 +880,8 @@ const (
 )
 
 // FieldType is one GC struct or array field type.
+//
+// It corresponds to a `fieldtype` in the GC proposal.
 type FieldType struct {
 	Name    string
 	Type    ValueType
@@ -835,7 +897,10 @@ const (
 	PackedTypeI16
 )
 
-// Function is a function definition with locals and body instructions.
+// Function is one module-defined function body.
+//
+// The function's signature lives in Module.Types at TypeIdx; the Body is a
+// flat instruction stream terminated by InstrEnd.
 type Function struct {
 	// TypeIdx indexes Module.Types and provides the function signature.
 	TypeIdx uint32
@@ -864,6 +929,8 @@ type Function struct {
 }
 
 // Export is one module export entry.
+//
+// This corresponds directly to one export in the spec's export section.
 type Export struct {
 	// Name is the exported name visible to module users.
 	Name string
@@ -877,6 +944,9 @@ type Export struct {
 }
 
 // Import is one module import entry.
+//
+// This corresponds directly to one import in the spec's import section. The
+// Kind field selects which of the payload fields is meaningful.
 type Import struct {
 	// Module is the import module name.
 	Module string
@@ -902,6 +972,9 @@ type Import struct {
 }
 
 // Tag is one module tag definition.
+//
+// Tags come from the exception-handling proposals. The referenced type must be
+// a function type whose results are empty; the params are the tag payload.
 type Tag struct {
 	// Name is an optional source-level identifier for diagnostics/debugging.
 	Name string
@@ -917,6 +990,9 @@ type Tag struct {
 }
 
 // Table is one table definition.
+//
+// This corresponds to either an imported table or a module-defined table,
+// depending on whether ImportModule/ImportName are set.
 type Table struct {
 	// AddressType is the table index type, either i32 or i64.
 	AddressType ValueType
@@ -943,6 +1019,8 @@ type Table struct {
 }
 
 // Memory is one linear memory definition.
+//
+// This corresponds to either an imported memory or a module-defined memory.
 type Memory struct {
 	// AddressType is the memory address type, either i32 or i64.
 	AddressType ValueType
@@ -969,6 +1047,9 @@ const (
 )
 
 // DataSegment is one linear-memory data segment.
+//
+// This corresponds to one entry in the data section after decoding the active
+// vs passive mode and preserving any constant-expression offset.
 type DataSegment struct {
 	// Mode classifies the segment as active or passive.
 	Mode DataSegmentMode
@@ -995,6 +1076,9 @@ type DataSegment struct {
 }
 
 // Global is one global definition.
+//
+// This corresponds to either an imported global or a module-defined global,
+// depending on whether ImportModule/ImportName are set.
 type Global struct {
 	// Name is an optional source-level identifier (for diagnostics/debugging).
 	Name string
@@ -1017,7 +1101,11 @@ type Global struct {
 	Init []Instruction
 }
 
-// ElementSegment is one active table element segment.
+// ElementSegment is one table element segment.
+//
+// This models the spec's active, passive, and declarative element-segment
+// forms. Payload can be represented either as raw function indices or as full
+// constant-expression items for reference-typed segments.
 type ElementSegment struct {
 	// Mode classifies the segment as active, passive, or declarative.
 	Mode ElemSegmentMode
@@ -1075,10 +1163,16 @@ const (
 	ElemSegmentModeDeclarative
 )
 
-// Instruction is one semantic instruction.
+// Instruction is one semantic instruction in a flattened function body or
+// constant expression.
 //
 // Kind selects which operand/immediate fields are meaningful. Fields not used
 // by a given Kind are expected to be left at their zero value.
+//
+// This is intentionally not a source AST node: structured WAT forms such as
+// nested blocks or folded instructions have already been lowered into an
+// explicit linear instruction stream with block/loop/if/else/end markers and
+// resolved immediates.
 type Instruction struct {
 	// Kind is the opcode of this instruction.
 	Kind InstrKind
@@ -1161,12 +1255,12 @@ type Instruction struct {
 	// elem.drop.
 	ElemIndex uint32
 
-	// BlockType is the optional explicit value-type block result for structured
-	// control instructions that are not using BlockTypeUsesIndex.
+	// BlockType is the optional inline block result type for structured control
+	// instructions that are not using BlockTypeUsesIndex.
 	BlockType *ValueType
 
-	// BlockTypeUsesIndex reports that structured control block type is encoded
-	// as a type index into Module.Types (multi-value block signature).
+	// BlockTypeUsesIndex reports that the blocktype uses a type index into
+	// Module.Types, corresponding to the spec's indexed block type form.
 	BlockTypeUsesIndex bool
 
 	// BlockTypeIndex is the Module.Types index used when BlockTypeUsesIndex is
