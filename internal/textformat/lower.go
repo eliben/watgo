@@ -2257,7 +2257,7 @@ func loweringOperandDecoderFor(kind instrdef.LoweringOperandKind) loweringOperan
 var loweringSpecs = func() map[string]loweringSpec {
 	specs := make(map[string]loweringSpec)
 	for _, def := range instrdef.InstructionDefs() {
-		if def.Text.SyntaxClass != instrdef.InstrSyntaxPlain {
+		if def.Text.SyntaxClass != instrdef.InstrSyntaxPlain || !def.Text.UsesGenericLowering {
 			continue
 		}
 		specs[def.TextName] = loweringSpec{
@@ -2376,7 +2376,12 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	if fl.lowerMemoryInstr(pi, instrLoc) {
 		return
 	}
-	if pi.Name == "end" {
+	if fl.lowerBySpec(pi, instrLoc) {
+		return
+	}
+
+	switch pi.Name {
+	case "end":
 		if len(pi.Operands) != 0 {
 			fl.diagf(instrLoc, "end expects no operands")
 			return
@@ -2384,16 +2389,14 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		fl.popLabel()
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: instrLoc})
 		return
-	}
-	if pi.Name == "else" {
+	case "else":
 		if len(pi.Operands) != 0 {
 			fl.diagf(instrLoc, "else expects no operands")
 			return
 		}
 		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
 		return
-	}
-	if pi.Name == "memory.init" {
+	case "memory.init":
 		if len(pi.Operands) != 1 && len(pi.Operands) != 2 {
 			fl.diagf(instrLoc, "memory.init expects 1 or 2 operands")
 			return
@@ -2421,12 +2424,6 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			SourceLoc:   instrLoc,
 		})
 		return
-	}
-	if fl.lowerBySpec(pi, instrLoc) {
-		return
-	}
-
-	switch pi.Name {
 	case "call_indirect":
 		fl.lowerPlainCallIndirect(pi, instrLoc)
 		return

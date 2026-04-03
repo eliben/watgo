@@ -66,9 +66,14 @@ type FixedStackSig struct {
 // Text-oriented consumers use this to recognize syntax families and generic
 // plain-instruction lowering behavior.
 type InstructionTextDef struct {
-	SyntaxClass      InstrSyntaxClass
-	OperandCount     int8
-	LoweringOperands LoweringOperandKind
+	SyntaxClass InstrSyntaxClass
+	// UsesGenericLowering reports that plain text lowering can be fully driven
+	// by OperandCount and LoweringOperands. Plain instructions that need extra
+	// lowering-side effects, such as label bookkeeping or custom immediate
+	// interpretation, leave this false and stay on handwritten lowering paths.
+	UsesGenericLowering bool
+	OperandCount        int8
+	LoweringOperands    LoweringOperandKind
 }
 
 // BinaryEncodingKind describes how much of an instruction's binary encoding is
@@ -128,9 +133,9 @@ var instructionDefs = []InstructionDef{
 	// support.
 	directOp(InstrUnreachable, "unreachable", 0x00, noFixedSig()),
 	directOp(InstrNop, "nop", 0x01, sigNoOp()),
-	directOp(InstrElse, "else", 0x05, noFixedSig()),
+	withManualLowering(directOp(InstrElse, "else", 0x05, noFixedSig())),
 	directOp(InstrThrowRef, "throw_ref", 0x0a, noFixedSig()),
-	directOp(InstrEnd, "end", 0x0b, noFixedSig()),
+	withManualLowering(directOp(InstrEnd, "end", 0x0b, noFixedSig())),
 	directOp(InstrReturn, "return", 0x0f, noFixedSig()),
 	directOp(InstrDrop, "drop", 0x1a, noFixedSig()),
 	directOp(InstrSelect, "select", 0x1b, noFixedSig()),
@@ -636,7 +641,7 @@ var instructionDefs = []InstructionDef{
 	withBinaryOpcode(plainOperandInstr(InstrLocalGet, "local.get", 1, LoweringOperandLocalIndex), 0, 0x20),
 	withBinaryOpcode(plainOperandInstr(InstrLocalSet, "local.set", 1, LoweringOperandLocalSet), 0, 0x21),
 	withBinaryOpcode(plainOperandInstr(InstrLocalTee, "local.tee", 1, LoweringOperandLocalTee), 0, 0x22),
-	withBinaryOpcode(plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex), 0xfc, 0x08),
+	withBinaryOpcode(withManualLowering(plainOperandInstr(InstrMemoryInit, "memory.init", 1, LoweringOperandDataIndex)), 0xfc, 0x08),
 	withBinaryOpcode(plainOperandInstr(InstrF32x4ExtractLane, "f32x4.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x1f),
 	withBinaryOpcode(plainOperandInstr(InstrF32x4ReplaceLane, "f32x4.replace_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x20),
 	withBinaryOpcode(plainOperandInstr(InstrF64x2ExtractLane, "f64x2.extract_lane", 1, LoweringOperandLaneIndex), 0xfd, 0x21),
@@ -734,7 +739,8 @@ func directOp(kind InstrKind, name string, opcode byte, sig FixedStackSig) Instr
 		Kind:     kind,
 		TextName: name,
 		Text: InstructionTextDef{
-			SyntaxClass: InstrSyntaxPlain,
+			SyntaxClass:         InstrSyntaxPlain,
+			UsesGenericLowering: true,
 		},
 		Binary: InstructionBinaryDef{
 			Encoding: BinaryEncodingSimple,
@@ -751,7 +757,8 @@ func prefixedOp(kind InstrKind, name string, prefix byte, opcode uint32, sig Fix
 		Kind:     kind,
 		TextName: name,
 		Text: InstructionTextDef{
-			SyntaxClass: InstrSyntaxPlain,
+			SyntaxClass:         InstrSyntaxPlain,
+			UsesGenericLowering: true,
 		},
 		Binary: InstructionBinaryDef{
 			Encoding: BinaryEncodingSimple,
@@ -799,11 +806,19 @@ func plainOperandInstr(kind InstrKind, name string, operandCount int8, operands 
 		Kind:     kind,
 		TextName: name,
 		Text: InstructionTextDef{
-			SyntaxClass:      InstrSyntaxPlain,
-			OperandCount:     operandCount,
-			LoweringOperands: operands,
+			SyntaxClass:         InstrSyntaxPlain,
+			UsesGenericLowering: true,
+			OperandCount:        operandCount,
+			LoweringOperands:    operands,
 		},
 	}
+}
+
+// withManualLowering marks a catalog entry as requiring handwritten lowering
+// even if it otherwise looks like a plain instruction.
+func withManualLowering(def InstructionDef) InstructionDef {
+	def.Text.UsesGenericLowering = false
+	return def
 }
 
 // withBinaryOpcode annotates a catalog entry with an opcode/subopcode while
