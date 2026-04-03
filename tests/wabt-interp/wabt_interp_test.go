@@ -326,7 +326,7 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath)).then(({instance}) => {
 // exact line format expected by WABT's interp tests.
 func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	if result.ResultKind == "void" {
-		return result.Name + "()", nil
+		return result.Name + "() =>", nil
 	}
 
 	var formatted string
