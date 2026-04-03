@@ -43,6 +43,7 @@ type wabtInterpResult struct {
 	Name       string `json:"name"`
 	ResultKind string `json:"resultKind"`
 	Value      string `json:"value"`
+	Error      string `json:"error"`
 }
 
 func TestWABTInterp(t *testing.T) {
@@ -130,7 +131,7 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 		t.Fatalf("runWABTInterpNode %q failed: %v", path, err)
 	}
 
-	if got != tc.expectedStdout {
+	if !wabtInterpStdoutMatches(got, tc.expectedStdout) {
 		t.Fatalf("stdout mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got, tc.expectedStdout)
 	}
 }
@@ -206,6 +207,15 @@ func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
 				resultKind = "f32"
 			case wasmir.ValueKindF64:
 				resultKind = "f64"
+			case wasmir.ValueKindRef:
+				switch sig.Results[0].HeapType.Kind {
+				case wasmir.HeapKindFunc, wasmir.HeapKindNoFunc:
+					resultKind = "funcref"
+				case wasmir.HeapKindExtern, wasmir.HeapKindNoExtern:
+					resultKind = "externref"
+				default:
+					return nil, fmt.Errorf("export %q has unsupported result type %v", exp.Name, sig.Results[0])
+				}
 			default:
 				return nil, fmt.Errorf("export %q has unsupported result type %v", exp.Name, sig.Results[0])
 			}
@@ -278,21 +288,53 @@ function valueString(kind, value) {
     case 'f64':
       view.setFloat64(0, value, true);
       return String(view.getBigUint64(0, true));
+    case 'funcref':
+    case 'externref':
+      if (value === null) {
+        return '0';
+      }
+      if (kind === 'funcref') {
+        return String(value.name || 1);
+      }
+      return '1';
     default:
       throw new Error('unsupported result kind: ' + kind);
   }
+}
+
+function normalizeTrapMessage(message) {
+  if (message.includes('table index is out of bounds')) {
+    return 'undefined table index';
+  }
+  if (message.includes('function signature mismatch') || message.includes('null function')) {
+    return 'indirect call signature mismatch';
+  }
+  if (message.includes('unreachable')) {
+    return 'unreachable executed';
+  }
+  return message;
 }
 
 WebAssembly.instantiate(fs.readFileSync(wasmPath)).then(({instance}) => {
   const results = [];
   for (const entry of exportsToRun) {
     const fn = instance.exports[entry.name];
-    const result = fn();
-    results.push({
-      name: entry.name,
-      resultKind: entry.resultKind,
-      value: valueString(entry.resultKind, result),
-    });
+    try {
+      const result = fn();
+      results.push({
+        name: entry.name,
+        resultKind: entry.resultKind,
+        value: valueString(entry.resultKind, result),
+        error: '',
+      });
+    } catch (err) {
+      results.push({
+        name: entry.name,
+        resultKind: entry.resultKind,
+        value: '',
+        error: normalizeTrapMessage(String(err && err.message ? err.message : err)),
+      });
+    }
   }
   process.stdout.write(JSON.stringify(results));
 }).catch((err) => {
@@ -325,13 +367,17 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath)).then(({instance}) => {
 // formatWABTInterpResult converts one JSON result record from Node into the
 // exact line format expected by WABT's interp tests.
 func formatWABTInterpResult(result wabtInterpResult) (string, error) {
+	if result.Error != "" {
+		return fmt.Sprintf("%s() => error: %s", result.Name, result.Error), nil
+	}
+
 	if result.ResultKind == "void" {
 		return result.Name + "() =>", nil
 	}
 
 	var formatted string
 	switch result.ResultKind {
-	case "i32", "i64":
+	case "i32", "i64", "funcref", "externref":
 		formatted = result.Value
 	case "f32":
 		bits, err := strconv.ParseUint(result.Value, 10, 32)
@@ -349,4 +395,89 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 		return "", fmt.Errorf("unsupported result kind %q", result.ResultKind)
 	}
 	return fmt.Sprintf("%s() => %s:%s", result.Name, result.ResultKind, formatted), nil
+}
+
+// wabtInterpStdoutMatches compares reconstructed output against WABT's
+// expected stdout.
+//
+// Most lines are compared byte-for-byte. The only special case is
+// reference-valued result lines such as:
+//   ref_null_func() => funcref:0
+//   ref_func() => funcref:5
+//
+// WABT's interpreter prints implementation-specific non-null ref identities,
+// while Node only gives us enough information to distinguish null from
+// non-null and to preserve stable funcref identity within the module. For
+// those lines, the comparison keeps the export name and ref kind exact but
+// treats any two non-zero ids as equivalent.
+func wabtInterpStdoutMatches(got, want string) bool {
+	if got == want {
+		return true
+	}
+
+	gotLines := strings.Split(got, "\n")
+	wantLines := strings.Split(want, "\n")
+	if len(gotLines) != len(wantLines) {
+		return false
+	}
+	for i := range gotLines {
+		if gotLines[i] == wantLines[i] {
+			continue
+		}
+		if !wabtInterpRefLineMatches(gotLines[i], wantLines[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// wabtInterpRefLineMatches compares one reference-valued output line.
+//
+// Example:
+//   got:  ref_func() => funcref:2
+//   want: ref_func() => funcref:5
+//
+// This still matches, because both lines describe the same export and ref
+// kind, and both ids are non-zero. Null references remain exact:
+//   funcref:0 only matches funcref:0
+//   externref:0 only matches externref:0
+func wabtInterpRefLineMatches(got, want string) bool {
+	gotName, gotKind, gotValue, ok := splitWABTRefLine(got)
+	if !ok {
+		return false
+	}
+	wantName, wantKind, wantValue, ok := splitWABTRefLine(want)
+	if !ok {
+		return false
+	}
+	if gotName != wantName || gotKind != wantKind {
+		return false
+	}
+	if gotValue == wantValue {
+		return true
+	}
+	return gotValue != "0" && wantValue != "0"
+}
+
+// splitWABTRefLine extracts `name`, `kind`, and `value` from one
+// reference-valued output line.
+//
+// For example:
+//   "ref_func() => funcref:5"    -> ("ref_func", "funcref", "5", true)
+//   "ref_null_extern() => externref:0" -> ("ref_null_extern", "externref", "0", true)
+//
+// Non-reference lines return ok=false.
+func splitWABTRefLine(line string) (name, kind, value string, ok bool) {
+	prefix, rest, found := strings.Cut(line, "() => ")
+	if !found {
+		return "", "", "", false
+	}
+	kind, value, found = strings.Cut(rest, ":")
+	if !found {
+		return "", "", "", false
+	}
+	if kind != "funcref" && kind != "externref" {
+		return "", "", "", false
+	}
+	return prefix, kind, value, true
 }
