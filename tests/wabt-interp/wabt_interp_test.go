@@ -79,6 +79,16 @@ type wabtInterpImport struct {
 	ParamKinds []string `json:"paramKinds"`
 }
 
+type wabtInterpNodePayload struct {
+	WasmPath            string                 `json:"wasmPath"`
+	Exports             []wabtInterpExport     `json:"exports"`
+	Imports             []wabtInterpImport     `json:"imports"`
+	Invocations         []wabtInterpInvocation `json:"invocations"`
+	HostPrint           bool                   `json:"hostPrint"`
+	DummyImportFunc     bool                   `json:"dummyImportFunc"`
+	HostPrintResultKind string                 `json:"hostPrintResultKind"`
+}
+
 func TestWABTInterp(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
@@ -537,228 +547,26 @@ func wabtInterpValidateInvocations(exports []wabtInterpExport, invocations []wab
 }
 
 func runWABTInterpNodeWithInvocations(nodePath, wasmPath string, exports []wabtInterpExport, imports []wabtInterpImport, invocations []wabtInterpInvocation, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string) (wabtInterpRunResult, error) {
-	exportsJSON, err := json.Marshal(exports)
+	payloadBytes, err := json.Marshal(wabtInterpNodePayload{
+		WasmPath:            wasmPath,
+		Exports:             exports,
+		Imports:             imports,
+		Invocations:         invocations,
+		HostPrint:           hostPrint,
+		DummyImportFunc:     dummyImportFunc,
+		HostPrintResultKind: hostPrintResultKind,
+	})
 	if err != nil {
 		return wabtInterpRunResult{}, err
 	}
-	importsJSON, err := json.Marshal(imports)
-	if err != nil {
-		return wabtInterpRunResult{}, err
+	tmpDir := filepath.Dir(wasmPath)
+	payloadPath := filepath.Join(tmpDir, "wabt_interp_payload.json")
+	if err := os.WriteFile(payloadPath, payloadBytes, 0o644); err != nil {
+		return wabtInterpRunResult{}, fmt.Errorf("WriteFile %q failed: %w", payloadPath, err)
 	}
-	invocationsJSON, err := json.Marshal(invocations)
-	if err != nil {
-		return wabtInterpRunResult{}, err
-	}
+	runnerPath := filepath.Join(".", "wabt_interp.js")
 
-	script := fmt.Sprintf(`
-const fs = require('node:fs');
-const wasmPath = %q;
-const exportsToRun = %s;
-const importedFuncs = %s;
-const invocations = %s;
-const hostPrint = %v;
-const dummyImportFunc = %v;
-const hostPrintResultKind = %q;
-
-function valueString(kind, value) {
-  const buf = new ArrayBuffer(8);
-  const view = new DataView(buf);
-  switch (kind) {
-    case 'void':
-      return '';
-    case 'i32':
-      return String(value >>> 0);
-    case 'i64':
-      return String(BigInt.asUintN(64, value));
-    case 'f32':
-      view.setFloat32(0, value, true);
-      return String(view.getUint32(0, true));
-    case 'f64':
-      view.setFloat64(0, value, true);
-      return String(view.getBigUint64(0, true));
-    case 'funcref':
-    case 'externref':
-      if (value === null) {
-        return '0';
-      }
-      if (kind === 'funcref') {
-        return String(value.name || 1);
-      }
-      return '1';
-    default:
-      throw new Error('unsupported result kind: ' + kind);
-  }
-}
-
-function normalizeTrapMessage(message) {
-  if (message.includes('table index is out of bounds')) {
-    return 'undefined table index';
-  }
-  if (message.includes('function signature mismatch') || message.includes('null function')) {
-    return 'indirect call signature mismatch';
-  }
-  if (message.includes('unreachable')) {
-    return 'unreachable executed';
-  }
-  return message;
-}
-
-function decodeArg(arg) {
-  switch (arg.kind) {
-    case 'i32':
-      return Number.parseInt(arg.text, 10) | 0;
-    case 'i64':
-      return BigInt(arg.text);
-    case 'f32':
-    case 'f64':
-      return Number(arg.text);
-    default:
-      throw new Error('unsupported invocation arg kind: ' + arg.kind);
-  }
-}
-
-function formatArg(arg) {
-  return arg.kind + ':' + arg.text;
-}
-
-function invocationLabel(entry) {
-  if (!entry.argText) {
-    return entry.name + '()';
-  }
-  return entry.name + '(' + entry.argText + ')';
-}
-
-function formatHostArg(value) {
-  if (typeof value === 'bigint') {
-    return 'i64:' + String(BigInt.asUintN(64, value));
-  }
-  if (typeof value === 'number') {
-    return 'i32:' + String(value >>> 0);
-  }
-  if (value === null) {
-    return 'externref:0';
-  }
-  return 'externref:1';
-}
-
-function formatArgByKind(kind, value) {
-  const buf = new ArrayBuffer(8);
-  const view = new DataView(buf);
-  switch (kind) {
-    case 'i32':
-      return 'i32:' + String(value >>> 0);
-    case 'i64':
-      return 'i64:' + String(BigInt.asUintN(64, value));
-    case 'f32':
-      return 'f32:' + Number(value).toFixed(6);
-    case 'f64':
-      return 'f64:' + Number(value).toFixed(6);
-    case 'funcref':
-      return 'funcref:' + (value === null ? '0' : '1');
-    case 'externref':
-      return 'externref:' + (value === null ? '0' : '1');
-    default:
-      throw new Error('unsupported import arg kind: ' + kind);
-  }
-}
-
-function zeroValue(kind) {
-  switch (kind) {
-    case 'void':
-      return undefined;
-    case 'i32':
-      return 0;
-    case 'i64':
-      return 0n;
-    case 'f32':
-    case 'f64':
-      return 0;
-    case 'funcref':
-    case 'externref':
-      return null;
-    default:
-      throw new Error('unsupported import result kind: ' + kind);
-  }
-}
-
-const stdout = [];
-const stderr = [];
-const imports = hostPrint ? {
-  host: {
-    print: (...args) => {
-      const formattedArgs = args.map(formatHostArg).join(', ');
-      if (hostPrintResultKind === 'void' || hostPrintResultKind === '') {
-        stdout.push('called host host.print(' + formattedArgs + ') =>');
-        return 0;
-      }
-      stdout.push('called host host.print(' + formattedArgs + ') => ' + hostPrintResultKind + ':0');
-      return 0;
-    }
-  }
-} : {};
-
-if (dummyImportFunc) {
-  for (const imported of importedFuncs) {
-    if (!imports[imported.module]) {
-      imports[imported.module] = {};
-    }
-    imports[imported.module][imported.name] = (...args) => {
-      const formattedArgs = args.map((arg, i) => formatArgByKind(imported.paramKinds[i], arg)).join(', ');
-      const suffix = imported.resultKind === 'void' ? '' : ' ' + imported.resultKind + ':0';
-      stdout.push('called host ' + imported.module + '.' + imported.name + '(' + formattedArgs + ') =>' + suffix);
-      return zeroValue(imported.resultKind);
-    };
-  }
-}
-
-WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({instance}) => {
-  const results = [];
-  for (const invocation of invocations) {
-    const entry = exportsToRun.find((exp) => exp.name === invocation.exportName);
-    if (!entry) {
-      stderr.push('unknown export ' + invocation.exportName);
-      process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 1, results}));
-      return;
-    }
-    if (entry.kind !== 'func') {
-      stdout.push("Export '" + invocation.exportName + "' is not a function");
-      process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 1, results}));
-      return;
-    }
-    const fn = instance.exports[entry.name];
-    const args = invocation.args || [];
-    const jsArgs = args.map(decodeArg);
-    const argText = args.map(formatArg).join(', ');
-    try {
-      const result = fn(...jsArgs);
-      results.push({
-        name: entry.name,
-        resultKind: entry.resultKind,
-        argText,
-        value: valueString(entry.resultKind, result),
-        error: '',
-        stdoutCount: stdout.length,
-      });
-    } catch (err) {
-      results.push({
-        name: entry.name,
-        resultKind: entry.resultKind,
-        argText,
-        value: '',
-        error: normalizeTrapMessage(String(err && err.message ? err.message : err)),
-        stdoutCount: stdout.length,
-      });
-    }
-  }
-  process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 0, results}));
-}).catch((err) => {
-  const message = normalizeTrapMessage(String(err && err.message ? err.message : err));
-  const prefix = message === 'unreachable executed' ? 'error initializing module: ' : '';
-  process.stdout.write(JSON.stringify({stdout: [], stderr: [prefix + message], exitCode: 1, results: []}));
-});
-`, wasmPath, string(exportsJSON), string(importsJSON), string(invocationsJSON), hostPrint, dummyImportFunc, hostPrintResultKind)
-
-	out, err := exec.Command(nodePath, "-e", script).CombinedOutput()
+	out, err := exec.Command(nodePath, runnerPath, payloadPath).CombinedOutput()
 	if err != nil {
 		return wabtInterpRunResult{}, fmt.Errorf("node failed: %w\noutput:\n%s", err, out)
 	}
