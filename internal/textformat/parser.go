@@ -1477,6 +1477,27 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 1
 		}
 		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+	case "br_table":
+		// br_table consumes a non-empty list of label operands. The last label
+		// is the default target; all preceding labels form the branch table.
+		operands := []Operand{}
+		next := cursor + 1
+	collectLabels:
+		for next < len(elems) {
+			op := p.parseOperand(elems[next])
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				operands = append(operands, op)
+				next++
+			default:
+				break collectLabels
+			}
+		}
+		if len(operands) == 0 {
+			p.emitError(elem.loc, "br_table expects at least 1 label operand")
+			return nil, cursor + 1
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, cursor + 1 + len(operands)
 	case "table.get", "table.set", "table.grow", "table.size":
 		// Table ops accept an optional immediate table index; when omitted,
 		// table index 0 is implied.
