@@ -226,68 +226,93 @@ type typePair struct {
 	b uint32
 }
 
-func typeIndicesEquivalent(m *Module, a, b uint32) bool {
-	groupVisiting := make(map[typePair]bool)
-	groupMemo := make(map[typePair]bool)
-	typeVisiting := make(map[typePair]bool)
-	typeMemo := make(map[typePair]bool)
-	return typeIndicesEquivalentRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+type typeEquivalenceChecker struct {
+	// m is the module whose recursive type graph is being compared.
+	m *Module
+
+	// groupVisiting tracks recursive-group pairs currently being compared, so
+	// cyclic references inside a rec group can terminate successfully.
+	groupVisiting map[typePair]bool
+
+	// groupMemo caches completed recursive-group equivalence checks.
+	groupMemo map[typePair]bool
+
+	// typeVisiting tracks individual type-entry pairs currently being compared.
+	typeVisiting map[typePair]bool
+
+	// typeMemo caches completed individual type-entry equivalence checks.
+	typeMemo map[typePair]bool
 }
 
-func typeIndicesEquivalentRec(m *Module, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
-	startA, sizeA, posA := recGroupInfo(m, a)
-	startB, sizeB, posB := recGroupInfo(m, b)
+func newTypeEquivalenceChecker(m *Module) typeEquivalenceChecker {
+	return typeEquivalenceChecker{
+		m:             m,
+		groupVisiting: make(map[typePair]bool),
+		groupMemo:     make(map[typePair]bool),
+		typeVisiting:  make(map[typePair]bool),
+		typeMemo:      make(map[typePair]bool),
+	}
+}
+
+func typeIndicesEquivalent(m *Module, a, b uint32) bool {
+	c := newTypeEquivalenceChecker(m)
+	return c.typeIndicesEquivalent(a, b)
+}
+
+func (c *typeEquivalenceChecker) typeIndicesEquivalent(a, b uint32) bool {
+	startA, sizeA, posA := recGroupInfo(c.m, a)
+	startB, sizeB, posB := recGroupInfo(c.m, b)
 	if posA != posB || sizeA != sizeB {
 		return false
 	}
 	if sizeA > 1 {
 		groupKey := typePair{a: startA, b: startB}
-		if eq, ok := groupMemo[groupKey]; ok {
+		if eq, ok := c.groupMemo[groupKey]; ok {
 			return eq
 		}
-		if groupVisiting[groupKey] {
+		if c.groupVisiting[groupKey] {
 			return true
 		}
-		groupVisiting[groupKey] = true
-		defer delete(groupVisiting, groupKey)
+		c.groupVisiting[groupKey] = true
+		defer delete(c.groupVisiting, groupKey)
 		for i := uint32(0); i < sizeA; i++ {
-			if !typeIndicesEquivalentInGroupRec(m, startA, startB, sizeA, startA+i, startB+i, groupVisiting, groupMemo, typeVisiting, typeMemo) {
-				groupMemo[groupKey] = false
+			if !c.typeIndicesEquivalentInGroup(startA, startB, sizeA, startA+i, startB+i) {
+				c.groupMemo[groupKey] = false
 				return false
 			}
 		}
-		groupMemo[groupKey] = true
+		c.groupMemo[groupKey] = true
 		return true
 	}
-	return typeIndicesEquivalentBodyRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	return c.typeIndicesEquivalentBody(a, b)
 }
 
-func typeIndicesEquivalentInGroupRec(m *Module, groupA, groupB, groupSize, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) typeIndicesEquivalentInGroup(groupA, groupB, groupSize, a, b uint32) bool {
 	if a == b && groupA == groupB {
 		return true
 	}
-	if m == nil || int(a) >= len(m.Types) || int(b) >= len(m.Types) {
+	if c.m == nil || int(a) >= len(c.m.Types) || int(b) >= len(c.m.Types) {
 		return false
 	}
 	key := typePair{a: a, b: b}
-	if eq, ok := typeMemo[key]; ok {
+	if eq, ok := c.typeMemo[key]; ok {
 		return eq
 	}
-	if typeVisiting[key] {
+	if c.typeVisiting[key] {
 		return true
 	}
-	typeVisiting[key] = true
-	defer delete(typeVisiting, key)
+	c.typeVisiting[key] = true
+	defer delete(c.typeVisiting, key)
 
-	ta := m.Types[a]
-	tb := m.Types[b]
+	ta := c.m.Types[a]
+	tb := c.m.Types[b]
 	if ta.SubType != tb.SubType || ta.Final != tb.Final || ta.Kind != tb.Kind || len(ta.SuperTypes) != len(tb.SuperTypes) {
-		typeMemo[key] = false
+		c.typeMemo[key] = false
 		return false
 	}
 	for i := range ta.SuperTypes {
-		if !typeIndexRefsEquivalentInGroup(m, groupA, groupB, groupSize, ta.SuperTypes[i], tb.SuperTypes[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
-			typeMemo[key] = false
+		if !c.typeIndexRefsEquivalentInGroup(groupA, groupB, groupSize, ta.SuperTypes[i], tb.SuperTypes[i]) {
+			c.typeMemo[key] = false
 			return false
 		}
 	}
@@ -298,7 +323,7 @@ func typeIndicesEquivalentInGroupRec(m *Module, groupA, groupB, groupSize, a, b 
 		eq = len(ta.Params) == len(tb.Params) && len(ta.Results) == len(tb.Results)
 		if eq {
 			for i := range ta.Params {
-				if !valueTypesEquivalentInRecGroup(m, ta.Params[i], tb.Params[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.valueTypesEquivalentInRecGroup(ta.Params[i], tb.Params[i], groupA, groupB, groupSize) {
 					eq = false
 					break
 				}
@@ -306,7 +331,7 @@ func typeIndicesEquivalentInGroupRec(m *Module, groupA, groupB, groupSize, a, b 
 		}
 		if eq {
 			for i := range ta.Results {
-				if !valueTypesEquivalentInRecGroup(m, ta.Results[i], tb.Results[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.valueTypesEquivalentInRecGroup(ta.Results[i], tb.Results[i], groupA, groupB, groupSize) {
 					eq = false
 					break
 				}
@@ -316,22 +341,22 @@ func typeIndicesEquivalentInGroupRec(m *Module, groupA, groupB, groupSize, a, b 
 		eq = len(ta.Fields) == len(tb.Fields)
 		if eq {
 			for i := range ta.Fields {
-				if !fieldTypesEquivalentInRecGroup(m, ta.Fields[i], tb.Fields[i], groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.fieldTypesEquivalentInRecGroup(ta.Fields[i], tb.Fields[i], groupA, groupB, groupSize) {
 					eq = false
 					break
 				}
 			}
 		}
 	case TypeDefKindArray:
-		eq = fieldTypesEquivalentInRecGroup(m, ta.ElemField, tb.ElemField, groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo)
+		eq = c.fieldTypesEquivalentInRecGroup(ta.ElemField, tb.ElemField, groupA, groupB, groupSize)
 	default:
 		eq = false
 	}
-	typeMemo[key] = eq
+	c.typeMemo[key] = eq
 	return eq
 }
 
-func typeIndexRefsEquivalentInGroup(m *Module, groupA, groupB, groupSize, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) typeIndexRefsEquivalentInGroup(groupA, groupB, groupSize, a, b uint32) bool {
 	inA := a >= groupA && a < groupA+groupSize
 	inB := b >= groupB && b < groupB+groupSize
 	if inA || inB {
@@ -341,12 +366,12 @@ func typeIndexRefsEquivalentInGroup(m *Module, groupA, groupB, groupSize, a, b u
 		if a-groupA != b-groupB {
 			return false
 		}
-		return typeIndicesEquivalentInGroupRec(m, groupA, groupB, groupSize, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+		return c.typeIndicesEquivalentInGroup(groupA, groupB, groupSize, a, b)
 	}
-	return typeIndicesEquivalentRec(m, a, b, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	return c.typeIndicesEquivalent(a, b)
 }
 
-func valueTypesEquivalentInRecGroup(m *Module, a, b ValueType, groupA, groupB, groupSize uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) valueTypesEquivalentInRecGroup(a, b ValueType, groupA, groupB, groupSize uint32) bool {
 	if a.Kind != b.Kind {
 		return false
 	}
@@ -357,19 +382,19 @@ func valueTypesEquivalentInRecGroup(m *Module, a, b ValueType, groupA, groupB, g
 		return false
 	}
 	if a.UsesTypeIndex() && b.UsesTypeIndex() {
-		return typeIndexRefsEquivalentInGroup(m, groupA, groupB, groupSize, a.HeapType.TypeIndex, b.HeapType.TypeIndex, groupVisiting, groupMemo, typeVisiting, typeMemo)
+		return c.typeIndexRefsEquivalentInGroup(groupA, groupB, groupSize, a.HeapType.TypeIndex, b.HeapType.TypeIndex)
 	}
 	return a.HeapType.Kind == b.HeapType.Kind
 }
 
-func fieldTypesEquivalentInRecGroup(m *Module, a, b FieldType, groupA, groupB, groupSize uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) fieldTypesEquivalentInRecGroup(a, b FieldType, groupA, groupB, groupSize uint32) bool {
 	if a.Mutable != b.Mutable || a.Packed != b.Packed {
 		return false
 	}
 	if a.Packed != PackedTypeNone {
 		return true
 	}
-	return valueTypesEquivalentInRecGroup(m, a.Type, b.Type, groupA, groupB, groupSize, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	return c.valueTypesEquivalentInRecGroup(a.Type, b.Type, groupA, groupB, groupSize)
 }
 
 func recGroupInfo(m *Module, idx uint32) (start uint32, size uint32, pos uint32) {
@@ -388,32 +413,32 @@ func recGroupInfo(m *Module, idx uint32) (start uint32, size uint32, pos uint32)
 	return idx, 1, 0
 }
 
-func typeIndicesEquivalentBodyRec(m *Module, a, b uint32, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) typeIndicesEquivalentBody(a, b uint32) bool {
 	if a == b {
 		return true
 	}
-	if m == nil || int(a) >= len(m.Types) || int(b) >= len(m.Types) {
+	if c.m == nil || int(a) >= len(c.m.Types) || int(b) >= len(c.m.Types) {
 		return false
 	}
 	key := typePair{a: a, b: b}
-	if eq, ok := typeMemo[key]; ok {
+	if eq, ok := c.typeMemo[key]; ok {
 		return eq
 	}
-	if typeVisiting[key] {
+	if c.typeVisiting[key] {
 		return true
 	}
-	typeVisiting[key] = true
-	defer delete(typeVisiting, key)
+	c.typeVisiting[key] = true
+	defer delete(c.typeVisiting, key)
 
-	ta := m.Types[a]
-	tb := m.Types[b]
+	ta := c.m.Types[a]
+	tb := c.m.Types[b]
 	if ta.SubType != tb.SubType || ta.Final != tb.Final || ta.Kind != tb.Kind || len(ta.SuperTypes) != len(tb.SuperTypes) {
-		typeMemo[key] = false
+		c.typeMemo[key] = false
 		return false
 	}
 	for i := range ta.SuperTypes {
-		if !typeIndicesEquivalentRec(m, ta.SuperTypes[i], tb.SuperTypes[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
-			typeMemo[key] = false
+		if !c.typeIndicesEquivalent(ta.SuperTypes[i], tb.SuperTypes[i]) {
+			c.typeMemo[key] = false
 			return false
 		}
 	}
@@ -424,7 +449,7 @@ func typeIndicesEquivalentBodyRec(m *Module, a, b uint32, groupVisiting map[type
 		eq = len(ta.Params) == len(tb.Params) && len(ta.Results) == len(tb.Results)
 		if eq {
 			for i := range ta.Params {
-				if !valueTypesEquivalentInModule(m, ta.Params[i], tb.Params[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.valueTypesEquivalent(ta.Params[i], tb.Params[i]) {
 					eq = false
 					break
 				}
@@ -432,7 +457,7 @@ func typeIndicesEquivalentBodyRec(m *Module, a, b uint32, groupVisiting map[type
 		}
 		if eq {
 			for i := range ta.Results {
-				if !valueTypesEquivalentInModule(m, ta.Results[i], tb.Results[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.valueTypesEquivalent(ta.Results[i], tb.Results[i]) {
 					eq = false
 					break
 				}
@@ -442,22 +467,22 @@ func typeIndicesEquivalentBodyRec(m *Module, a, b uint32, groupVisiting map[type
 		eq = len(ta.Fields) == len(tb.Fields)
 		if eq {
 			for i := range ta.Fields {
-				if !fieldTypesEquivalentInModule(m, ta.Fields[i], tb.Fields[i], groupVisiting, groupMemo, typeVisiting, typeMemo) {
+				if !c.fieldTypesEquivalent(ta.Fields[i], tb.Fields[i]) {
 					eq = false
 					break
 				}
 			}
 		}
 	case TypeDefKindArray:
-		eq = fieldTypesEquivalentInModule(m, ta.ElemField, tb.ElemField, groupVisiting, groupMemo, typeVisiting, typeMemo)
+		eq = c.fieldTypesEquivalent(ta.ElemField, tb.ElemField)
 	default:
 		eq = false
 	}
-	typeMemo[key] = eq
+	c.typeMemo[key] = eq
 	return eq
 }
 
-func valueTypesEquivalentInModule(m *Module, a, b ValueType, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) valueTypesEquivalent(a, b ValueType) bool {
 	if a.Kind != b.Kind {
 		return false
 	}
@@ -468,19 +493,19 @@ func valueTypesEquivalentInModule(m *Module, a, b ValueType, groupVisiting map[t
 		return false
 	}
 	if a.UsesTypeIndex() && b.UsesTypeIndex() {
-		return typeIndicesEquivalentRec(m, a.HeapType.TypeIndex, b.HeapType.TypeIndex, groupVisiting, groupMemo, typeVisiting, typeMemo)
+		return c.typeIndicesEquivalent(a.HeapType.TypeIndex, b.HeapType.TypeIndex)
 	}
 	return a.HeapType.Kind == b.HeapType.Kind
 }
 
-func fieldTypesEquivalentInModule(m *Module, a, b FieldType, groupVisiting map[typePair]bool, groupMemo map[typePair]bool, typeVisiting map[typePair]bool, typeMemo map[typePair]bool) bool {
+func (c *typeEquivalenceChecker) fieldTypesEquivalent(a, b FieldType) bool {
 	if a.Mutable != b.Mutable || a.Packed != b.Packed {
 		return false
 	}
 	if a.Packed != PackedTypeNone {
 		return true
 	}
-	return valueTypesEquivalentInModule(m, a.Type, b.Type, groupVisiting, groupMemo, typeVisiting, typeMemo)
+	return c.valueTypesEquivalent(a.Type, b.Type)
 }
 
 func isModuleValueSubtype(m *Module, got, want ValueType) bool {
@@ -531,7 +556,8 @@ func isValidDeclaredSubtype(m *Module, sub, super TypeDef) bool {
 				continue
 			}
 			if sf.Mutable {
-				if !fieldTypesEquivalentInModule(m, sf, gf, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}) {
+				c := newTypeEquivalenceChecker(m)
+				if !c.fieldTypesEquivalent(sf, gf) {
 					return false
 				}
 			} else if !isModuleValueSubtype(m, sf.Type, gf.Type) {
@@ -547,7 +573,8 @@ func isValidDeclaredSubtype(m *Module, sub, super TypeDef) bool {
 			return true
 		}
 		if sub.ElemField.Mutable {
-			return fieldTypesEquivalentInModule(m, sub.ElemField, super.ElemField, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{}, map[typePair]bool{})
+			c := newTypeEquivalenceChecker(m)
+			return c.fieldTypesEquivalent(sub.ElemField, super.ElemField)
 		}
 		return isModuleValueSubtype(m, sub.ElemField.Type, super.ElemField.Type)
 	default:
@@ -852,7 +879,15 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 		if hints != nil && i < len(hints.Funcs) {
 			funcHints = &hints.Funcs[i]
 		}
-		funcErrs := validateFunctionBody(m, m.Types[f.TypeIdx], f, funcImportTypeIdx, tagImportTypeIdx, declaredFuncs, funcHints)
+		funcErrs := (&bodyValidator{
+			m:                 m,
+			ft:                m.Types[f.TypeIdx],
+			f:                 f,
+			funcImportTypeIdx: funcImportTypeIdx,
+			tagImportTypeIdx:  tagImportTypeIdx,
+			declaredFuncs:     declaredFuncs,
+			hints:             funcHints,
+		}).validate()
 		for _, err := range funcErrs {
 			diags.Addf("%s: %v", fnCtx, err)
 		}
@@ -1068,10 +1103,44 @@ func ValidateModule(m *Module, hints *valhint.ModuleHints) error {
 	return nil
 }
 
-// validateFunctionBody validates f against function type ft.
-// It returns all diagnostics found while checking instruction ordering,
-// local-index bounds and stack/result typing.
-func validateFunctionBody(m *Module, ft TypeDef, f Function, funcImportTypeIdx []uint32, tagImportTypeIdx []uint32, declaredFuncs map[uint32]bool, hints *valhint.FuncHints) diag.ErrorList {
+// bodyValidator holds the per-function state needed while validating one
+// lowered function body against its declared type.
+type bodyValidator struct {
+	// m is the module owning the function under validation.
+	m *Module
+
+	// ft is the declared function type referenced by f.TypeIdx.
+	ft TypeDef
+
+	// f is the function body currently being validated.
+	f Function
+
+	// funcImportTypeIdx maps imported function indices to Module.Types entries.
+	funcImportTypeIdx []uint32
+
+	// tagImportTypeIdx maps imported tag indices to Module.Types entries.
+	tagImportTypeIdx []uint32
+
+	// declaredFuncs records function indices that are valid targets of
+	// ref.func.
+	declaredFuncs map[uint32]bool
+
+	// hints carries optional folded-source validation metadata aligned to
+	// f.Body.
+	hints *valhint.FuncHints
+}
+
+// validate checks one function body and returns any diagnostics found while
+// checking instruction ordering, local-index bounds, and stack/result typing.
+func (v *bodyValidator) validate() diag.ErrorList {
+	m := v.m
+	ft := v.ft
+	f := v.f
+	funcImportTypeIdx := v.funcImportTypeIdx
+	tagImportTypeIdx := v.tagImportTypeIdx
+	declaredFuncs := v.declaredFuncs
+	hints := v.hints
+
 	var diags diag.ErrorList
 	funcLocCtx := functionLocationContext(f)
 	funcImportCount := uint32(len(funcImportTypeIdx))
