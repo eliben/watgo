@@ -1,3 +1,11 @@
+// Package instrdef defines the shared instruction catalog used across watgo's
+// internal compiler pipeline.
+//
+// The catalog is the single internal source of truth for instruction metadata
+// that is reused by text parsing/lowering, binary encode/decode, and generic
+// validation. Irregular instructions are still represented here, but they opt
+// out of the generic paths and stay on handwritten logic in the relevant
+// package.
 package instrdef
 
 import . "github.com/eliben/watgo/wasmir"
