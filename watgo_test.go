@@ -196,6 +196,60 @@ func ExampleParseWAT() {
 	// 1 1
 }
 
+func ExampleParseWAT_moduleAnalysis() {
+	m, err := watgo.ParseWAT([]byte(`(module
+  (func (export "add") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add
+  )
+  (func (param f32 i32) (result i32)
+    local.get 1
+    i32.const 1
+    i32.add
+    drop
+    i32.const 0
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+
+	i32Params := 0
+	localGets := 0
+	i32Adds := 0
+
+	// Module-defined functions carry a type index into m.Types. The function
+	// body itself is a flat sequence of wasmir.Instruction values.
+	for _, fn := range m.Funcs {
+		sig := m.Types[fn.TypeIdx]
+		for _, param := range sig.Params {
+			if param == wasmir.ValueTypeI32 {
+				i32Params++
+			}
+		}
+
+		for _, instr := range fn.Body {
+			switch instr.Kind {
+			case wasmir.InstrLocalGet:
+				localGets++
+			case wasmir.InstrI32Add:
+				i32Adds++
+			}
+		}
+	}
+
+	fmt.Printf("module-defined funcs: %d\n", len(m.Funcs))
+	fmt.Printf("i32 params: %d\n", i32Params)
+	fmt.Printf("local.get instructions: %d\n", localGets)
+	fmt.Printf("i32.add instructions: %d\n", i32Adds)
+	// Output:
+	// module-defined funcs: 2
+	// i32 params: 3
+	// local.get instructions: 3
+	// i32.add instructions: 2
+}
+
 func ExampleDecodeWASM() {
 	m, err := watgo.DecodeWASM(canonicalAddModuleBytes())
 	if err != nil {

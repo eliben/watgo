@@ -30,7 +30,7 @@ func TestWasmWatSamples(t *testing.T) {
 
 	var samples []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && !strings.HasPrefix(entry.Name(), "_") {
 			samples = append(samples, entry.Name())
 		}
 	}
