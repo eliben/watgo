@@ -1709,25 +1709,29 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 //	else $body
 //	end $body
 //
-// and the existing plain single-result blocktype form like:
+// and plain structured signature clauses like:
 //
 //	block (result i32)
+//	loop (result i32 i64)
+//	if (param i32) (result f32)
 func (p *Parser) parsePlainStructuredInstr(name string, elems []*SExpr, cursor int) (Instruction, int, bool) {
 	switch name {
 	case "block", "loop", "if":
-		operands := make([]Operand, 0, 2)
+		operands := make([]Operand, 0, 4)
 		next := cursor + 1
 		if next < len(elems) && elems[next].IsTokenKind(ID) {
 			operands = append(operands, p.parseOperand(elems[next]))
 			next++
 		}
-		if next < len(elems) {
-			if typeOp, ok := p.parsePlainControlTypeOperand(elems[next]); ok {
-				if typeOp != nil {
-					operands = append(operands, typeOp)
-				}
-				next++
+		for next < len(elems) {
+			clauseOp, ok := p.parsePlainControlTypeOperand(elems[next])
+			if !ok {
+				break
 			}
+			if clauseOp != nil {
+				operands = append(operands, clauseOp)
+			}
+			next++
 		}
 		return &PlainInstr{Name: name, Operands: operands, loc: elems[cursor].loc}, next, true
 	case "else", "end":
@@ -1813,22 +1817,49 @@ func (p *Parser) parsePlainSelectInstr(elems []*SExpr, cursor int) (Instruction,
 	return &FoldedInstr{Name: "select", Args: args, loc: elems[cursor].loc}, next, true
 }
 
-// parsePlainControlTypeOperand parses a single-result blocktype clause used by
-// linear control forms such as `if (result i32)` and `block (result (ref $t))`.
+// parsePlainControlTypeOperand parses one plain structured signature clause
+// used by linear control forms such as:
+//   - `if (result i32)`
+//   - `block (result i32 i64)`
+//   - `loop (param i32) (result (ref $t))`
 func (p *Parser) parsePlainControlTypeOperand(sx *SExpr) (Operand, bool) {
-	if !sx.IsList() || sx.HeadKeyword() != "result" {
+	if !sx.IsList() {
 		return nil, false
 	}
-	if len(sx.list) != 2 {
-		p.emitError(sx.loc, "plain control result clause expects exactly one type")
-		return nil, true
+	head := sx.HeadKeyword()
+	switch head {
+	case "type":
+		if len(sx.list) != 2 || !sx.list[1].IsTokenAny(ID, INT) {
+			p.emitError(sx.loc, "plain control type clause expects exactly one type reference")
+			return nil, true
+		}
+		return &StructuredTypeClauseOperand{
+			Clause:  "type",
+			TypeRef: sx.list[1].tok.value,
+			loc:     sx.loc,
+		}, true
+	case "param", "result":
+		if len(sx.list) < 2 {
+			p.emitError(sx.loc, "plain control %s clause expects at least one type", head)
+			return nil, true
+		}
+		types := make([]Type, 0, len(sx.list)-1)
+		for _, elem := range sx.list[1:] {
+			ty := p.parseType(elem)
+			if ty == nil {
+				p.emitError(sx.loc, "invalid plain control %s type", head)
+				return nil, true
+			}
+			types = append(types, ty)
+		}
+		return &StructuredTypeClauseOperand{
+			Clause: head,
+			Types:  types,
+			loc:    sx.loc,
+		}, true
+	default:
+		return nil, false
 	}
-	ty := p.parseType(sx.list[1])
-	if ty == nil {
-		p.emitError(sx.loc, "invalid plain control result type")
-		return nil, true
-	}
-	return &TypeOperand{Ty: ty, loc: sx.loc}, true
 }
 
 // parseFoldedInstr parses one folded instruction expression and preserves it

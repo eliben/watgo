@@ -217,6 +217,22 @@ func (op *TypeOperand) Loc() string {
 	return op.loc.String()
 }
 
+// StructuredTypeClauseOperand preserves one plain structured control signature
+// clause such as `(type $t)`, `(param i32 i64)`, or `(result (ref null $t))`.
+type StructuredTypeClauseOperand struct {
+	Clause  string
+	TypeRef string
+	Types   []Type
+	loc     location
+}
+
+func (*StructuredTypeClauseOperand) isOperand() {}
+
+// Loc returns the source location of this operand as "line:column".
+func (op *StructuredTypeClauseOperand) Loc() string {
+	return op.loc.String()
+}
+
 // instrInfo is the shared instruction metadata stored in instructionInfoByName.
 // It gives textformat code the semantic opcode plus the broad syntax family
 // needed by parser and lowering decisions.

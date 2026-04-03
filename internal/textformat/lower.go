@@ -2321,42 +2321,131 @@ func operandCountText(count int) string {
 	}
 }
 
-// lowerPlainStructuredHeader decodes the optional label and single-result
-// blocktype accepted by raw block/loop/if forms.
-func (fl *functionLowerer) lowerPlainStructuredHeader(pi *PlainInstr, instrName string) (string, *wasmir.ValueType, bool) {
-	if len(pi.Operands) > 2 {
-		fl.diagf(pi.Loc(), "%s expects at most 2 operands", instrName)
-		return "", nil, false
-	}
-
+// lowerPlainStructuredHeader decodes the optional label and any trailing
+// `(type ...)`, `(param ...)`, and `(result ...)` clauses accepted by raw
+// block/loop/if forms.
+//
+// The returned values are:
+//   - labelName: the optional leading label, for example `$done` in
+//     `block $done ...`
+//   - typeRef: the optional explicit type-use reference from `(type ...)`
+//   - paramTypes: the flattened value-type list from any `(param ...)` clauses
+//   - resultTypes: the flattened value-type list from any `(result ...)`
+//     clauses
+//   - ok: whether lowering can continue
+//
+// These pieces are returned separately because later blocktype selection must
+// distinguish:
+//   - an explicit indexed type use,
+//   - inline params/results that need a synthetic function type,
+//   - and the compact single-result valtype form.
+func (fl *functionLowerer) lowerPlainStructuredHeader(pi *PlainInstr, instrName string) (string, string, []wasmir.ValueType, []wasmir.ValueType, bool) {
 	var labelName string
-	var resultType *wasmir.ValueType
+	var typeRef string
+	var paramTypes []wasmir.ValueType
+	var resultTypes []wasmir.ValueType
 	for i, op := range pi.Operands {
 		switch operand := op.(type) {
 		case *IdOperand:
 			if i != 0 || labelName != "" {
 				fl.diagf(op.Loc(), "invalid %s label", instrName)
-				return "", nil, false
+				return "", "", nil, nil, false
 			}
 			labelName = operand.Value
-		case *TypeOperand:
-			if resultType != nil {
-				fl.diagf(op.Loc(), "duplicate %s result type", instrName)
-				return "", nil, false
+		case *StructuredTypeClauseOperand:
+			switch operand.Clause {
+			case "type":
+				if typeRef != "" || len(paramTypes) > 0 || len(resultTypes) > 0 {
+					fl.diagf(op.Loc(), "unexpected %s type clause", instrName)
+					return "", "", nil, nil, false
+				}
+				typeRef = operand.TypeRef
+			case "param":
+				if len(resultTypes) > 0 {
+					fl.diagf(op.Loc(), "unexpected %s param clause", instrName)
+					return "", "", nil, nil, false
+				}
+				for _, ty := range operand.Types {
+					vt, ok := lowerValueType(ty, fl.mod.typesByName)
+					if !ok {
+						fl.diagf(op.Loc(), "invalid %s param type", instrName)
+						return "", "", nil, nil, false
+					}
+					paramTypes = append(paramTypes, vt)
+				}
+			case "result":
+				for _, ty := range operand.Types {
+					vt, ok := lowerValueType(ty, fl.mod.typesByName)
+					if !ok {
+						fl.diagf(op.Loc(), "invalid %s result type", instrName)
+						return "", "", nil, nil, false
+					}
+					resultTypes = append(resultTypes, vt)
+				}
+			default:
+				fl.diagf(op.Loc(), "invalid operand for %s", instrName)
+				return "", "", nil, nil, false
 			}
-			vt, ok := lowerBlockResultTypeOperand(op, fl.mod.typesByName)
-			if !ok {
-				fl.diagf(op.Loc(), "invalid %s result type", instrName)
-				return "", nil, false
-			}
-			vtCopy := vt
-			resultType = &vtCopy
 		default:
 			fl.diagf(op.Loc(), "invalid operand for %s", instrName)
-			return "", nil, false
+			return "", "", nil, nil, false
 		}
 	}
-	return labelName, resultType, true
+	return labelName, typeRef, paramTypes, resultTypes, true
+}
+
+// applyStructuredBlockType lowers a structured control signature into wasmir's
+// blocktype representation.
+//
+// The plain and folded structured-control paths both normalize into the same
+// three blocktype forms used by the Wasm binary format:
+//   - explicit type index, when source used `(type $t)`
+//   - synthetic function-type index, when inline params are present or there
+//     are multiple result values
+//   - inline valtype blocktype, when there is exactly one result value and no
+//     params
+//
+// typeRef/paramTypes/resultTypes come from lowerPlainStructuredHeader or the
+// folded structured lowering path. This helper applies the common resolution
+// and compatibility checks, then fills the corresponding BlockType fields on
+// ins.
+func (fl *functionLowerer) applyStructuredBlockType(ins *wasmir.Instruction, instrName, typeRef string, paramTypes, resultTypes []wasmir.ValueType, loc string) bool {
+	finalParams := paramTypes
+	finalResults := resultTypes
+	useTypeIndex := false
+	var typeIdx uint32
+
+	if typeRef != "" {
+		refIdx, refType, ok := fl.resolveTypeRef(typeRef)
+		if !ok {
+			fl.diagf(loc, "unknown %s type use %q", instrName, typeRef)
+			return false
+		}
+		useTypeIndex = true
+		typeIdx = refIdx
+		if len(paramTypes) > 0 || len(resultTypes) > 0 {
+			if !equalValueTypeSlices(paramTypes, refType.Params) || !equalValueTypeSlices(resultTypes, refType.Results) {
+				fl.diagf(loc, "inline function type mismatch in %s", instrName)
+				return false
+			}
+		} else {
+			finalParams = append([]wasmir.ValueType(nil), refType.Params...)
+			finalResults = append([]wasmir.ValueType(nil), refType.Results...)
+		}
+	}
+
+	switch {
+	case useTypeIndex:
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = typeIdx
+	case len(finalParams) > 0 || len(finalResults) > 1:
+		ins.BlockTypeUsesIndex = true
+		ins.BlockTypeIndex = fl.mod.internFuncType(finalParams, finalResults, "")
+	case len(finalResults) == 1:
+		vt := finalResults[0]
+		ins.BlockType = &vt
+	}
+	return true
 }
 
 // lowerPlainCallIndirect lowers a flat call_indirect using the same immediate
@@ -2721,18 +2810,18 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		fl.emitInstr(ins)
 		return
 	case "if":
-		labelName, resultType, ok := fl.lowerPlainStructuredHeader(pi, "if")
+		labelName, typeRef, paramTypes, resultTypes, ok := fl.lowerPlainStructuredHeader(pi, "if")
 		if !ok {
 			return
 		}
 		ins := wasmir.Instruction{Kind: wasmir.InstrIf, SourceLoc: instrLoc}
-		if resultType != nil {
-			ins.BlockType = resultType
+		if !fl.applyStructuredBlockType(&ins, "if", typeRef, paramTypes, resultTypes, instrLoc) {
+			return
 		}
 		fl.emitInstr(ins)
 		fl.pushLabel(labelName)
 	case "block", "loop":
-		labelName, resultType, ok := fl.lowerPlainStructuredHeader(pi, pi.Name)
+		labelName, typeRef, paramTypes, resultTypes, ok := fl.lowerPlainStructuredHeader(pi, pi.Name)
 		if !ok {
 			return
 		}
@@ -2741,8 +2830,8 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 			kind = wasmir.InstrLoop
 		}
 		ins := wasmir.Instruction{Kind: kind, SourceLoc: instrLoc}
-		if resultType != nil {
-			ins.BlockType = resultType
+		if !fl.applyStructuredBlockType(&ins, pi.Name, typeRef, paramTypes, resultTypes, instrLoc) {
+			return
 		}
 		fl.emitInstr(ins)
 		fl.pushLabel(labelName)

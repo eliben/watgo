@@ -542,8 +542,12 @@ func TestParseModule_PlainIfWithResultClause(t *testing.T) {
 	if len(ifInstr.Operands) != 1 {
 		t.Fatalf("if operand count=%d, want 1", len(ifInstr.Operands))
 	}
-	if _, ok := ifInstr.Operands[0].(*TypeOperand); !ok {
-		t.Fatalf("if operand=%T, want *TypeOperand", ifInstr.Operands[0])
+	clause, ok := ifInstr.Operands[0].(*StructuredTypeClauseOperand)
+	if !ok {
+		t.Fatalf("if operand=%T, want *StructuredTypeClauseOperand", ifInstr.Operands[0])
+	}
+	if clause.Clause != "result" || len(clause.Types) != 1 {
+		t.Fatalf("if clause=%#v, want one result type", clause)
 	}
 }
 
