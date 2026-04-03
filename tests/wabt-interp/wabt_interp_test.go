@@ -32,18 +32,51 @@ import (
 type wabtInterpCase struct {
 	moduleWAT      string
 	expectedStdout string
+	expectedStderr string
+	expectedError  int
+	runArgs        []string
 }
 
 type wabtInterpExport struct {
-	Name       string `json:"name"`
-	ResultKind string `json:"resultKind"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	ResultKind string   `json:"resultKind"`
+	ParamKinds []string `json:"paramKinds"`
 }
 
 type wabtInterpResult struct {
 	Name       string `json:"name"`
 	ResultKind string `json:"resultKind"`
+	ArgText    string `json:"argText"`
 	Value      string `json:"value"`
 	Error      string `json:"error"`
+	// StdoutCount records how many auxiliary stdout lines JS had produced before
+	// this invocation finished, so Go can interleave host-call logging with the
+	// final WABT-style result line in the original execution order.
+	StdoutCount int   `json:"stdoutCount"`
+}
+
+type wabtInterpRunResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
+type wabtInterpInvocation struct {
+	ExportName string                    `json:"exportName"`
+	Args       []wabtInterpInvocationArg `json:"args"`
+}
+
+type wabtInterpInvocationArg struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
+type wabtInterpImport struct {
+	Module     string   `json:"module"`
+	Name       string   `json:"name"`
+	ResultKind string   `json:"resultKind"`
+	ParamKinds []string `json:"paramKinds"`
 }
 
 func TestWABTInterp(t *testing.T) {
@@ -126,13 +159,29 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 		t.Fatalf("WriteFile %q failed: %v", wasmPath, err)
 	}
 
-	got, err := runWABTInterpNode(nodePath, wasmPath, exports)
+	hostPrintResultKind, err := wabtInterpHostPrintResultKind(m)
+	if err != nil {
+		t.Fatalf("wabtInterpHostPrintResultKind %q failed: %v", path, err)
+	}
+
+	imports, err := wabtInterpImports(m)
+	if err != nil {
+		t.Fatalf("wabtInterpImports %q failed: %v", path, err)
+	}
+
+	got, err := runWABTInterpNode(nodePath, wasmPath, exports, imports, tc.runArgs, hostPrintResultKind)
 	if err != nil {
 		t.Fatalf("runWABTInterpNode %q failed: %v", path, err)
 	}
 
-	if !wabtInterpStdoutMatches(got, tc.expectedStdout) {
-		t.Fatalf("stdout mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got, tc.expectedStdout)
+	if got.ExitCode != tc.expectedError {
+		t.Fatalf("exit code mismatch for %q: got %d, want %d", path, got.ExitCode, tc.expectedError)
+	}
+	if !wabtInterpStdoutMatches(got.Stdout, tc.expectedStdout) {
+		t.Fatalf("stdout mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got.Stdout, tc.expectedStdout)
+	}
+	if got.Stderr != tc.expectedStderr {
+		t.Fatalf("stderr mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got.Stderr, tc.expectedStderr)
 	}
 }
 
@@ -146,30 +195,79 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 	text := string(src)
 	const stdoutStart = "(;; STDOUT ;;;"
 	const stdoutEnd = ";;; STDOUT ;;)"
+	const stderrStart = "(;; STDERR ;;;"
+	const stderrEnd = ";;; STDERR ;;)"
 
 	moduleStart := strings.Index(text, "(module")
 	if moduleStart < 0 {
 		return wabtInterpCase{}, fmt.Errorf("missing module")
 	}
 
-	stdoutStartIdx := strings.Index(text, stdoutStart)
-	if stdoutStartIdx < 0 {
-		return wabtInterpCase{}, fmt.Errorf("missing STDOUT block")
+	metaLines := strings.Split(text[:moduleStart], "\n")
+	var runArgs []string
+	expectedError := 0
+	for _, line := range metaLines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, ";;; ") {
+			continue
+		}
+		body := strings.TrimPrefix(line, ";;; ")
+		key, value, ok := strings.Cut(body, ":")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "ARGS", "ARGS1", "ARGS*":
+			runArgs = append(runArgs, strings.Fields(value)...)
+		case "ERROR":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return wabtInterpCase{}, fmt.Errorf("invalid ERROR value %q", value)
+			}
+			expectedError = n
+		}
 	}
-	stdoutEndIdx := strings.Index(text[stdoutStartIdx:], stdoutEnd)
-	if stdoutEndIdx < 0 {
-		return wabtInterpCase{}, fmt.Errorf("unterminated STDOUT block")
-	}
-	stdoutEndIdx += stdoutStartIdx
 
-	moduleWAT := strings.TrimSpace(text[moduleStart:stdoutStartIdx])
-	expected := text[stdoutStartIdx+len(stdoutStart) : stdoutEndIdx]
-	expected = strings.TrimPrefix(expected, "\n")
-	expected = strings.TrimSuffix(expected, "\n")
+	endIdx := len(text)
+	expectedStdout := ""
+	if stdoutStartIdx := strings.Index(text, stdoutStart); stdoutStartIdx >= 0 {
+		stdoutEndIdx := strings.Index(text[stdoutStartIdx:], stdoutEnd)
+		if stdoutEndIdx < 0 {
+			return wabtInterpCase{}, fmt.Errorf("unterminated STDOUT block")
+		}
+		stdoutEndIdx += stdoutStartIdx
+		endIdx = min(endIdx, stdoutStartIdx)
+		expectedStdout = text[stdoutStartIdx+len(stdoutStart) : stdoutEndIdx]
+		expectedStdout = strings.TrimPrefix(expectedStdout, "\n")
+		expectedStdout = strings.TrimSuffix(expectedStdout, "\n")
+	}
+
+	expectedStderr := ""
+	if stderrStartIdx := strings.Index(text, stderrStart); stderrStartIdx >= 0 {
+		stderrEndIdx := strings.Index(text[stderrStartIdx:], stderrEnd)
+		if stderrEndIdx < 0 {
+			return wabtInterpCase{}, fmt.Errorf("unterminated STDERR block")
+		}
+		stderrEndIdx += stderrStartIdx
+		endIdx = min(endIdx, stderrStartIdx)
+		expectedStderr = text[stderrStartIdx+len(stderrStart) : stderrEndIdx]
+		expectedStderr = strings.TrimPrefix(expectedStderr, "\n")
+		expectedStderr = strings.TrimSuffix(expectedStderr, "\n")
+	}
+
+	if expectedStdout == "" && expectedStderr == "" {
+		return wabtInterpCase{}, fmt.Errorf("missing STDOUT/STDERR block")
+	}
+
+	moduleWAT := strings.TrimSpace(text[moduleStart:endIdx])
 
 	return wabtInterpCase{
 		moduleWAT:      moduleWAT,
-		expectedStdout: expected,
+		expectedStdout: expectedStdout,
+		expectedStderr: expectedStderr,
+		expectedError:  expectedError,
+		runArgs:        runArgs,
 	}, nil
 }
 
@@ -182,48 +280,135 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
 	var exports []wabtInterpExport
 	for _, exp := range m.Exports {
+		exportInfo := wabtInterpExport{Name: exp.Name}
 		if exp.Kind != wasmir.ExternalKindFunction {
+			exportInfo.Kind = "nonfunc"
+			exports = append(exports, exportInfo)
 			continue
 		}
+		exportInfo.Kind = "func"
 		sig, err := wabtInterpFunctionType(m, exp.Index)
 		if err != nil {
 			return nil, fmt.Errorf("export %q: %w", exp.Name, err)
 		}
-		if len(sig.Params) != 0 {
-			return nil, fmt.Errorf("export %q has %d params; only zero-arg exports are supported", exp.Name, len(sig.Params))
-		}
 		if len(sig.Results) > 1 {
 			return nil, fmt.Errorf("export %q has %d results; only zero- or one-result exports are supported", exp.Name, len(sig.Results))
+		}
+		for _, param := range sig.Params {
+			kind, err := wabtInterpValueKind(param)
+			if err != nil {
+				return nil, fmt.Errorf("export %q has unsupported param type %v", exp.Name, param)
+			}
+			exportInfo.ParamKinds = append(exportInfo.ParamKinds, kind)
 		}
 
 		resultKind := "void"
 		if len(sig.Results) == 1 {
-			switch sig.Results[0].Kind {
-			case wasmir.ValueKindI32:
-				resultKind = "i32"
-			case wasmir.ValueKindI64:
-				resultKind = "i64"
-			case wasmir.ValueKindF32:
-				resultKind = "f32"
-			case wasmir.ValueKindF64:
-				resultKind = "f64"
-			case wasmir.ValueKindRef:
-				switch sig.Results[0].HeapType.Kind {
-				case wasmir.HeapKindFunc, wasmir.HeapKindNoFunc:
-					resultKind = "funcref"
-				case wasmir.HeapKindExtern, wasmir.HeapKindNoExtern:
-					resultKind = "externref"
-				default:
-					return nil, fmt.Errorf("export %q has unsupported result type %v", exp.Name, sig.Results[0])
-				}
-			default:
+			var err error
+			resultKind, err = wabtInterpValueKind(sig.Results[0])
+			if err != nil {
 				return nil, fmt.Errorf("export %q has unsupported result type %v", exp.Name, sig.Results[0])
 			}
 		}
 
-		exports = append(exports, wabtInterpExport{Name: exp.Name, ResultKind: resultKind})
+		exportInfo.ResultKind = resultKind
+		exports = append(exports, exportInfo)
 	}
 	return exports, nil
+}
+
+func wabtInterpValueKind(vt wasmir.ValueType) (string, error) {
+	switch vt.Kind {
+	case wasmir.ValueKindI32:
+		return "i32", nil
+	case wasmir.ValueKindI64:
+		return "i64", nil
+	case wasmir.ValueKindF32:
+		return "f32", nil
+	case wasmir.ValueKindF64:
+		return "f64", nil
+	case wasmir.ValueKindRef:
+		switch vt.HeapType.Kind {
+		case wasmir.HeapKindFunc, wasmir.HeapKindNoFunc:
+			return "funcref", nil
+		case wasmir.HeapKindExtern, wasmir.HeapKindNoExtern:
+			return "externref", nil
+		}
+	}
+	return "", fmt.Errorf("unsupported value type %v", vt)
+}
+
+func wabtInterpHostPrintResultKind(m *wasmir.Module) (string, error) {
+	resultKind := ""
+	for _, imp := range m.Imports {
+		if imp.Kind != wasmir.ExternalKindFunction || imp.Module != "host" || imp.Name != "print" {
+			continue
+		}
+		if int(imp.TypeIdx) >= len(m.Types) {
+			return "", fmt.Errorf("import function type index %d out of range", imp.TypeIdx)
+		}
+		sig := m.Types[imp.TypeIdx]
+		kind := "void"
+		if len(sig.Results) > 1 {
+			return "", fmt.Errorf("host.print import has %d results", len(sig.Results))
+		}
+		if len(sig.Results) == 1 {
+			var err error
+			kind, err = wabtInterpValueKind(sig.Results[0])
+			if err != nil {
+				return "", fmt.Errorf("unsupported host.print result type %v", sig.Results[0])
+			}
+		}
+		if resultKind == "" {
+			resultKind = kind
+			continue
+		}
+		if resultKind != kind {
+			return "", fmt.Errorf("mixed host.print result kinds %q and %q", resultKind, kind)
+		}
+	}
+	return resultKind, nil
+}
+
+// wabtInterpImports extracts imported function signatures for the small
+// run-interp flags that synthesize host functions in the harness, such as
+// `--dummy-import-func`.
+func wabtInterpImports(m *wasmir.Module) ([]wabtInterpImport, error) {
+	var imports []wabtInterpImport
+	for _, imp := range m.Imports {
+		if imp.Kind != wasmir.ExternalKindFunction {
+			continue
+		}
+		if int(imp.TypeIdx) >= len(m.Types) {
+			return nil, fmt.Errorf("import function type index %d out of range", imp.TypeIdx)
+		}
+		sig := m.Types[imp.TypeIdx]
+		if len(sig.Results) > 1 {
+			return nil, fmt.Errorf("import %q.%q has %d results", imp.Module, imp.Name, len(sig.Results))
+		}
+
+		importInfo := wabtInterpImport{
+			Module:     imp.Module,
+			Name:       imp.Name,
+			ResultKind: "void",
+		}
+		for _, param := range sig.Params {
+			kind, err := wabtInterpValueKind(param)
+			if err != nil {
+				return nil, fmt.Errorf("import %q.%q has unsupported param type %v", imp.Module, imp.Name, param)
+			}
+			importInfo.ParamKinds = append(importInfo.ParamKinds, kind)
+		}
+		if len(sig.Results) == 1 {
+			kind, err := wabtInterpValueKind(sig.Results[0])
+			if err != nil {
+				return nil, fmt.Errorf("import %q.%q has unsupported result type %v", imp.Module, imp.Name, sig.Results[0])
+			}
+			importInfo.ResultKind = kind
+		}
+		imports = append(imports, importInfo)
+	}
+	return imports, nil
 }
 
 // wabtInterpFunctionType resolves a function index through the combined import
@@ -261,16 +446,119 @@ func wabtInterpFunctionType(m *wasmir.Module, funcIndex uint32) (wasmir.TypeDef,
 // For floats, the JS side returns raw IEEE-754 bit patterns so Go can format
 // them with strconv.FormatFloat, which matches WABT's large-number output much
 // more closely than JS number formatting does.
-func runWABTInterpNode(nodePath, wasmPath string, exports []wabtInterpExport) (string, error) {
+func runWABTInterpNode(nodePath, wasmPath string, exports []wabtInterpExport, imports []wabtInterpImport, runArgs []string, hostPrintResultKind string) (wabtInterpRunResult, error) {
+	invocations, hostPrint, dummyImportFunc, err := wabtInterpInvocations(exports, runArgs)
+	if err != nil {
+		return wabtInterpRunResult{}, err
+	}
+	if runResult, ok := wabtInterpValidateInvocations(exports, invocations); ok {
+		return runResult, nil
+	}
+	return runWABTInterpNodeWithInvocations(nodePath, wasmPath, exports, imports, invocations, hostPrint, dummyImportFunc, hostPrintResultKind)
+}
+
+func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabtInterpInvocation, bool, bool, error) {
+	exportMap := make(map[string]wabtInterpExport, len(exports))
+	for _, exp := range exports {
+		exportMap[exp.Name] = exp
+	}
+
+	hostPrint := false
+	dummyImportFunc := false
+	var invocations []wabtInterpInvocation
+	current := -1
+	for _, arg := range runArgs {
+		switch {
+		case arg == "--host-print":
+			hostPrint = true
+		case arg == "--dummy-import-func":
+			dummyImportFunc = true
+		case strings.HasPrefix(arg, "--enable-"):
+			// These WABT flags enable proposal features in wabt's own tools. The
+			// Node runtime used here either supports the needed feature already or
+			// will fail later for a real compiler/runtime gap.
+		case strings.HasPrefix(arg, "--run-export="):
+			name := strings.TrimPrefix(arg, "--run-export=")
+			invocations = append(invocations, wabtInterpInvocation{ExportName: name, Args: []wabtInterpInvocationArg{}})
+			current = len(invocations) - 1
+		case strings.HasPrefix(arg, "--argument="):
+			if current < 0 {
+				return nil, false, false, fmt.Errorf("--argument without preceding --run-export")
+			}
+			spec := strings.TrimPrefix(arg, "--argument=")
+			kind, text, ok := strings.Cut(spec, ":")
+			if !ok {
+				return nil, false, false, fmt.Errorf("invalid --argument value %q", spec)
+			}
+			invocations[current].Args = append(invocations[current].Args, wabtInterpInvocationArg{Kind: kind, Text: text})
+		default:
+			return nil, false, false, fmt.Errorf("unsupported wabt interp arg %q", arg)
+		}
+	}
+
+	if len(invocations) == 0 {
+		for _, exp := range exports {
+			if exp.Kind == "func" && len(exp.ParamKinds) == 0 {
+				invocations = append(invocations, wabtInterpInvocation{ExportName: exp.Name, Args: []wabtInterpInvocationArg{}})
+			}
+		}
+	}
+
+	for _, inv := range invocations {
+		if _, ok := exportMap[inv.ExportName]; !ok {
+			return nil, false, false, fmt.Errorf("unknown export %q", inv.ExportName)
+		}
+	}
+	return invocations, hostPrint, dummyImportFunc, nil
+}
+
+// wabtInterpValidateInvocations handles the run-interp command-shape errors
+// that WABT reports before module execution, for example a `--run-export`
+// invocation with the wrong number of `--argument=` values.
+func wabtInterpValidateInvocations(exports []wabtInterpExport, invocations []wabtInterpInvocation) (wabtInterpRunResult, bool) {
+	exportMap := make(map[string]wabtInterpExport, len(exports))
+	for _, exp := range exports {
+		exportMap[exp.Name] = exp
+	}
+	for _, inv := range invocations {
+		exp, ok := exportMap[inv.ExportName]
+		if !ok || exp.Kind != "func" {
+			continue
+		}
+		if len(inv.Args) == len(exp.ParamKinds) {
+			continue
+		}
+		return wabtInterpRunResult{
+			Stdout:   fmt.Sprintf("Exported function '%s' expects %d arguments, but %d were provided", inv.ExportName, len(exp.ParamKinds), len(inv.Args)),
+			ExitCode: 1,
+		}, true
+	}
+	return wabtInterpRunResult{}, false
+}
+
+func runWABTInterpNodeWithInvocations(nodePath, wasmPath string, exports []wabtInterpExport, imports []wabtInterpImport, invocations []wabtInterpInvocation, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string) (wabtInterpRunResult, error) {
 	exportsJSON, err := json.Marshal(exports)
 	if err != nil {
-		return "", err
+		return wabtInterpRunResult{}, err
+	}
+	importsJSON, err := json.Marshal(imports)
+	if err != nil {
+		return wabtInterpRunResult{}, err
+	}
+	invocationsJSON, err := json.Marshal(invocations)
+	if err != nil {
+		return wabtInterpRunResult{}, err
 	}
 
 	script := fmt.Sprintf(`
 const fs = require('node:fs');
 const wasmPath = %q;
 const exportsToRun = %s;
+const importedFuncs = %s;
+const invocations = %s;
+const hostPrint = %v;
+const dummyImportFunc = %v;
+const hostPrintResultKind = %q;
 
 function valueString(kind, value) {
   const buf = new ArrayBuffer(8);
@@ -315,64 +603,211 @@ function normalizeTrapMessage(message) {
   return message;
 }
 
-WebAssembly.instantiate(fs.readFileSync(wasmPath)).then(({instance}) => {
+function decodeArg(arg) {
+  switch (arg.kind) {
+    case 'i32':
+      return Number.parseInt(arg.text, 10) | 0;
+    case 'i64':
+      return BigInt(arg.text);
+    case 'f32':
+    case 'f64':
+      return Number(arg.text);
+    default:
+      throw new Error('unsupported invocation arg kind: ' + arg.kind);
+  }
+}
+
+function formatArg(arg) {
+  return arg.kind + ':' + arg.text;
+}
+
+function invocationLabel(entry) {
+  if (!entry.argText) {
+    return entry.name + '()';
+  }
+  return entry.name + '(' + entry.argText + ')';
+}
+
+function formatHostArg(value) {
+  if (typeof value === 'bigint') {
+    return 'i64:' + String(BigInt.asUintN(64, value));
+  }
+  if (typeof value === 'number') {
+    return 'i32:' + String(value >>> 0);
+  }
+  if (value === null) {
+    return 'externref:0';
+  }
+  return 'externref:1';
+}
+
+function formatArgByKind(kind, value) {
+  const buf = new ArrayBuffer(8);
+  const view = new DataView(buf);
+  switch (kind) {
+    case 'i32':
+      return 'i32:' + String(value >>> 0);
+    case 'i64':
+      return 'i64:' + String(BigInt.asUintN(64, value));
+    case 'f32':
+      return 'f32:' + Number(value).toFixed(6);
+    case 'f64':
+      return 'f64:' + Number(value).toFixed(6);
+    case 'funcref':
+      return 'funcref:' + (value === null ? '0' : '1');
+    case 'externref':
+      return 'externref:' + (value === null ? '0' : '1');
+    default:
+      throw new Error('unsupported import arg kind: ' + kind);
+  }
+}
+
+function zeroValue(kind) {
+  switch (kind) {
+    case 'void':
+      return undefined;
+    case 'i32':
+      return 0;
+    case 'i64':
+      return 0n;
+    case 'f32':
+    case 'f64':
+      return 0;
+    case 'funcref':
+    case 'externref':
+      return null;
+    default:
+      throw new Error('unsupported import result kind: ' + kind);
+  }
+}
+
+const stdout = [];
+const stderr = [];
+const imports = hostPrint ? {
+  host: {
+    print: (...args) => {
+      const formattedArgs = args.map(formatHostArg).join(', ');
+      if (hostPrintResultKind === 'void' || hostPrintResultKind === '') {
+        stdout.push('called host host.print(' + formattedArgs + ') =>');
+        return 0;
+      }
+      stdout.push('called host host.print(' + formattedArgs + ') => ' + hostPrintResultKind + ':0');
+      return 0;
+    }
+  }
+} : {};
+
+if (dummyImportFunc) {
+  for (const imported of importedFuncs) {
+    if (!imports[imported.module]) {
+      imports[imported.module] = {};
+    }
+    imports[imported.module][imported.name] = (...args) => {
+      const formattedArgs = args.map((arg, i) => formatArgByKind(imported.paramKinds[i], arg)).join(', ');
+      const suffix = imported.resultKind === 'void' ? '' : ' ' + imported.resultKind + ':0';
+      stdout.push('called host ' + imported.module + '.' + imported.name + '(' + formattedArgs + ') =>' + suffix);
+      return zeroValue(imported.resultKind);
+    };
+  }
+}
+
+WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({instance}) => {
   const results = [];
-  for (const entry of exportsToRun) {
+  for (const invocation of invocations) {
+    const entry = exportsToRun.find((exp) => exp.name === invocation.exportName);
+    if (!entry) {
+      stderr.push('unknown export ' + invocation.exportName);
+      process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 1, results}));
+      return;
+    }
+    if (entry.kind !== 'func') {
+      stdout.push("Export '" + invocation.exportName + "' is not a function");
+      process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 1, results}));
+      return;
+    }
     const fn = instance.exports[entry.name];
+    const args = invocation.args || [];
+    const jsArgs = args.map(decodeArg);
+    const argText = args.map(formatArg).join(', ');
     try {
-      const result = fn();
+      const result = fn(...jsArgs);
       results.push({
         name: entry.name,
         resultKind: entry.resultKind,
+        argText,
         value: valueString(entry.resultKind, result),
         error: '',
+        stdoutCount: stdout.length,
       });
     } catch (err) {
       results.push({
         name: entry.name,
         resultKind: entry.resultKind,
+        argText,
         value: '',
         error: normalizeTrapMessage(String(err && err.message ? err.message : err)),
+        stdoutCount: stdout.length,
       });
     }
   }
-  process.stdout.write(JSON.stringify(results));
+  process.stdout.write(JSON.stringify({stdout, stderr, exitCode: 0, results}));
 }).catch((err) => {
-  console.error(err);
-  process.exit(1);
+  const message = normalizeTrapMessage(String(err && err.message ? err.message : err));
+  const prefix = message === 'unreachable executed' ? 'error initializing module: ' : '';
+  process.stdout.write(JSON.stringify({stdout: [], stderr: [prefix + message], exitCode: 1, results: []}));
 });
-`, wasmPath, string(exportsJSON))
+`, wasmPath, string(exportsJSON), string(importsJSON), string(invocationsJSON), hostPrint, dummyImportFunc, hostPrintResultKind)
 
 	out, err := exec.Command(nodePath, "-e", script).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("node failed: %w\noutput:\n%s", err, out)
+		return wabtInterpRunResult{}, fmt.Errorf("node failed: %w\noutput:\n%s", err, out)
 	}
 
-	var results []wabtInterpResult
-	if err := json.Unmarshal(out, &results); err != nil {
-		return "", fmt.Errorf("decode node JSON: %w", err)
+	var payload struct {
+		Stdout   []string           `json:"stdout"`
+		Stderr   []string           `json:"stderr"`
+		ExitCode int                `json:"exitCode"`
+		Results  []wabtInterpResult `json:"results"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return wabtInterpRunResult{}, fmt.Errorf("decode node JSON: %w", err)
 	}
 
-	lines := make([]string, 0, len(results))
-	for _, result := range results {
+	stdout := make([]string, 0, len(payload.Stdout)+len(payload.Results))
+	nextStdout := 0
+	for _, result := range payload.Results {
+		for nextStdout < result.StdoutCount && nextStdout < len(payload.Stdout) {
+			stdout = append(stdout, payload.Stdout[nextStdout])
+			nextStdout++
+		}
 		line, err := formatWABTInterpResult(result)
 		if err != nil {
-			return "", err
+			return wabtInterpRunResult{}, err
 		}
-		lines = append(lines, line)
+		stdout = append(stdout, line)
 	}
-	return strings.Join(lines, "\n"), nil
+	stdout = append(stdout, payload.Stdout[nextStdout:]...)
+
+	return wabtInterpRunResult{
+		Stdout:   strings.Join(stdout, "\n"),
+		Stderr:   strings.Join(payload.Stderr, "\n"),
+		ExitCode: payload.ExitCode,
+	}, nil
 }
 
 // formatWABTInterpResult converts one JSON result record from Node into the
 // exact line format expected by WABT's interp tests.
 func formatWABTInterpResult(result wabtInterpResult) (string, error) {
+	label := result.Name + "()"
+	if result.ArgText != "" {
+		label = fmt.Sprintf("%s(%s)", result.Name, result.ArgText)
+	}
 	if result.Error != "" {
-		return fmt.Sprintf("%s() => error: %s", result.Name, result.Error), nil
+		return fmt.Sprintf("%s => error: %s", label, result.Error), nil
 	}
 
 	if result.ResultKind == "void" {
-		return result.Name + "() =>", nil
+		return label + " =>", nil
 	}
 
 	var formatted string
@@ -394,7 +829,7 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported result kind %q", result.ResultKind)
 	}
-	return fmt.Sprintf("%s() => %s:%s", result.Name, result.ResultKind, formatted), nil
+	return fmt.Sprintf("%s => %s:%s", label, result.ResultKind, formatted), nil
 }
 
 // wabtInterpStdoutMatches compares reconstructed output against WABT's
