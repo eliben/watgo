@@ -22,7 +22,8 @@ func canonicalAddModuleBytes() []byte {
 }
 
 func TestCompileWATToWASM_PublicAPI(t *testing.T) {
-	wat := []byte(`(module
+	wat := []byte(`
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -42,7 +43,8 @@ func TestCompileWATToWASM_PublicAPI(t *testing.T) {
 }
 
 func TestCompileWATToWASM_MultipleErrors_PublicAPI(t *testing.T) {
-	_, err := watgo.CompileWATToWASM([]byte(`(module
+	_, err := watgo.CompileWATToWASM([]byte(`
+(module
   (func (export "bad_local_get_1") (param $a i32) (result i32)
     local.get $missing1
   )
@@ -64,7 +66,8 @@ func TestCompileWATToWASM_MultipleErrors_PublicAPI(t *testing.T) {
 }
 
 func TestParseWAT_PublicAPI(t *testing.T) {
-	wat := []byte(`(module
+	wat := []byte(`
+(module
   (func (export "add") (param i32 i32) (result i32)
     local.get 0
     local.get 1
@@ -117,7 +120,8 @@ func TestValidateModule_PublicAPI(t *testing.T) {
 }
 
 func TestEncodeWASM_PublicAPI(t *testing.T) {
-	m, err := watgo.ParseWAT([]byte(`(module
+	m, err := watgo.ParseWAT([]byte(`
+(module
   (func (export "add") (param i32 i32) (result i32)
     local.get 0
     local.get 1
@@ -169,7 +173,8 @@ func TestDecodeWASM_DecodeError_PublicAPI(t *testing.T) {
 }
 
 func ExampleCompileWATToWASM() {
-	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+	wasm, err := watgo.CompileWATToWASM([]byte(`
+(module
   (func (export "answer") (result i32)
     i32.const 42
   )
@@ -183,7 +188,8 @@ func ExampleCompileWATToWASM() {
 }
 
 func ExampleParseWAT() {
-	m, err := watgo.ParseWAT([]byte(`(module
+	m, err := watgo.ParseWAT([]byte(`
+(module
   (func (export "answer") (result i32)
     i32.const 42
   )
@@ -197,7 +203,8 @@ func ExampleParseWAT() {
 }
 
 func ExampleParseWAT_moduleAnalysis() {
-	m, err := watgo.ParseWAT([]byte(`(module
+	m, err := watgo.ParseWAT([]byte(`
+(module
   (func (export "add") (param i32 i32) (result i32)
     local.get 0
     local.get 1
@@ -261,7 +268,8 @@ func ExampleDecodeWASM() {
 }
 
 func ExampleValidateModule() {
-	m, err := watgo.ParseWAT([]byte(`(module
+	m, err := watgo.ParseWAT([]byte(`
+(module
   (func (export "answer") (result i32)
     i32.const 42
   )
@@ -275,7 +283,8 @@ func ExampleValidateModule() {
 }
 
 func ExampleEncodeWASM() {
-	m, err := watgo.ParseWAT([]byte(`(module
+	m, err := watgo.ParseWAT([]byte(`
+(module
   (func (export "answer") (result i32)
     i32.const 42
   )
