@@ -7,12 +7,15 @@ set -euo pipefail
 # By default it updates:
 #   - tests/wasmspec/scripts        from WebAssembly/spec test/core
 #   - tests/wasm-wat-samples/*      from the wasm-wat-samples repository
+#   - tests/wabt-interp/*.txt       from WABT test/interp
 #
 # The clone URLs and refs can be overridden with environment variables:
 #   SPEC_REPO_URL     default: https://github.com/WebAssembly/spec.git
 #   SPEC_REPO_REF     optional branch/tag/commit-ish for the spec repo
 #   SAMPLES_REPO_URL  default: https://github.com/eliben/wasm-wat-samples.git
 #   SAMPLES_REPO_REF  optional branch/tag/commit-ish for the samples repo
+#   WABT_REPO_URL     default: https://github.com/WebAssembly/wabt.git
+#   WABT_REPO_REF     optional branch/tag/commit-ish for the WABT repo
 #
 # The script clones into a temporary directory under /tmp and then rsyncs the
 # tracked upstream trees into the local repository.
@@ -22,11 +25,14 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 
 spec_dst="${repo_root}/tests/wasmspec/scripts"
 samples_dst="${repo_root}/tests/wasm-wat-samples"
+wabt_interp_dst="${repo_root}/tests/wabt-interp"
 
 spec_repo_url="${SPEC_REPO_URL:-https://github.com/WebAssembly/spec.git}"
 spec_repo_ref="${SPEC_REPO_REF:-}"
 samples_repo_url="${SAMPLES_REPO_URL:-https://github.com/eliben/wasm-wat-samples.git}"
 samples_repo_ref="${SAMPLES_REPO_REF:-}"
+wabt_repo_url="${WABT_REPO_URL:-https://github.com/WebAssembly/wabt.git}"
+wabt_repo_ref="${WABT_REPO_REF:-}"
 
 workdir="$(mktemp -d /tmp/watgo-test-update.XXXXXX)"
 trap 'rm -rf "${workdir}"' EXIT
@@ -70,5 +76,22 @@ rsync -a \
   --exclude='*/.*' \
   --exclude='_tools/' \
   "${workdir}/samples/" "${samples_dst}/"
+
+echo "Cloning WABT repo into ${workdir}/wabt"
+clone_repo "${wabt_repo_url}" "${wabt_repo_ref}" "${workdir}/wabt"
+
+echo "Syncing WABT interp fixtures into ${wabt_interp_dst}"
+# Only upstream .txt fixtures are copied from WABT's test/interp corpus.
+# Local harness files in tests/wabt-interp/ stay in place, while stale copied
+# fixtures are removed.
+rsync -a --delete --delete-excluded \
+  --filter='P wabt_interp.js' \
+  --filter='P wabt_interp_test.go' \
+  --exclude='.*' \
+  --exclude='*/.*' \
+  --include='*/' \
+  --include='*.txt' \
+  --exclude='*' \
+  "${workdir}/wabt/test/interp/" "${wabt_interp_dst}/"
 
 echo "Done."
