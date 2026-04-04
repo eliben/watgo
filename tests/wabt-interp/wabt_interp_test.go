@@ -116,6 +116,11 @@ var wabtInterpSkippedFixtures = []string{
 	"try.txt",
 	"try-delegate.txt",
 
+	// custom-page-sizes is a run-interp-spec fixture for the custom-page-sizes
+	// proposal. This Node-backed harness only supports the simpler run-interp
+	// subset, and watgo does not implement custom page sizes in its main
+	// text/binary pipeline.
+	"custom-page-sizes.txt",
 }
 
 func wabtInterpShouldSkipFixture(name string) bool {
