@@ -121,6 +121,20 @@ var wabtInterpSkippedFixtures = []string{
 	// subset, and watgo does not implement custom page sizes in its main
 	// text/binary pipeline.
 	"custom-page-sizes.txt",
+
+	// The atomic fixtures below require the threads proposal. watgo does not
+	// currently support shared memories or atomic instructions in its
+	// text/binary pipeline, so these remain copied for parity with upstream but
+	// intentionally skipped here.
+	"atomic-load.txt",
+	"atomic-rmw-add.txt",
+	"atomic-rmw-and.txt",
+	"atomic-rmw-cmpxchg.txt",
+	"atomic-rmw-or.txt",
+	"atomic-rmw-sub.txt",
+	"atomic-rmw-xchg.txt",
+	"atomic-rmw-xor.txt",
+	"atomic-store.txt",
 }
 
 func wabtInterpShouldSkipFixture(name string) bool {
