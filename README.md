@@ -70,3 +70,17 @@ For full command-line help, run:
 ```sh
 watgo help
 ```
+
+### Testing
+
+Run the full test suite with:
+
+```sh
+go test ./...
+```
+
+Some of the end-to-end tests execute compiled modules under Node.js, so Node is
+required for the full suite.
+
+For more detail on the different test sets and how to refresh them from
+upstream, see [`tests/README.md`](tests/README.md).

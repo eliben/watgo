@@ -8,16 +8,19 @@ get executed (using Node.js) and results compared to expected results.
 
 - `wasmspec/`
   - Upstream source: WebAssembly spec `test/core`
+  - Repo: <https://github.com/WebAssembly/spec>
   - Content: `.wast` spec scripts
   - Harness: `tests/wasmspec/wasmspec_harness.go`
 
 - `wabt-interp/`
   - Upstream source: WABT `test/interp`
+  - Repo: <https://github.com/WebAssembly/wabt>
   - Content: `.txt` fixtures
   - Harness: `tests/wabt-interp/wabt_interp_test.go`
 
 - `wasm-wat-samples/`
   - Upstream source: `wasm-wat-samples`
+  - Repo: <https://github.com/eliben/wasm-wat-samples>
   - Content: sample directories with `.wat`, `test.js`, and related assets
   - Harness: `tests/wasm-wat-samples/wat_samples_test.go`
 
