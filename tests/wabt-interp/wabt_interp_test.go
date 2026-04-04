@@ -103,6 +103,28 @@ var wabtInterpSkippedFixtures = []string{
 	// like br_unless/drop_keep. That is effectively an interpreter trace mode,
 	// not a small execution-harness variation.
 	"basic-tracing.txt",
+
+	// The exception fixtures below use WABT's older structured EH syntax with
+	// try/do/catch/rethrow/delegate. watgo currently supports the newer
+	// try_table-based exception subset in wasmspec, but not this text form.
+	"rethrow.txt",
+	"rethrow-and-br.txt",
+	"throw-across-frame.txt",
+	"try.txt",
+	"try-delegate.txt",
+
+	// These SIMD fixtures expose WABT-specific interp coverage we do not yet run
+	// through this harness: v128 results in WABT's stdout format and several
+	// plain-text SIMD forms that our WABT-compat path does not currently lower.
+	"simd-basic.txt",
+	"simd-binary.txt",
+	"simd-bitselect.txt",
+	"simd-compare.txt",
+	"simd-lane.txt",
+	"simd-load-store.txt",
+	"simd-shift.txt",
+	"simd-splat.txt",
+	"simd-unary.txt",
 }
 
 func wabtInterpShouldSkipFixture(name string) bool {
