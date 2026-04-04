@@ -44,6 +44,7 @@ const wasmPath = payload.wasmPath;
 const exportsToRun = payload.exports || [];
 const importedFuncs = payload.imports || [];
 const invocations = payload.invocations || [];
+const v128ResultHelperB64 = payload.v128ResultHelperB64 || '';
 const hostPrint = payload.hostPrint;
 const dummyImportFunc = payload.dummyImportFunc;
 const hostPrintResultKind = payload.hostPrintResultKind;
@@ -165,6 +166,9 @@ function zeroValue(kind) {
 
 const stdout = [];
 const stderr = [];
+const v128ResultHelper = v128ResultHelperB64 === ''
+  ? null
+  : new WebAssembly.Module(Buffer.from(v128ResultHelperB64, 'base64'));
 const imports = hostPrint ? {
   host: {
     print: (...args) => {
@@ -212,12 +216,31 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({ instance }) 
     const jsArgs = args.map(decodeArg);
     const argText = args.map(formatArg).join(', ');
     try {
-      const result = fn(...jsArgs);
+      let result;
+      if (entry.resultKind === 'v128') {
+        if (args.length !== 0) {
+          throw new Error('v128 helper only supports zero-arg exports');
+        }
+        if (v128ResultHelper === null) {
+          throw new Error('missing v128 helper module');
+        }
+        const helperInstance = new WebAssembly.Instance(v128ResultHelper, { m: { f: fn } });
+        helperInstance.exports.call();
+        const mem = new DataView(helperInstance.exports.mem.buffer, 0, 16);
+        result = [
+          mem.getUint32(0, true),
+          mem.getUint32(4, true),
+          mem.getUint32(8, true),
+          mem.getUint32(12, true),
+        ].join(',');
+      } else {
+        result = valueString(entry.resultKind, fn(...jsArgs));
+      }
       results.push({
         name: entry.name,
         resultKind: entry.resultKind,
         argText,
-        value: valueString(entry.resultKind, result),
+        value: result,
         error: '',
         stdoutCount: stdout.length,
       });

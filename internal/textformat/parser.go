@@ -1446,37 +1446,24 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
 	case "i8x16.shuffle":
+		if cursor+16 >= len(elems) {
+			p.emitError(elem.loc, "invalid lane length")
+			return nil, len(elems)
+		}
 		operands := make([]Operand, 0, 16)
 		next := cursor + 1
-		for next < len(elems) {
+		for i := 0; i < 16; i++ {
 			op := p.parseOperand(elems[next])
 			if op == nil {
-				break
+				p.emitError(elems[next].loc, "invalid operand for %s", name)
+				return nil, next + 1
 			}
 			operands = append(operands, op)
 			next++
-		}
-		if len(operands) != 16 {
-			p.emitError(elem.loc, "invalid lane length")
-			return nil, next
 		}
 		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
 	case "v128.const":
-		operands := make([]Operand, 0, 17)
-		next := cursor + 1
-		for next < len(elems) {
-			op := p.parseOperand(elems[next])
-			if op == nil {
-				break
-			}
-			operands = append(operands, op)
-			next++
-		}
-		if len(operands) == 0 {
-			p.emitError(elem.loc, "v128.const expects operands")
-			return nil, cursor + 1
-		}
-		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, next
+		return p.parsePlainV128ConstInstr(elem, elems, cursor)
 	case "br_table":
 		// br_table consumes a non-empty list of label operands. The last label
 		// is the default target; all preceding labels form the branch table.
@@ -1787,6 +1774,74 @@ func (p *Parser) parsePlainCallIndirectInstr(name string, elems []*SExpr, cursor
 	}
 
 	return &FoldedInstr{Name: name, Args: args, loc: elems[cursor].loc}, next
+}
+
+// parsePlainV128ConstInstr parses the flat SIMD literal forms:
+//
+//	v128.const i8x16  ...
+//	v128.const i16x8  ...
+//	v128.const i32x4  ...
+//	v128.const i64x2  ...
+//	v128.const f32x4  ...
+//	v128.const f64x2  ...
+//
+// Unlike most plain instructions, v128.const cannot just consume operands
+// until the first non-operand token because the following instruction keyword
+// is itself a valid keyword operand. The shape operand determines exactly how
+// many lane literals belong to this instruction.
+func (p *Parser) parsePlainV128ConstInstr(elem *SExpr, elems []*SExpr, cursor int) (Instruction, int) {
+	if cursor+1 >= len(elems) {
+		p.emitError(elem.loc, "v128.const expects operands")
+		return nil, cursor + 1
+	}
+
+	shapeElem := elems[cursor+1]
+	shapeOp := p.parseOperand(shapeElem)
+	shapeKw, ok := shapeOp.(*KeywordOperand)
+	if !ok {
+		p.emitError(shapeElem.loc, "invalid operand for v128.const")
+		return nil, cursor + 2
+	}
+
+	laneCount, ok := plainV128ConstLaneCount(shapeKw.Value)
+	if !ok {
+		p.emitError(shapeElem.loc, "invalid operand for v128.const")
+		return nil, cursor + 2
+	}
+
+	if cursor+1+laneCount >= len(elems) {
+		p.emitError(elem.loc, "v128.const expects operands")
+		return nil, len(elems)
+	}
+
+	operands := make([]Operand, 0, laneCount+1)
+	operands = append(operands, shapeOp)
+	next := cursor + 2
+	for i := 0; i < laneCount; i++ {
+		op := p.parseOperand(elems[next])
+		if op == nil {
+			p.emitError(elems[next].loc, "invalid operand for v128.const")
+			return nil, next + 1
+		}
+		operands = append(operands, op)
+		next++
+	}
+	return &PlainInstr{Name: "v128.const", Operands: operands, loc: elem.loc}, next
+}
+
+func plainV128ConstLaneCount(shape string) (int, bool) {
+	switch shape {
+	case "i8x16":
+		return 16, true
+	case "i16x8":
+		return 8, true
+	case "i32x4", "f32x4":
+		return 4, true
+	case "i64x2", "f64x2":
+		return 2, true
+	default:
+		return 0, false
+	}
 }
 
 // parsePlainSelectInstr parses raw select syntax with optional trailing result

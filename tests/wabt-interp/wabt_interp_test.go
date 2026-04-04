@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/eliben/watgo"
@@ -85,6 +87,7 @@ type wabtInterpNodePayload struct {
 	Exports             []wabtInterpExport     `json:"exports"`
 	Imports             []wabtInterpImport     `json:"imports"`
 	Invocations         []wabtInterpInvocation `json:"invocations"`
+	V128ResultHelperB64 string                 `json:"v128ResultHelperB64"`
 	HostPrint           bool                   `json:"hostPrint"`
 	DummyImportFunc     bool                   `json:"dummyImportFunc"`
 	HostPrintResultKind string                 `json:"hostPrintResultKind"`
@@ -113,18 +116,6 @@ var wabtInterpSkippedFixtures = []string{
 	"try.txt",
 	"try-delegate.txt",
 
-	// These SIMD fixtures expose WABT-specific interp coverage we do not yet run
-	// through this harness: v128 results in WABT's stdout format and several
-	// plain-text SIMD forms that our WABT-compat path does not currently lower.
-	"simd-basic.txt",
-	"simd-binary.txt",
-	"simd-bitselect.txt",
-	"simd-compare.txt",
-	"simd-lane.txt",
-	"simd-load-store.txt",
-	"simd-shift.txt",
-	"simd-splat.txt",
-	"simd-unary.txt",
 }
 
 func wabtInterpShouldSkipFixture(name string) bool {
@@ -380,6 +371,8 @@ func wabtInterpValueKind(vt wasmir.ValueType) (string, error) {
 		return "f32", nil
 	case wasmir.ValueKindF64:
 		return "f64", nil
+	case wasmir.ValueKindV128:
+		return "v128", nil
 	case wasmir.ValueKindRef:
 		switch vt.HeapType.Kind {
 		case wasmir.HeapKindFunc, wasmir.HeapKindNoFunc:
@@ -507,7 +500,11 @@ func runWABTInterpNode(nodePath, wasmPath string, exports []wabtInterpExport, im
 	if runResult, ok := wabtInterpValidateInvocations(exports, invocations); ok {
 		return runResult, nil
 	}
-	return runWABTInterpNodeWithInvocations(nodePath, wasmPath, exports, imports, invocations, hostPrint, dummyImportFunc, hostPrintResultKind)
+	helperB64, err := wabtInterpV128ResultHelperBase64(exports)
+	if err != nil {
+		return wabtInterpRunResult{}, err
+	}
+	return runWABTInterpNodeWithInvocations(nodePath, wasmPath, exports, imports, invocations, helperB64, hostPrint, dummyImportFunc, hostPrintResultKind)
 }
 
 func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabtInterpInvocation, bool, bool, error) {
@@ -589,12 +586,13 @@ func wabtInterpValidateInvocations(exports []wabtInterpExport, invocations []wab
 	return wabtInterpRunResult{}, false
 }
 
-func runWABTInterpNodeWithInvocations(nodePath, wasmPath string, exports []wabtInterpExport, imports []wabtInterpImport, invocations []wabtInterpInvocation, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string) (wabtInterpRunResult, error) {
+func runWABTInterpNodeWithInvocations(nodePath, wasmPath string, exports []wabtInterpExport, imports []wabtInterpImport, invocations []wabtInterpInvocation, helperB64 string, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string) (wabtInterpRunResult, error) {
 	payloadBytes, err := json.Marshal(wabtInterpNodePayload{
 		WasmPath:            wasmPath,
 		Exports:             exports,
 		Imports:             imports,
 		Invocations:         invocations,
+		V128ResultHelperB64: helperB64,
 		HostPrint:           hostPrint,
 		DummyImportFunc:     dummyImportFunc,
 		HostPrintResultKind: hostPrintResultKind,
@@ -665,6 +663,12 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	switch result.ResultKind {
 	case "i32", "i64", "funcref", "externref":
 		formatted = result.Value
+	case "v128":
+		formattedValue, err := formatWABTInterpV128(result.Value)
+		if err != nil {
+			return "", fmt.Errorf("parse v128 words for %q: %w", result.Name, err)
+		}
+		formatted = formattedValue
 	case "f32":
 		bits, err := strconv.ParseUint(result.Value, 10, 32)
 		if err != nil {
@@ -680,7 +684,62 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported result kind %q", result.ResultKind)
 	}
+	if result.ResultKind == "v128" {
+		return fmt.Sprintf("%s => v128 %s", label, formatted), nil
+	}
 	return fmt.Sprintf("%s => %s:%s", label, result.ResultKind, formatted), nil
+}
+
+func formatWABTInterpV128(wordsText string) (string, error) {
+	parts := strings.Split(wordsText, ",")
+	if len(parts) != 4 {
+		return "", fmt.Errorf("want 4 words, got %d", len(parts))
+	}
+	words := make([]uint32, 0, 4)
+	for _, part := range parts {
+		word, err := strconv.ParseUint(part, 10, 32)
+		if err != nil {
+			return "", err
+		}
+		words = append(words, uint32(word))
+	}
+	return fmt.Sprintf("i32x4:0x%08x 0x%08x 0x%08x 0x%08x", words[0], words[1], words[2], words[3]), nil
+}
+
+var (
+	wabtInterpV128ResultHelperOnce sync.Once
+	wabtInterpV128ResultHelperB64  string
+	wabtInterpV128ResultHelperErr  error
+)
+
+func wabtInterpV128ResultHelperBase64(exports []wabtInterpExport) (string, error) {
+	needsHelper := false
+	for _, exp := range exports {
+		if exp.Kind == "func" && exp.ResultKind == "v128" {
+			needsHelper = true
+			break
+		}
+	}
+	if !needsHelper {
+		return "", nil
+	}
+
+	wabtInterpV128ResultHelperOnce.Do(func() {
+		const helperWAT = `(module
+  (import "m" "f" (func $f (result v128)))
+  (memory (export "mem") 1)
+  (func (export "call")
+    (i32.const 0)
+    (call $f)
+    v128.store))`
+		wasmBytes, err := watgo.CompileWATToWASM([]byte(helperWAT))
+		if err != nil {
+			wabtInterpV128ResultHelperErr = err
+			return
+		}
+		wabtInterpV128ResultHelperB64 = base64.StdEncoding.EncodeToString(wasmBytes)
+	})
+	return wabtInterpV128ResultHelperB64, wabtInterpV128ResultHelperErr
 }
 
 // wabtInterpStdoutMatches compares reconstructed output against WABT's
@@ -709,6 +768,9 @@ func wabtInterpStdoutMatches(got, want string) bool {
 	}
 	for i := range gotLines {
 		if gotLines[i] == wantLines[i] {
+			continue
+		}
+		if wabtInterpV128LineMatches(gotLines[i], wantLines[i]) {
 			continue
 		}
 		if !wabtInterpRefLineMatches(gotLines[i], wantLines[i]) {
@@ -770,4 +832,77 @@ func splitWABTRefLine(line string) (name, kind, value string, ok bool) {
 		return "", "", "", false
 	}
 	return prefix, kind, value, true
+}
+
+func wabtInterpV128LineMatches(got, want string) bool {
+	gotName, gotWords, ok := splitWABTV128Line(got)
+	if !ok {
+		return false
+	}
+	wantName, wantWords, ok := splitWABTV128Line(want)
+	if !ok || gotName != wantName {
+		return false
+	}
+
+	switch {
+	case strings.Contains(gotName, "f64x2"), strings.Contains(wantName, "f64x2"):
+		for i := 0; i < 4; i += 2 {
+			if gotWords[i] == wantWords[i] && gotWords[i+1] == wantWords[i+1] {
+				continue
+			}
+			gotBits := uint64(gotWords[i]) | (uint64(gotWords[i+1]) << 32)
+			wantBits := uint64(wantWords[i]) | (uint64(wantWords[i+1]) << 32)
+			if !bothF64NaNBits(gotBits, wantBits) {
+				return false
+			}
+		}
+		return true
+	case strings.Contains(gotName, "f32x4"), strings.Contains(wantName, "f32x4"):
+		for i := 0; i < 4; i++ {
+			if gotWords[i] == wantWords[i] {
+				continue
+			}
+			if !bothF32NaNBits(gotWords[i], wantWords[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func splitWABTV128Line(line string) (name string, words [4]uint32, ok bool) {
+	prefix, rest, found := strings.Cut(line, "() => v128 i32x4:")
+	if !found {
+		return "", words, false
+	}
+	parts := strings.Fields(strings.TrimSpace(rest))
+	if len(parts) != 4 {
+		return "", words, false
+	}
+	for i, part := range parts {
+		word, err := strconv.ParseUint(strings.TrimPrefix(part, "0x"), 16, 32)
+		if err != nil {
+			return "", words, false
+		}
+		words[i] = uint32(word)
+	}
+	return prefix, words, true
+}
+
+func bothF32NaNBits(a, b uint32) bool {
+	return isF32NaNBits(a) && isF32NaNBits(b)
+}
+
+func isF32NaNBits(bits uint32) bool {
+	return bits&0x7f800000 == 0x7f800000 && bits&0x007fffff != 0
+}
+
+func bothF64NaNBits(a, b uint64) bool {
+	return isF64NaNBits(a) && isF64NaNBits(b)
+}
+
+func isF64NaNBits(bits uint64) bool {
+	return bits&0x7ff0000000000000 == 0x7ff0000000000000 && bits&0x000fffffffffffff != 0
 }
