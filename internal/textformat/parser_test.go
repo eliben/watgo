@@ -379,6 +379,99 @@ func TestParseModule_BrTableStopsBeforeFollowingFoldedInstruction(t *testing.T) 
 	}
 }
 
+func TestParseModule_PlainTypedSelectStopsBeforeNextInstruction(t *testing.T) {
+	wat := `
+(module
+  (func
+    select (result funcref)
+    ref.null func
+    drop
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 3; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	// Plain typed select is normalized into the folded parser form so the
+	// trailing (result ...) clause can flow through the existing lowering path.
+	sel := mustFoldedInstr(t, f.Instrs[0])
+	if sel.Name != "select" {
+		t.Fatalf("instr0 name=%q, want select", sel.Name)
+	}
+	if got, want := len(sel.Args), 1; got != want {
+		t.Fatalf("select arg count=%d, want %d", got, want)
+	}
+	clause := mustFoldedInstr(t, sel.Args[0].Instr)
+	if clause.Name != "result" {
+		t.Fatalf("select clause name=%q, want result", clause.Name)
+	}
+
+	next := mustPlainInstr(t, f.Instrs[1])
+	if next.Name != "ref.null" {
+		t.Fatalf("instr1 name=%q, want ref.null", next.Name)
+	}
+	last := mustPlainInstr(t, f.Instrs[2])
+	if last.Name != "drop" {
+		t.Fatalf("instr2 name=%q, want drop", last.Name)
+	}
+}
+
+func TestParseModule_PlainCallIndirectConsumesTableAndTypeClausesOnly(t *testing.T) {
+	wat := `
+(module
+  (type $sig (func (param i32) (result i64)))
+  (table $t 1 funcref)
+  (func
+    call_indirect $t (type $sig) (param i32) (result i64)
+    i32.const 0
+    drop
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 3; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	call := mustFoldedInstr(t, f.Instrs[0])
+	if call.Name != "call_indirect" {
+		t.Fatalf("instr0 name=%q, want call_indirect", call.Name)
+	}
+	if got, want := len(call.Args), 4; got != want {
+		t.Fatalf("call_indirect arg count=%d, want %d", got, want)
+	}
+	if op, ok := call.Args[0].Operand.(*IdOperand); !ok || op.Value != "$t" {
+		t.Fatalf("arg0=%T(%v), want *IdOperand($t)", call.Args[0].Operand, call.Args[0].Operand)
+	}
+	for i, want := range []string{"type", "param", "result"} {
+		clause := mustFoldedInstr(t, call.Args[i+1].Instr)
+		if clause.Name != want {
+			t.Fatalf("arg%d clause name=%q, want %q", i+1, clause.Name, want)
+		}
+	}
+
+	next := mustPlainInstr(t, f.Instrs[1])
+	if next.Name != "i32.const" {
+		t.Fatalf("instr1 name=%q, want i32.const", next.Name)
+	}
+	last := mustPlainInstr(t, f.Instrs[2])
+	if last.Name != "drop" {
+		t.Fatalf("instr2 name=%q, want drop", last.Name)
+	}
+}
+
 func TestParseModule_FoldedInstructions(t *testing.T) {
 	wat := `(module
   (func (result i32)
