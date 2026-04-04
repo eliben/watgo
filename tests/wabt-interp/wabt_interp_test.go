@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,7 +54,7 @@ type wabtInterpResult struct {
 	// StdoutCount records how many auxiliary stdout lines JS had produced before
 	// this invocation finished, so Go can interleave host-call logging with the
 	// final WABT-style result line in the original execution order.
-	StdoutCount int   `json:"stdoutCount"`
+	StdoutCount int `json:"stdoutCount"`
 }
 
 type wabtInterpRunResult struct {
@@ -89,6 +90,25 @@ type wabtInterpNodePayload struct {
 	HostPrintResultKind string                 `json:"hostPrintResultKind"`
 }
 
+// wabtInterpSkippedFixtures lists WABT fixtures we keep in-tree but do not run
+// with this Node-backed harness.
+var wabtInterpSkippedFixtures = []string{
+	// basic-logging expects wabt's wat2wasm/wasm-interp verbose stderr, with
+	// section-size fixups and decoder callback logs. This harness only runs the
+	// compiled module under Node; it does not emulate wabt's tool logging.
+	"basic-logging.txt",
+
+	// basic-tracing expects wabt interpreter trace output including wabt-specific
+	// instruction PCs, stack-depth annotations, and lowered control-flow ops
+	// like br_unless/drop_keep. That is effectively an interpreter trace mode,
+	// not a small execution-harness variation.
+	"basic-tracing.txt",
+}
+
+func wabtInterpShouldSkipFixture(name string) bool {
+	return slices.Contains(wabtInterpSkippedFixtures, name)
+}
+
 func TestWABTInterp(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
@@ -119,6 +139,9 @@ func TestWABTInterp(t *testing.T) {
 
 	for _, file := range files {
 		t.Run(strings.TrimSuffix(file, ".txt"), func(t *testing.T) {
+			if wabtInterpShouldSkipFixture(file) {
+				t.Skip("fixture is intentionally not covered by this harness")
+			}
 			runWABTInterpCase(t, nodePath, file)
 		})
 	}
@@ -643,8 +666,9 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 //
 // Most lines are compared byte-for-byte. The only special case is
 // reference-valued result lines such as:
-//   ref_null_func() => funcref:0
-//   ref_func() => funcref:5
+//
+//	ref_null_func() => funcref:0
+//	ref_func() => funcref:5
 //
 // WABT's interpreter prints implementation-specific non-null ref identities,
 // while Node only gives us enough information to distinguish null from
@@ -675,13 +699,15 @@ func wabtInterpStdoutMatches(got, want string) bool {
 // wabtInterpRefLineMatches compares one reference-valued output line.
 //
 // Example:
-//   got:  ref_func() => funcref:2
-//   want: ref_func() => funcref:5
+//
+//	got:  ref_func() => funcref:2
+//	want: ref_func() => funcref:5
 //
 // This still matches, because both lines describe the same export and ref
 // kind, and both ids are non-zero. Null references remain exact:
-//   funcref:0 only matches funcref:0
-//   externref:0 only matches externref:0
+//
+//	funcref:0 only matches funcref:0
+//	externref:0 only matches externref:0
 func wabtInterpRefLineMatches(got, want string) bool {
 	gotName, gotKind, gotValue, ok := splitWABTRefLine(got)
 	if !ok {
@@ -704,8 +730,9 @@ func wabtInterpRefLineMatches(got, want string) bool {
 // reference-valued output line.
 //
 // For example:
-//   "ref_func() => funcref:5"    -> ("ref_func", "funcref", "5", true)
-//   "ref_null_extern() => externref:0" -> ("ref_null_extern", "externref", "0", true)
+//
+//	"ref_func() => funcref:5"    -> ("ref_func", "funcref", "5", true)
+//	"ref_null_extern() => externref:0" -> ("ref_null_extern", "externref", "0", true)
 //
 // Non-reference lines return ok=false.
 func splitWABTRefLine(line string) (name, kind, value string, ok bool) {
