@@ -57,17 +57,18 @@ func sexprify(lex *lexer, lparen token) (*SExpr, error) {
 
 	for {
 		tok := lex.nextToken()
-		if tok.name == LPAREN {
+		switch tok.name {
+		case LPAREN:
 			list, err := sexprify(lex, tok)
 			if err != nil {
 				return nil, err
 			}
 			sx.list = append(sx.list, list)
-		} else if tok.name == RPAREN {
+		case RPAREN:
 			return sx, nil
-		} else if tok.name == EOF {
+		case EOF:
 			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
-		} else {
+		default:
 			sx.list = append(sx.list, &SExpr{tok: tok, loc: tok.loc})
 		}
 	}

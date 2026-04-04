@@ -817,6 +817,54 @@ func TestParseTopLevelSExprs_Multiple(t *testing.T) {
 	}
 }
 
+func TestParseModule_LinearFunctionBodyParsesViaTopLevelEntry(t *testing.T) {
+	src := `
+(module
+  (func (param $a i32) (param $b i32)
+    local.get $a
+    local.get $b
+    i32.add
+  )
+)`
+
+	// ParseModule is the normal parser entry point. Internally it still goes
+	// through the generic S-expression layer first, even for a simple linear
+	// instruction stream like this one.
+	m, err := ParseModule(src)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+	if got, want := len(m.Funcs), 1; got != want {
+		t.Fatalf("got %d funcs, want %d", got, want)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 3; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	instr0 := mustPlainInstr(t, f.Instrs[0])
+	if instr0.Name != "local.get" {
+		t.Fatalf("instr0 name=%q, want local.get", instr0.Name)
+	}
+	if op, ok := instr0.Operands[0].(*IdOperand); !ok || op.Value != "$a" {
+		t.Fatalf("instr0 operand=%T(%v), want *IdOperand($a)", instr0.Operands[0], instr0.Operands[0])
+	}
+
+	instr1 := mustPlainInstr(t, f.Instrs[1])
+	if instr1.Name != "local.get" {
+		t.Fatalf("instr1 name=%q, want local.get", instr1.Name)
+	}
+	if op, ok := instr1.Operands[0].(*IdOperand); !ok || op.Value != "$b" {
+		t.Fatalf("instr1 operand=%T(%v), want *IdOperand($b)", instr1.Operands[0], instr1.Operands[0])
+	}
+
+	instr2 := mustPlainInstr(t, f.Instrs[2])
+	if instr2.Name != "i32.add" {
+		t.Fatalf("instr2 name=%q, want i32.add", instr2.Name)
+	}
+}
+
 func TestParseModule_MultipleTopLevelExpressionsRejected(t *testing.T) {
 	src := `(module) (module)`
 
