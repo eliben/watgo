@@ -296,6 +296,89 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	}
 }
 
+func TestParseModule_BrTableStopsBeforeNextPlainInstruction(t *testing.T) {
+	wat := `
+(module
+  (func
+    block $exit
+    br_table $exit 0
+    i32.const 7
+    drop
+    end
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 5; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	brTable := mustPlainInstr(t, f.Instrs[1])
+	if brTable.Name != "br_table" {
+		t.Fatalf("instr1 name=%q, want br_table", brTable.Name)
+	}
+	if got, want := len(brTable.Operands), 2; got != want {
+		t.Fatalf("br_table operand count=%d, want %d", got, want)
+	}
+	if op, ok := brTable.Operands[0].(*IdOperand); !ok || op.Value != "$exit" {
+		t.Fatalf("br_table operand[0]=%T(%v), want *IdOperand($exit)", brTable.Operands[0], brTable.Operands[0])
+	}
+	if op, ok := brTable.Operands[1].(*IntOperand); !ok || op.Value != "0" {
+		t.Fatalf("br_table operand[1]=%T(%v), want *IntOperand(0)", brTable.Operands[1], brTable.Operands[1])
+	}
+
+	next := mustPlainInstr(t, f.Instrs[2])
+	if next.Name != "i32.const" {
+		t.Fatalf("instr2 name=%q, want i32.const", next.Name)
+	}
+	if got, want := len(next.Operands), 1; got != want {
+		t.Fatalf("i32.const operand count=%d, want %d", got, want)
+	}
+}
+
+func TestParseModule_BrTableStopsBeforeFollowingFoldedInstruction(t *testing.T) {
+	wat := `
+(module
+  (func
+    block $exit
+    br_table $exit 0
+    (i32.add (i32.const 1) (i32.const 2))
+    end
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 4; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	brTable := mustPlainInstr(t, f.Instrs[1])
+	if brTable.Name != "br_table" {
+		t.Fatalf("instr1 name=%q, want br_table", brTable.Name)
+	}
+	if got, want := len(brTable.Operands), 2; got != want {
+		t.Fatalf("br_table operand count=%d, want %d", got, want)
+	}
+
+	add := mustFoldedInstr(t, f.Instrs[2])
+	if add.Name != "i32.add" {
+		t.Fatalf("instr2 name=%q, want i32.add", add.Name)
+	}
+	if got, want := len(add.Args), 2; got != want {
+		t.Fatalf("i32.add arg count=%d, want %d", got, want)
+	}
+}
+
 func TestParseModule_FoldedInstructions(t *testing.T) {
 	wat := `(module
   (func (result i32)
