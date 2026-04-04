@@ -1,5 +1,3 @@
-* Add README.md in tests/ to explain what comes from where and how to update
-  them with the script (also update script to pull wabt interp tests)
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it
   later?
