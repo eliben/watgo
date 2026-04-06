@@ -2451,7 +2451,7 @@ func (fl *functionLowerer) applyStructuredBlockType(ins *wasmir.Instruction, ins
 // lowerPlainCallIndirect lowers a flat call_indirect using the same immediate
 // forms supported by folded call_indirect: optional table operand plus trailing
 // type/param/result clauses.
-func (fl *functionLowerer) lowerPlainCallIndirect(pi *PlainInstr, instrLoc string) {
+func (fl *functionLowerer) lowerPlainCallIndirect(pi *PlainInstr) {
 	fi := &FoldedInstr{Name: pi.Name, loc: pi.loc}
 	for _, op := range pi.Operands {
 		fi.Args = append(fi.Args, FoldedArg{Operand: op})
@@ -2514,7 +2514,7 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		})
 		return
 	case "call_indirect":
-		fl.lowerPlainCallIndirect(pi, instrLoc)
+		fl.lowerPlainCallIndirect(pi)
 		return
 	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill", "struct.new", "struct.new_default":
 		if len(pi.Operands) != 1 {
@@ -3156,16 +3156,6 @@ func decodeGlobalSetOperands(fl *functionLowerer, ins *wasmir.Instruction, opera
 		return false
 	}
 	ins.GlobalIndex = globalIndex
-	return true
-}
-
-// decodeTableGetOperands decodes operands into ins.TableIndex for table.get.
-func decodeTableGetOperands(fl *functionLowerer, ins *wasmir.Instruction, operands []Operand) bool {
-	tableIndex, ok := lowerTableIndexOperand(operands[0], fl.mod.tablesByName)
-	if !ok {
-		return false
-	}
-	ins.TableIndex = tableIndex
 	return true
 }
 
@@ -4429,19 +4419,6 @@ func (fl *functionLowerer) lowerLabelOperand(op Operand) (uint32, bool) {
 		return 0, false
 	default:
 		return 0, false
-	}
-}
-
-// lowerBlockResultTypeOperand resolves op as a block/if result type keyword.
-// It returns the lowered type and true on success.
-func lowerBlockResultTypeOperand(op Operand, typesByName map[string]uint32) (wasmir.ValueType, bool) {
-	switch o := op.(type) {
-	case *KeywordOperand:
-		return lowerValueType(&BasicType{Name: o.Value}, typesByName)
-	case *TypeOperand:
-		return lowerValueType(o.Ty, typesByName)
-	default:
-		return wasmir.ValueType{}, false
 	}
 }
 

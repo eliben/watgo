@@ -2236,17 +2236,6 @@ func isValidPlainOperand(name string, op Operand) bool {
 	}
 }
 
-// parseU32Token parses an INT token text into uint32, accepting '_' separators
-// and base prefixes supported by strconv.ParseInt.
-func parseU32Token(s string) (uint32, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	n, err := strconv.ParseInt(clean, 0, 64)
-	if err != nil || n < 0 || n > (1<<32-1) {
-		return 0, false
-	}
-	return uint32(n), true
-}
-
 // parseU64Token parses an INT token text into uint64, accepting '_' separators
 // and base prefixes supported by strconv.ParseUint.
 func parseU64Token(s string) (uint64, bool) {

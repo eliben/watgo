@@ -432,10 +432,6 @@ func isIdChar(r rune) bool {
 	}
 }
 
-func isLetter(r rune) bool {
-	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z'
-}
-
 func isDigit(r rune) bool {
 	return '0' <= r && r <= '9'
 }
