@@ -231,7 +231,7 @@ func ExampleParseWAT_moduleAnalysis() {
 	for _, fn := range m.Funcs {
 		sig := m.Types[fn.TypeIdx]
 		for _, param := range sig.Params {
-			if param == wasmir.ValueTypeI32 {
+			if param.Kind == wasmir.ValueKindI32 {
 				i32Params++
 			}
 		}

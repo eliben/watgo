@@ -1,3 +1,5 @@
+* Add proper license files for the copied test suites, and add license for
+  watgo itself.
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it
   later?
