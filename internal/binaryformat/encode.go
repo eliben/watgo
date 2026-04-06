@@ -145,7 +145,6 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	out.WriteString(wasmMagic)
 	out.WriteString(wasmVersion)
 
-	// This MVP encoder emits only type/function/export/code sections.
 	// They are written in the prescribed module order.
 	typeSection := encodeTypeSection(m.Types, &diags)
 	if len(typeSection) > 0 {
@@ -718,7 +717,7 @@ func moduleUsesDataIndexInstructions(m *wasmir.Module) bool {
 //
 // In the multi-memory encoding, bit 6 in the alignment field signals that an
 // explicit memory index follows before the offset. Memory index 0 uses the
-// compact MVP memarg form without that extra index field.
+// compact memarg form without that extra index field.
 func encodeMemArg(out *bytes.Buffer, instr wasmir.Instruction) {
 	if instr.MemoryIndex == 0 {
 		writeULEB128(out, instr.MemoryAlign)

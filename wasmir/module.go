@@ -74,8 +74,7 @@ type HeapType struct {
 // Numeric/vector value types use only Kind. Reference value types use
 // Kind=ValueKindRef and carry nullability plus heap type information.
 //
-// This corresponds to the spec's `valtype`, including both MVP numeric types
-// and proposal types such as `v128` and `(ref ...)`.
+// This corresponds to the spec's `valtype`.
 //
 // The ValueType* variables and RefType* helper functions are convenience
 // constructors for code that builds up wasmir values programmatically.
@@ -880,7 +879,6 @@ type TypeDef struct {
 	Params []ValueType
 
 	// Results is the ordered result type list for function types.
-	// For MVP this is typically length 0 or 1, but multi-value is representable.
 	Results []ValueType
 
 	// Fields carries the struct fields for GC struct types.

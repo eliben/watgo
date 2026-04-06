@@ -3628,8 +3628,8 @@ func (l *moduleLowerer) evalI32ConstExpr(init Instruction) (int32, bool) {
 //
 // This exists because active data segments use a constant expression as their
 // memory offset, and under memory64 the target memory's address type may be
-// i64 rather than the MVP default i32. In other words, `(data (i64.const 32)
-// "...")` is valid when the target memory is declared with address type i64.
+// i64. In other words, `(data (i64.const 32) "...")` is valid when the target
+// memory is declared with address type i64.
 //
 // Relevant spec sections:
 //   - Address types: https://webassembly.github.io/spec/core/text/types.html
