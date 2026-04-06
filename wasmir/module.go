@@ -76,6 +76,9 @@ type HeapType struct {
 //
 // This corresponds to the spec's `valtype`, including both MVP numeric types
 // and proposal types such as `v128` and `(ref ...)`.
+//
+// The ValueType* variables and RefType* helper functions are convenience
+// constructors for code that builds up wasmir values programmatically.
 type ValueType struct {
 	Kind     ValueKind
 	Nullable bool
@@ -102,42 +105,62 @@ func RefTypeExtern(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExtern}}
 }
 
+// RefTypeNone returns a none-reference value type with the requested
+// nullability.
 func RefTypeNone(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNone}}
 }
 
+// RefTypeNoExtern returns a noextern-reference value type with the requested
+// nullability.
 func RefTypeNoExtern(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoExtern}}
 }
 
+// RefTypeNoFunc returns a nofunc-reference value type with the requested
+// nullability.
 func RefTypeNoFunc(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoFunc}}
 }
 
+// RefTypeExn returns an exception-reference value type with the requested
+// nullability.
 func RefTypeExn(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindExn}}
 }
 
+// RefTypeNoExn returns a noexn-reference value type with the requested
+// nullability.
 func RefTypeNoExn(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindNoExn}}
 }
 
+// RefTypeAny returns an any-reference value type with the requested
+// nullability.
 func RefTypeAny(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindAny}}
 }
 
+// RefTypeEq returns an eq-reference value type with the requested
+// nullability.
 func RefTypeEq(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindEq}}
 }
 
+// RefTypeI31 returns an i31-reference value type with the requested
+// nullability.
 func RefTypeI31(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindI31}}
 }
 
+// RefTypeArray returns an array-reference value type with the requested
+// nullability.
 func RefTypeArray(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindArray}}
 }
 
+// RefTypeStruct returns a struct-reference value type with the requested
+// nullability.
 func RefTypeStruct(nullable bool) ValueType {
 	return ValueType{Kind: ValueKindRef, Nullable: nullable, HeapType: HeapType{Kind: HeapKindStruct}}
 }
