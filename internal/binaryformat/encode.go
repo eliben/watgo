@@ -1211,22 +1211,6 @@ func refTypeCode(vt wasmir.ValueType) (byte, bool) {
 	}
 }
 
-func writeRefTypeImmediate(out *bytes.Buffer, vt wasmir.ValueType) {
-	if vt.Nullable {
-		if vt.UsesTypeIndex() {
-			out.WriteByte(refNullPrefixCode)
-			writeSLEB128(out, int64(vt.HeapType.TypeIndex))
-			return
-		}
-		if b, ok := refTypeCode(vt); ok {
-			out.WriteByte(b)
-			return
-		}
-	}
-	out.WriteByte(refPrefixCode)
-	writeHeapTypeImmediate(out, vt)
-}
-
 func writeHeapTypeImmediate(out *bytes.Buffer, vt wasmir.ValueType) {
 	if vt.UsesTypeIndex() {
 		writeSLEB128(out, int64(vt.HeapType.TypeIndex))

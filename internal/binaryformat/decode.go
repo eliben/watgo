@@ -386,7 +386,6 @@ func decodeTypeSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.TypeDef 
 			out = append(out, typeDef)
 		default:
 			diags.Addf("type[%d]: unsupported type form 0x%x", i, form)
-			break
 		}
 	}
 	return out
@@ -611,7 +610,6 @@ func decodeImportSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Import
 			imp.TypeIdx = typeIdx
 		default:
 			diags.Addf("import[%d]: unsupported kind 0x%x", i, kind)
-			break
 		}
 		out = append(out, imp)
 	}
@@ -980,7 +978,6 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			})
 		default:
 			diags.Addf("element[%d]: unsupported flags 0x%x", i, flags)
-			break
 		}
 	}
 	return out
@@ -1130,27 +1127,6 @@ func decodeMemoryLimits(r *bytes.Reader) (wasmir.ValueType, uint64, bool, uint64
 		return wasmir.ValueTypeI64, min, true, max, err
 	default:
 		return wasmir.ValueType{}, 0, false, 0, fmt.Errorf("unsupported memory limits flags 0x%x", flags)
-	}
-}
-
-func decodeLimits(r *bytes.Reader) (uint32, bool, uint32, error) {
-	flags, err := readByte(r)
-	if err != nil {
-		return 0, false, 0, err
-	}
-	switch flags {
-	case limitsFlagMinOnly:
-		min, err := readU32(r)
-		return min, false, 0, err
-	case limitsFlagMinMax:
-		min, err := readU32(r)
-		if err != nil {
-			return 0, false, 0, err
-		}
-		max, err := readU32(r)
-		return min, true, max, err
-	default:
-		return 0, false, 0, fmt.Errorf("unsupported limits flags 0x%x", flags)
 	}
 }
 
@@ -1422,25 +1398,25 @@ func decodeInstructionFromDef(r *bytes.Reader, def instrdef.InstructionDef) (was
 			BranchDefault: fallback,
 		}, nil
 	case wasmir.InstrI32Const:
-		value, err := readS32Immediate(r, def.TextName)
+		value, err := readS32Immediate(r)
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, I32Const: value}, nil
 	case wasmir.InstrI64Const:
-		value, err := readS64Immediate(r, def.TextName)
+		value, err := readS64Immediate(r)
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, I64Const: value}, nil
 	case wasmir.InstrF32Const:
-		value, err := readF32Immediate(r, def.TextName)
+		value, err := readF32Immediate(r)
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
 		return wasmir.Instruction{Kind: def.Kind, F32Const: value}, nil
 	case wasmir.InstrF64Const:
-		value, err := readF64Immediate(r, def.TextName)
+		value, err := readF64Immediate(r)
 		if err != nil {
 			return wasmir.Instruction{}, err
 		}
@@ -1761,7 +1737,7 @@ func readByteImmediate(r *bytes.Reader, instrName string, what string) (byte, er
 	return value, nil
 }
 
-func readS32Immediate(r *bytes.Reader, instrName string) (int32, error) {
+func readS32Immediate(r *bytes.Reader) (int32, error) {
 	value, err := readS32(r)
 	if err != nil {
 		return 0, fmt.Errorf("read i32 immediate: %w", err)
@@ -1769,7 +1745,7 @@ func readS32Immediate(r *bytes.Reader, instrName string) (int32, error) {
 	return value, nil
 }
 
-func readS64Immediate(r *bytes.Reader, instrName string) (int64, error) {
+func readS64Immediate(r *bytes.Reader) (int64, error) {
 	value, err := readS64(r)
 	if err != nil {
 		return 0, fmt.Errorf("read i64 immediate: %w", err)
@@ -1777,7 +1753,7 @@ func readS64Immediate(r *bytes.Reader, instrName string) (int64, error) {
 	return value, nil
 }
 
-func readF32Immediate(r *bytes.Reader, instrName string) (uint32, error) {
+func readF32Immediate(r *bytes.Reader) (uint32, error) {
 	value, err := readU32LE(r)
 	if err != nil {
 		return 0, fmt.Errorf("read f32 immediate: %w", err)
@@ -1785,7 +1761,7 @@ func readF32Immediate(r *bytes.Reader, instrName string) (uint32, error) {
 	return value, nil
 }
 
-func readF64Immediate(r *bytes.Reader, instrName string) (uint64, error) {
+func readF64Immediate(r *bytes.Reader) (uint64, error) {
 	value, err := readU64LE(r)
 	if err != nil {
 		return 0, fmt.Errorf("read f64 immediate: %w", err)
@@ -1881,17 +1857,6 @@ func readTryTableCatch(r *bytes.Reader) (wasmir.TryTableCatch, error) {
 	default:
 		return wasmir.TryTableCatch{}, fmt.Errorf("unknown catch kind %d", kindByte)
 	}
-}
-
-func decodeConstExpr(r *bytes.Reader) (wasmir.Instruction, error) {
-	instrs, err := decodeConstExprInstrs(r)
-	if err != nil {
-		return wasmir.Instruction{}, err
-	}
-	if len(instrs) != 1 {
-		return wasmir.Instruction{}, fmt.Errorf("const expr must contain exactly one instruction")
-	}
-	return instrs[0], nil
 }
 
 func decodeConstExprInstrs(r *bytes.Reader) ([]wasmir.Instruction, error) {
