@@ -84,3 +84,20 @@ required for the full suite.
 
 For more detail on the different test sets and how to refresh them from
 upstream, see [`tests/README.md`](tests/README.md).
+
+### License
+
+The source code of watgo is in [the public domain](LICENSE). Certain vendored
+test scripts retain their original licenses:
+
+- `tests/wasmspec`
+  
+  * Source: https://github.com/WebAssembly/spec/
+  * License: Apache License 2.0
+  * See: `tests/wasmspec/LICENSE`
+
+- `tests/wabt-interp`
+  
+  * Source: https://github.com/WebAssembly/wabt
+  * License: Apache License 2.0
+  * See: `tests/wabt-interp/LICENSE`
