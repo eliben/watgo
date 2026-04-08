@@ -56,6 +56,7 @@ echo "Syncing spec core tests into ${spec_dst}"
 # Only .wast files are copied from the spec tree. Directory structure is
 # preserved so proposal subdirectories like gc/, simd/, etc. remain intact.
 rsync -a --delete --delete-excluded \
+  --filter='P LICENSE*' \
   --exclude='.*' \
   --exclude='*/.*' \
   --include='*/' \
@@ -85,6 +86,7 @@ echo "Syncing WABT interp fixtures into ${wabt_interp_dst}"
 # Local harness files in tests/wabt-interp/ stay in place, while stale copied
 # fixtures are removed.
 rsync -a --delete --delete-excluded \
+  --filter='P LICENSE*' \
   --filter='P wabt_interp.js' \
   --filter='P wabt_interp_test.go' \
   --exclude='.*' \
