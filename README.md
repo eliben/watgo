@@ -5,6 +5,10 @@
 
 ----
 
+<p align="center">
+  <img alt="Logo" src="doc/watgo-logo.png" />
+</p>
+
 **W**eb**A**ssembly **T**oolkit for **Go** (**watgo**) to parse [WASM](https://www.w3.org/TR/wasm-core-2/) text or decode WASM binary into internal data
 structures, allowing conversions, etc.
 
