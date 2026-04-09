@@ -46,6 +46,10 @@ go run github.com/eliben/watgo/cmd/watgo@latest
 The public Go API is documented on [`pkg.go.dev`](https://pkg.go.dev/github.com/eliben/watgo),
 including runnable examples for the high-level functions in `package watgo`.
 
+<p align="center">
+  <img alt="Logo" src="doc/watgo-diagram.png" />
+</p>
+
 ### CLI
 
 `watgo` currently provides basic `parse` and `validate` subcommands.
