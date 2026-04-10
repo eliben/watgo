@@ -94,6 +94,21 @@ func TestLowerModule_AddFunction(t *testing.T) {
 	}
 }
 
+func TestLowerModule_ModuleName(t *testing.T) {
+	ast, err := ParseModule(`(module $m)`)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	if m.Name != "$m" {
+		t.Fatalf("got module name %q, want $m", m.Name)
+	}
+}
+
 func TestLowerModule_UnknownLocalName(t *testing.T) {
 	wat := `(module
   (func (param $a i32) (result i32)

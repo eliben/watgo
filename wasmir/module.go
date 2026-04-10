@@ -805,6 +805,9 @@ const (
 //   - table, memory, and global indices likewise include imports first when the
 //     instruction or declaration refers to that index space
 type Module struct {
+	// Name is the optional source-level module identifier (for example "$m").
+	Name string
+
 	// Types is the module's type section.
 	//
 	// Today this includes function types and GC composite types (struct/array),

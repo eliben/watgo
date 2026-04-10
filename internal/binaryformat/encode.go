@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
@@ -18,6 +19,7 @@ const (
 	wasmVersion = "\x01\x00\x00\x00"
 
 	// Section IDs follow the core binary spec's section id table.
+	sectionCustomID    byte = 0
 	sectionTypeID      byte = 1
 	sectionImportID    byte = 2
 	sectionFunctionID  byte = 3
@@ -129,6 +131,14 @@ const (
 	// dataSegmentFlagActiveExplicitMemory encodes an active data segment with
 	// an explicit memory index.
 	dataSegmentFlagActiveExplicitMemory byte = 0x02
+
+	nameSectionName             = "name"
+	nameSubsectionModuleID byte = 0
+	nameSubsectionFuncID   byte = 1
+	nameSubsectionLocalID  byte = 2
+	nameSubsectionTypeID   byte = 4
+	nameSubsectionFieldID  byte = 10
+	nameSubsectionTagID    byte = 11
 )
 
 // EncodeModule encodes m into WASM binary format and returns bytes and all
@@ -209,6 +219,11 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	dataSection := encodeDataSection(m.Data, &diags)
 	if len(dataSection) > 0 {
 		writeSection(&out, sectionDataID, dataSection)
+	}
+
+	nameSection := encodeNameSection(m)
+	if len(nameSection) > 0 {
+		writeSection(&out, sectionCustomID, nameSection)
 	}
 
 	if diags.HasAny() {
@@ -711,6 +726,213 @@ func moduleUsesDataIndexInstructions(m *wasmir.Module) bool {
 		}
 	}
 	return false
+}
+
+// encodeNameSection emits the standard "name" custom section from source-level
+// names already preserved in wasmir.
+func encodeNameSection(m *wasmir.Module) []byte {
+	if m == nil {
+		return nil
+	}
+
+	var subsections bytes.Buffer
+	writeNameSubsection(&subsections, nameSubsectionModuleID, encodeModuleName(m))
+	writeNameSubsection(&subsections, nameSubsectionFuncID, encodeFunctionNameMap(m))
+	writeNameSubsection(&subsections, nameSubsectionLocalID, encodeLocalNameMap(m))
+	writeNameSubsection(&subsections, nameSubsectionTypeID, encodeTypeNameMap(m.Types))
+	writeNameSubsection(&subsections, nameSubsectionFieldID, encodeFieldNameMap(m.Types))
+	writeNameSubsection(&subsections, nameSubsectionTagID, encodeTagNameMap(m))
+	if subsections.Len() == 0 {
+		return nil
+	}
+
+	var payload bytes.Buffer
+	writeName(&payload, nameSectionName)
+	payload.Write(subsections.Bytes())
+	return payload.Bytes()
+}
+
+func writeNameSubsection(out *bytes.Buffer, id byte, payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	out.WriteByte(id)
+	writeULEB128(out, uint32(len(payload)))
+	out.Write(payload)
+}
+
+func encodeModuleName(m *wasmir.Module) []byte {
+	if m.Name == "" {
+		return nil
+	}
+	var payload bytes.Buffer
+	writeName(&payload, sourceIDName(m.Name))
+	return payload.Bytes()
+}
+
+func encodeFunctionNameMap(m *wasmir.Module) []byte {
+	importedFuncs := importedFunctionCount(m.Imports)
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, fn := range m.Funcs {
+		if fn.Name == "" {
+			continue
+		}
+		writeULEB128(&entries, importedFuncs+uint32(i))
+		writeName(&entries, sourceIDName(fn.Name))
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func encodeLocalNameMap(m *wasmir.Module) []byte {
+	importedFuncs := importedFunctionCount(m.Imports)
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, fn := range m.Funcs {
+		localMap := encodeOneFunctionLocalNameMap(m, fn)
+		if len(localMap) == 0 {
+			continue
+		}
+		writeULEB128(&entries, importedFuncs+uint32(i))
+		entries.Write(localMap)
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func encodeOneFunctionLocalNameMap(m *wasmir.Module, fn wasmir.Function) []byte {
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, name := range fn.ParamNames {
+		if name == "" {
+			continue
+		}
+		writeULEB128(&entries, uint32(i))
+		writeName(&entries, sourceIDName(name))
+		count++
+	}
+	paramCount := functionParamCount(m, fn)
+	for i, name := range fn.LocalNames {
+		if name == "" {
+			continue
+		}
+		writeULEB128(&entries, paramCount+uint32(i))
+		writeName(&entries, sourceIDName(name))
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func functionParamCount(m *wasmir.Module, fn wasmir.Function) uint32 {
+	if m != nil && int(fn.TypeIdx) < len(m.Types) {
+		td := m.Types[fn.TypeIdx]
+		if td.Kind == wasmir.TypeDefKindFunc {
+			return uint32(len(td.Params))
+		}
+	}
+	return uint32(len(fn.ParamNames))
+}
+
+func encodeTypeNameMap(types []wasmir.TypeDef) []byte {
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, td := range types {
+		if td.Name == "" {
+			continue
+		}
+		writeULEB128(&entries, uint32(i))
+		writeName(&entries, sourceIDName(td.Name))
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func encodeFieldNameMap(types []wasmir.TypeDef) []byte {
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, td := range types {
+		if td.Kind != wasmir.TypeDefKindStruct {
+			continue
+		}
+		fieldMap := encodeOneStructFieldNameMap(td)
+		if len(fieldMap) == 0 {
+			continue
+		}
+		writeULEB128(&entries, uint32(i))
+		entries.Write(fieldMap)
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func encodeOneStructFieldNameMap(td wasmir.TypeDef) []byte {
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, field := range td.Fields {
+		if field.Name == "" {
+			continue
+		}
+		writeULEB128(&entries, uint32(i))
+		writeName(&entries, sourceIDName(field.Name))
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func encodeTagNameMap(m *wasmir.Module) []byte {
+	importedTags := importedTagCount(m.Imports)
+	var entries bytes.Buffer
+	count := uint32(0)
+	for i, tag := range m.Tags {
+		if tag.Name == "" {
+			continue
+		}
+		writeULEB128(&entries, importedTags+uint32(i))
+		writeName(&entries, sourceIDName(tag.Name))
+		count++
+	}
+	return finishNameMap(count, entries.Bytes())
+}
+
+func finishNameMap(count uint32, entries []byte) []byte {
+	if count == 0 {
+		return nil
+	}
+	var out bytes.Buffer
+	writeULEB128(&out, count)
+	out.Write(entries)
+	return out.Bytes()
+}
+
+func importedFunctionCount(imports []wasmir.Import) uint32 {
+	var count uint32
+	for _, imp := range imports {
+		if imp.Kind == wasmir.ExternalKindFunction {
+			count++
+		}
+	}
+	return count
+}
+
+func importedTagCount(imports []wasmir.Import) uint32 {
+	var count uint32
+	for _, imp := range imports {
+		if imp.Kind == wasmir.ExternalKindTag {
+			count++
+		}
+	}
+	return count
+}
+
+func sourceIDName(name string) string {
+	return strings.TrimPrefix(name, "$")
+}
+
+func writeName(out *bytes.Buffer, name string) {
+	b := []byte(name)
+	writeULEB128(out, uint32(len(b)))
+	out.Write(b)
 }
 
 // encodeMemArg writes a memory instruction immediate.

@@ -21,6 +21,18 @@ func canonicalAddModuleBytes() []byte {
 	}
 }
 
+// addModuleWithParamNameSectionBytes appends the standard "name" custom
+// section for the source parameter identifiers $a and $b in
+// TestCompileWATToWASM_PublicAPI. The section has only local-names subsection
+// 2, with function index 0 mapping local indices 0 and 1 to "a" and "b".
+func addModuleWithParamNameSectionBytes() []byte {
+	b := append([]byte(nil), canonicalAddModuleBytes()...)
+	return append(b,
+		0x00, 0x10, 0x04, 0x6e, 0x61, 0x6d, 0x65,
+		0x02, 0x09, 0x01, 0x00, 0x02, 0x00, 0x01, 0x61, 0x01, 0x01, 0x62,
+	)
+}
+
 func TestCompileWATToWASM_PublicAPI(t *testing.T) {
 	wat := []byte(`
 (module
@@ -36,7 +48,7 @@ func TestCompileWATToWASM_PublicAPI(t *testing.T) {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
-	want := canonicalAddModuleBytes()
+	want := addModuleWithParamNameSectionBytes()
 	if !bytes.Equal(got, want) {
 		t.Fatalf("CompileWATToWASM bytes mismatch:\n got=%x\nwant=%x", got, want)
 	}

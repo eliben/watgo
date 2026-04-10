@@ -38,17 +38,57 @@ func TestPipelineEncodeAddModule(t *testing.T) {
 		t.Fatalf("EncodeModule error: %v", encodeErr)
 	}
 
-	// Expected bytes were cross-checked with wasm-tools for the same WAT.
-	// Note: wasm-tools parse preserves identifier metadata in a trailing "name"
-	// custom section, while this encoder currently emits only core sections.
-	// Comparison was done against wasm-tools output after stripping all custom
-	// sections:
-	//   wasm-tools parse /tmp/add.wat -o /tmp/add.wasm
-	//   wasm-tools strip -a /tmp/add.wasm -o /tmp/add_stripped_all.wasm
-	//   xxd -p /tmp/add_stripped_all.wasm | tr -d '\n'
-	want := canonicalAddModuleBytes()
+	// Expected bytes include the standard name custom section for the source
+	// parameter identifiers $a and $b.
+	want := addModuleWithParamNameSectionBytes()
 	if !bytes.Equal(got, want) {
 		t.Fatalf("encoded bytes mismatch:\n got=%x\nwant=%x", got, want)
+	}
+}
+
+func TestEncodeNameSectionFromIRNames(t *testing.T) {
+	m := &wasmir.Module{
+		Name: "$m",
+		Types: []wasmir.TypeDef{
+			{
+				Name: "$point",
+				Kind: wasmir.TypeDefKindStruct,
+				Fields: []wasmir.FieldType{{
+					Name: "$x",
+					Type: wasmir.ValueTypeI32,
+				}},
+			},
+			{
+				Kind:   wasmir.TypeDefKindFunc,
+				Params: []wasmir.ValueType{wasmir.ValueTypeI32},
+			},
+		},
+		Funcs: []wasmir.Function{{
+			TypeIdx:    1,
+			Name:       "$use",
+			ParamNames: []string{"$a"},
+			LocalNames: []string{"$tmp"},
+			Locals:     []wasmir.ValueType{wasmir.ValueTypeI32},
+			Body:       []wasmir.Instruction{{Kind: wasmir.InstrEnd}},
+		}},
+		Tags: []wasmir.Tag{{
+			Name:    "$boom",
+			TypeIdx: 1,
+		}},
+	}
+
+	got := encodeNameSection(m)
+	want := []byte{
+		0x04, 0x6e, 0x61, 0x6d, 0x65,
+		0x00, 0x02, 0x01, 0x6d,
+		0x01, 0x06, 0x01, 0x00, 0x03, 0x75, 0x73, 0x65,
+		0x02, 0x0b, 0x01, 0x00, 0x02, 0x00, 0x01, 0x61, 0x01, 0x03, 0x74, 0x6d, 0x70,
+		0x04, 0x08, 0x01, 0x00, 0x05, 0x70, 0x6f, 0x69, 0x6e, 0x74,
+		0x0a, 0x06, 0x01, 0x00, 0x01, 0x00, 0x01, 0x78,
+		0x0b, 0x07, 0x01, 0x00, 0x04, 0x62, 0x6f, 0x6f, 0x6d,
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("name section mismatch:\n got=%x\nwant=%x", got, want)
 	}
 }
 

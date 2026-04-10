@@ -183,6 +183,7 @@ func newModuleLowerer() *moduleLowerer {
 // lowerModule lowers all functions in astm into l.out and accumulates
 // diagnostics in l.diags.
 func (l *moduleLowerer) lowerModule(astm *Module) {
+	l.out.Name = astm.Id
 	l.collectTypeDecls(astm)
 	l.collectFunctionNames(astm)
 	l.collectTagDecls(astm)

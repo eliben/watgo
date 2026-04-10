@@ -267,6 +267,9 @@ func decodeCustomSection(r *bytes.Reader, diags *diag.ErrorList) {
 	if !utf8.Valid(name) {
 		diags.Addf("custom section: malformed UTF-8 in name")
 	}
+	if _, err := r.Seek(0, io.SeekEnd); err != nil {
+		diags.Addf("custom section: failed to skip payload: %v", err)
+	}
 }
 
 func sectionOrderRank(sectionID byte) int {
