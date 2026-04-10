@@ -2,6 +2,7 @@ package binaryformat
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/eliben/watgo/internal/textformat"
@@ -89,6 +90,74 @@ func TestEncodeNameSectionFromIRNames(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("name section mismatch:\n got=%x\nwant=%x", got, want)
+	}
+}
+
+func TestPipelineDecodeNameSectionFromWAT(t *testing.T) {
+	wat := `
+(module $m
+  (type $point (struct (field $x i32)))
+  (type $sig (func (param i32)))
+  (tag $boom (type $sig))
+  (func $use (type $sig) (param $a i32)
+    (local $tmp i32)
+    local.get $a
+    local.set $tmp
+  )
+)`
+
+	ast, err := textformat.ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+	m, hints, err := textformat.LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+	if err := validate.ValidateModule(m, hints); err != nil {
+		t.Fatalf("ValidateModule error: %v", err)
+	}
+
+	bin, err := EncodeModule(m)
+	if err != nil {
+		t.Fatalf("EncodeModule error: %v", err)
+	}
+	decoded, err := DecodeModule(bin)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+
+	if decoded.Name != "m" {
+		t.Fatalf("decoded module name=%q, want m", decoded.Name)
+	}
+	if got := decoded.Types[0].Name; got != "point" {
+		t.Fatalf("decoded type[0] name=%q, want point", got)
+	}
+	if got := decoded.Types[0].Fields[0].Name; got != "x" {
+		t.Fatalf("decoded type[0] field[0] name=%q, want x", got)
+	}
+	if got := decoded.Types[1].Name; got != "sig" {
+		t.Fatalf("decoded type[1] name=%q, want sig", got)
+	}
+	if got := decoded.Tags[0].Name; got != "boom" {
+		t.Fatalf("decoded tag[0] name=%q, want boom", got)
+	}
+	if got := decoded.Funcs[0].Name; got != "use" {
+		t.Fatalf("decoded func[0] name=%q, want use", got)
+	}
+	if got, want := decoded.Funcs[0].ParamNames, []string{"a"}; !slices.Equal(got, want) {
+		t.Fatalf("decoded param names=%#v, want %#v", got, want)
+	}
+	if got, want := decoded.Funcs[0].LocalNames, []string{"tmp"}; !slices.Equal(got, want) {
+		t.Fatalf("decoded local names=%#v, want %#v", got, want)
+	}
+
+	roundTrip, err := EncodeModule(decoded)
+	if err != nil {
+		t.Fatalf("EncodeModule(decoded) error: %v", err)
+	}
+	if !bytes.Equal(roundTrip, bin) {
+		t.Fatalf("name-preserving roundtrip mismatch:\n got=%x\nwant=%x", roundTrip, bin)
 	}
 }
 

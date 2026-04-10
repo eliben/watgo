@@ -3,6 +3,7 @@ package binaryformat
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -238,6 +239,26 @@ func TestDecodeEncodeRoundTrip_AddModule(t *testing.T) {
 		t.Fatalf("EncodeModule failed: %v", err)
 	}
 
+	if !bytes.Equal(got, orig) {
+		t.Fatalf("roundtrip mismatch:\n got=%x\nwant=%x", got, orig)
+	}
+}
+
+func TestDecodeEncodeRoundTrip_AddModuleNameSection(t *testing.T) {
+	orig := addModuleWithParamNameSectionBytes()
+
+	m, err := DecodeModule(orig)
+	if err != nil {
+		t.Fatalf("DecodeModule failed: %v", err)
+	}
+	if got, want := m.Funcs[0].ParamNames, []string{"a", "b"}; !slices.Equal(got, want) {
+		t.Fatalf("decoded param names=%#v, want %#v", got, want)
+	}
+
+	got, err := EncodeModule(m)
+	if err != nil {
+		t.Fatalf("EncodeModule failed: %v", err)
+	}
 	if !bytes.Equal(got, orig) {
 		t.Fatalf("roundtrip mismatch:\n got=%x\nwant=%x", got, orig)
 	}

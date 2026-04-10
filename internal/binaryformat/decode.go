@@ -25,6 +25,34 @@ type decodedFuncBody struct {
 	body   []wasmir.Instruction
 }
 
+// decodedNameSection temporarily holds the recognized parts of the standard
+// "name" custom section while the rest of the module is still being decoded.
+//
+// Name-section subsections may appear before or after the core sections they
+// describe, and function bodies are only joined with their type indices after
+// the decode loop finishes. Keeping the raw name maps here lets DecodeModule
+// apply names once all index spaces have been constructed.
+type decodedNameSection struct {
+	// moduleName is subsection 0: one name for the whole module.
+	moduleName string
+
+	// funcNames is subsection 1: function index -> display name.
+	funcNames map[uint32]string
+
+	// localNames is subsection 2: function index -> local index -> display name.
+	// Local indices include parameters first, followed by function locals.
+	localNames map[uint32]map[uint32]string
+
+	// typeNames is subsection 4: type index -> display name.
+	typeNames map[uint32]string
+
+	// fieldNames is subsection 10: type index -> field index -> display name.
+	fieldNames map[uint32]map[uint32]string
+
+	// tagNames is subsection 11: tag index -> display name.
+	tagNames map[uint32]string
+}
+
 // DecodeModule decodes a WASM binary module into semantic IR.
 // It returns a decoded module and nil error on success. On failure, it returns
 // a (possibly partial) module and a diag.ErrorList.
@@ -38,6 +66,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	var funcTypeIdxs []uint32
 	var funcBodies []decodedFuncBody
 	expectedDataCount := -1
+	var names decodedNameSection
 
 	seenType := false
 	seenImport := false
@@ -89,7 +118,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 
 		switch sectionID {
 		case 0:
-			decodeCustomSection(sr, &diags)
+			decodeCustomSection(sr, &names, &diags)
 		case sectionTypeID:
 			if seenType {
 				diags.Addf("duplicate type section")
@@ -247,28 +276,251 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 		diags.Addf("data count mismatch: section says %d, data section has %d segments", expectedDataCount, len(out.Data))
 	}
 
+	// Name-section payloads are metadata, so they are applied after all core
+	// index spaces are assembled. Invalid or out-of-range name entries should
+	// not prevent the semantic module from being returned where possible.
+	applyDecodedNames(out, &names)
+
 	if diags.HasAny() {
 		return out, diags
 	}
 	return out, nil
 }
 
-func decodeCustomSection(r *bytes.Reader, diags *diag.ErrorList) {
-	nameLen, err := readU32(r)
-	if err != nil {
-		diags.Addf("custom section: invalid name length: %v", err)
-		return
-	}
-	name, err := readN(r, int(nameLen))
+// decodeCustomSection consumes one custom section payload.
+//
+// Unknown custom sections are intentionally skipped. The standard "name"
+// custom section is decoded into names so the encoder can preserve recognized
+// source/debug names across DecodeModule -> EncodeModule round trips.
+func decodeCustomSection(r *bytes.Reader, names *decodedNameSection, diags *diag.ErrorList) {
+	name, err := readName(r)
 	if err != nil {
 		diags.Addf("custom section: invalid name: %v", err)
 		return
 	}
-	if !utf8.Valid(name) {
-		diags.Addf("custom section: malformed UTF-8 in name")
+	if name == nameSectionName {
+		decodeNameSection(r, names, diags)
 	}
 	if _, err := r.Seek(0, io.SeekEnd); err != nil {
 		diags.Addf("custom section: failed to skip payload: %v", err)
+	}
+}
+
+// decodeNameSection decodes the data following the custom-section name "name".
+//
+// The recognized subsection IDs match the standard WebAssembly name section:
+// module, function, local, type, field, and tag names. Unknown subsections are
+// skipped so newer tools can add metadata without making the decoder reject
+// otherwise usable modules.
+func decodeNameSection(r *bytes.Reader, names *decodedNameSection, diags *diag.ErrorList) {
+	lastSubsectionID := byte(0)
+	seenSubsections := map[byte]bool{}
+	for !atEOF(r) {
+		subsectionID, err := readByte(r)
+		if err != nil {
+			diags.Addf("name section: invalid subsection id: %v", err)
+			return
+		}
+		size, err := readU32(r)
+		if err != nil {
+			diags.Addf("name section subsection %d: invalid size: %v", subsectionID, err)
+			return
+		}
+		payload, err := readN(r, int(size))
+		if err != nil {
+			diags.Addf("name section subsection %d: invalid payload: %v", subsectionID, err)
+			return
+		}
+		if seenSubsections[subsectionID] {
+			diags.Addf("name section: duplicate subsection %d", subsectionID)
+			continue
+		}
+		if len(seenSubsections) > 0 && subsectionID < lastSubsectionID {
+			diags.Addf("name section: subsection %d out of order", subsectionID)
+			continue
+		}
+		seenSubsections[subsectionID] = true
+		lastSubsectionID = subsectionID
+
+		sr := bytes.NewReader(payload)
+		switch subsectionID {
+		case nameSubsectionModuleID:
+			name, err := readName(sr)
+			if err != nil {
+				diags.Addf("name section module subsection: invalid name: %v", err)
+				continue
+			}
+			names.moduleName = name
+		case nameSubsectionFuncID:
+			names.funcNames = decodeNameMap(sr, "function names", diags)
+		case nameSubsectionLocalID:
+			names.localNames = decodeIndirectNameMap(sr, "local names", diags)
+		case nameSubsectionTypeID:
+			names.typeNames = decodeNameMap(sr, "type names", diags)
+		case nameSubsectionFieldID:
+			names.fieldNames = decodeIndirectNameMap(sr, "field names", diags)
+		case nameSubsectionTagID:
+			names.tagNames = decodeNameMap(sr, "tag names", diags)
+		default:
+			if _, err := sr.Seek(0, io.SeekEnd); err != nil {
+				diags.Addf("name section subsection %d: failed to skip payload: %v", subsectionID, err)
+			}
+		}
+		if !atEOF(sr) {
+			diags.Addf("name section subsection %d was not fully consumed", subsectionID)
+		}
+	}
+}
+
+// decodeNameMap decodes a standard name map:
+//
+//	vector(index, name)
+//
+// The WebAssembly name section requires indices to be unique and sorted in
+// increasing order. This function reports ordering violations but still stores
+// the last decoded name for each index so callers can preserve what they can.
+func decodeNameMap(r *bytes.Reader, context string, diags *diag.ErrorList) map[uint32]string {
+	count, err := readU32(r)
+	if err != nil {
+		diags.Addf("name section %s: invalid map length: %v", context, err)
+		return nil
+	}
+	out := make(map[uint32]string, count)
+	var prev uint32
+	for i := uint32(0); i < count; i++ {
+		idx, err := readU32(r)
+		if err != nil {
+			diags.Addf("name section %s[%d]: invalid index: %v", context, i, err)
+			return out
+		}
+		if i > 0 && idx <= prev {
+			diags.Addf("name section %s[%d]: index out of order", context, i)
+		}
+		prev = idx
+		name, err := readName(r)
+		if err != nil {
+			diags.Addf("name section %s[%d]: invalid name: %v", context, i, err)
+			return out
+		}
+		out[idx] = name
+	}
+	return out
+}
+
+// decodeIndirectNameMap decodes a standard indirect name map:
+//
+//	vector(primary_index, name_map)
+//
+// The local-name and field-name subsections use this shape. For locals, the
+// primary index is a function index. For fields, it is a type index.
+func decodeIndirectNameMap(r *bytes.Reader, context string, diags *diag.ErrorList) map[uint32]map[uint32]string {
+	count, err := readU32(r)
+	if err != nil {
+		diags.Addf("name section %s: invalid map length: %v", context, err)
+		return nil
+	}
+	out := make(map[uint32]map[uint32]string, count)
+	var prev uint32
+	for i := uint32(0); i < count; i++ {
+		idx, err := readU32(r)
+		if err != nil {
+			diags.Addf("name section %s[%d]: invalid index: %v", context, i, err)
+			return out
+		}
+		if i > 0 && idx <= prev {
+			diags.Addf("name section %s[%d]: index out of order", context, i)
+		}
+		prev = idx
+		out[idx] = decodeNameMap(r, fmt.Sprintf("%s[%d]", context, idx), diags)
+	}
+	return out
+}
+
+// applyDecodedNames copies recognized name-section metadata onto wasmir.
+//
+// The current IR can store module, type, struct field, defined function,
+// defined function local, and defined tag names. Name entries for imported
+// functions and imported tags are skipped for now because Import has no
+// separate source/debug-name field distinct from the import field name.
+func applyDecodedNames(m *wasmir.Module, names *decodedNameSection) {
+	if m == nil || names == nil {
+		return
+	}
+	if names.moduleName != "" {
+		m.Name = names.moduleName
+	}
+	for idx, name := range names.typeNames {
+		if int(idx) < len(m.Types) {
+			m.Types[idx].Name = name
+		}
+	}
+	for typeIdx, fieldNames := range names.fieldNames {
+		if int(typeIdx) >= len(m.Types) {
+			continue
+		}
+		td := &m.Types[typeIdx]
+		for fieldIdx, name := range fieldNames {
+			if int(fieldIdx) < len(td.Fields) {
+				td.Fields[fieldIdx].Name = name
+			}
+		}
+	}
+	importedFuncs := importedFunctionCount(m.Imports)
+	for idx, name := range names.funcNames {
+		if idx < importedFuncs {
+			continue
+		}
+		definedIdx := idx - importedFuncs
+		if int(definedIdx) < len(m.Funcs) {
+			m.Funcs[definedIdx].Name = name
+		}
+	}
+	for idx, localNames := range names.localNames {
+		if idx < importedFuncs {
+			continue
+		}
+		definedIdx := idx - importedFuncs
+		if int(definedIdx) >= len(m.Funcs) {
+			continue
+		}
+		applyDecodedLocalNames(m, &m.Funcs[definedIdx], localNames)
+	}
+	importedTags := importedTagCount(m.Imports)
+	for idx, name := range names.tagNames {
+		if idx < importedTags {
+			continue
+		}
+		definedIdx := idx - importedTags
+		if int(definedIdx) < len(m.Tags) {
+			m.Tags[definedIdx].Name = name
+		}
+	}
+}
+
+// applyDecodedLocalNames splits one decoded function's local-name map into
+// Function.ParamNames and Function.LocalNames.
+//
+// Wasm local indices are a single index space where parameters come first and
+// declared locals follow. wasmir stores parameter and local names separately,
+// so this helper uses the function signature to find the boundary.
+func applyDecodedLocalNames(m *wasmir.Module, fn *wasmir.Function, localNames map[uint32]string) {
+	paramCount := functionParamCount(m, *fn)
+	for localIdx, name := range localNames {
+		if localIdx < paramCount {
+			if int(paramCount) > len(fn.ParamNames) {
+				fn.ParamNames = append(fn.ParamNames, make([]string, int(paramCount)-len(fn.ParamNames))...)
+			}
+			fn.ParamNames[localIdx] = name
+			continue
+		}
+		definedLocalIdx := localIdx - paramCount
+		if int(definedLocalIdx) >= len(fn.Locals) {
+			continue
+		}
+		if len(fn.LocalNames) < len(fn.Locals) {
+			fn.LocalNames = append(fn.LocalNames, make([]string, len(fn.Locals)-len(fn.LocalNames))...)
+		}
+		fn.LocalNames[definedLocalIdx] = name
 	}
 }
 
