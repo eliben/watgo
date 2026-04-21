@@ -195,6 +195,41 @@ func TestPipelineNameSectionOmittedWithoutSourceNames(t *testing.T) {
 	}
 }
 
+func TestPipelineDecodeEncodePreservesUnknownCustomSection(t *testing.T) {
+	base := compilePipelineWAT(t, `
+(module
+  (func (export "id") (param i32) (result i32)
+    local.get 0
+  )
+)`)
+	withCustom := insertCustomSectionAfter(t, base, int(sectionExportID), "acme.meta", []byte{0xde, 0xad, 0xbe, 0xef})
+
+	decoded, err := DecodeModule(withCustom)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+	if got := len(decoded.CustomSections); got != 1 {
+		t.Fatalf("got %d preserved custom sections, want 1", got)
+	}
+	if got := decoded.CustomSections[0].Name; got != "acme.meta" {
+		t.Fatalf("custom section name=%q, want acme.meta", got)
+	}
+	if got := decoded.CustomSections[0].AfterSectionID; got != int(sectionExportID) {
+		t.Fatalf("custom section AfterSectionID=%d, want %d", got, int(sectionExportID))
+	}
+	if got := decoded.CustomSections[0].Payload; !bytes.Equal(got, []byte{0xde, 0xad, 0xbe, 0xef}) {
+		t.Fatalf("custom section payload=%x, want deadbeef", got)
+	}
+
+	roundTrip, err := EncodeModule(decoded)
+	if err != nil {
+		t.Fatalf("EncodeModule(decoded) error: %v", err)
+	}
+	if !bytes.Equal(roundTrip, withCustom) {
+		t.Fatalf("custom-section roundtrip mismatch:\n got=%x\nwant=%x", roundTrip, withCustom)
+	}
+}
+
 func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 	wat := `
 (module
@@ -485,4 +520,37 @@ func customSectionNameNoFatal(payload []byte) (string, []byte, bool) {
 		return "", nil, false
 	}
 	return name, rest, true
+}
+
+func insertCustomSectionAfter(t *testing.T, wasm []byte, afterSectionID int, name string, payload []byte) []byte {
+	t.Helper()
+
+	sections := wasmSections(t, wasm)
+	var out bytes.Buffer
+	out.WriteString(wasmMagic)
+	out.WriteString(wasmVersion)
+
+	inserted := false
+	if afterSectionID == -1 {
+		writeSection(&out, sectionCustomID, encodedCustomSectionPayload(name, payload))
+		inserted = true
+	}
+	for _, section := range sections {
+		writeSection(&out, section.id, section.payload)
+		if !inserted && int(section.id) == afterSectionID {
+			writeSection(&out, sectionCustomID, encodedCustomSectionPayload(name, payload))
+			inserted = true
+		}
+	}
+	if !inserted {
+		t.Fatalf("section id %d not found for custom-section insertion", afterSectionID)
+	}
+	return out.Bytes()
+}
+
+func encodedCustomSectionPayload(name string, payload []byte) []byte {
+	var out bytes.Buffer
+	writeName(&out, name)
+	out.Write(payload)
+	return out.Bytes()
 }

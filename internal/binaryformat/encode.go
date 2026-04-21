@@ -154,71 +154,85 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	// Module preamble: magic then binary format version.
 	out.WriteString(wasmMagic)
 	out.WriteString(wasmVersion)
+	writePreservedCustomSections(&out, m.CustomSections, -1)
 
 	// They are written in the prescribed module order.
 	typeSection := encodeTypeSection(m.Types, &diags)
 	if len(typeSection) > 0 {
 		writeSection(&out, sectionTypeID, typeSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionTypeID))
 	}
 
 	importSection := encodeImportSection(m.Imports, &diags)
 	if len(importSection) > 0 {
 		writeSection(&out, sectionImportID, importSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionImportID))
 	}
 
 	functionSection := encodeFunctionSection(m.Funcs)
 	if len(functionSection) > 0 {
 		writeSection(&out, sectionFunctionID, functionSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionFunctionID))
 	}
 
 	tableSection := encodeTableSection(m.Tables, &diags)
 	if len(tableSection) > 0 {
 		writeSection(&out, sectionTableID, tableSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionTableID))
 	}
 
 	memorySection := encodeMemorySection(m.Memories, &diags)
 	if len(memorySection) > 0 {
 		writeSection(&out, sectionMemoryID, memorySection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionMemoryID))
 	}
 
 	tagSection := encodeTagSection(m.Tags, &diags)
 	if len(tagSection) > 0 {
 		writeSection(&out, sectionTagID, tagSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionTagID))
 	}
 
 	globalSection := encodeGlobalSection(m.Globals, &diags)
 	if len(globalSection) > 0 {
 		writeSection(&out, sectionGlobalID, globalSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionGlobalID))
 	}
 
 	exportSection := encodeExportSection(m.Exports, &diags)
 	if len(exportSection) > 0 {
 		writeSection(&out, sectionExportID, exportSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionExportID))
 	}
 
 	startSection := encodeStartSection(m)
 	if len(startSection) > 0 {
 		writeSection(&out, sectionStartID, startSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionStartID))
 	}
 
 	elementSection := encodeElementSection(m.Elements, &diags)
 	if len(elementSection) > 0 {
 		writeSection(&out, sectionElementID, elementSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionElementID))
 	}
 
 	dataCountSection := encodeDataCountSection(m)
 	if len(dataCountSection) > 0 {
 		writeSection(&out, sectionDataCountID, dataCountSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionDataCountID))
 	}
 
 	codeSection := encodeCodeSection(m.Funcs, &diags)
 	if len(codeSection) > 0 {
 		writeSection(&out, sectionCodeID, codeSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionCodeID))
 	}
 
 	dataSection := encodeDataSection(m.Data, &diags)
 	if len(dataSection) > 0 {
 		writeSection(&out, sectionDataID, dataSection)
+		writePreservedCustomSections(&out, m.CustomSections, int(sectionDataID))
 	}
 
 	nameSection := encodeNameSection(m)
@@ -249,6 +263,23 @@ func writeSection(out *bytes.Buffer, id byte, payload []byte) {
 	out.WriteByte(id)
 	writeULEB128(out, uint32(len(payload)))
 	out.Write(payload)
+}
+
+// writePreservedCustomSections re-emits decoded unknown custom sections whose
+// placement anchor is afterSectionID.
+//
+// An afterSectionID of -1 means the custom section originally appeared before
+// the first standard section in the binary module.
+func writePreservedCustomSections(out *bytes.Buffer, customSections []wasmir.CustomSection, afterSectionID int) {
+	for _, sec := range customSections {
+		if sec.AfterSectionID != afterSectionID {
+			continue
+		}
+		var payload bytes.Buffer
+		writeName(&payload, sec.Name)
+		payload.Write(sec.Payload)
+		writeSection(out, sectionCustomID, payload.Bytes())
+	}
 }
 
 // encodeTypeSection emits section 1.

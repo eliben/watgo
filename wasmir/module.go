@@ -808,6 +808,15 @@ type Module struct {
 	// Name is the optional source-level module identifier (for example "$m").
 	Name string
 
+	// CustomSections holds preserved non-semantic custom sections from binary
+	// decode.
+	//
+	// These entries are not interpreted by validation and do not affect wasm
+	// semantics. They exist so DecodeWASM -> EncodeWASM can retain unknown
+	// custom-section payloads. The standard "name" custom section is handled
+	// separately through dedicated IR name fields and is not represented here.
+	CustomSections []CustomSection
+
 	// Types is the module's type section.
 	//
 	// Today this includes function types and GC composite types (struct/array),
@@ -854,6 +863,24 @@ type Module struct {
 
 	// Elements is the module's element segment list.
 	Elements []ElementSegment
+}
+
+// CustomSection is one preserved non-standard wasm custom section.
+//
+// Payload stores the uninterpreted bytes after the custom-section name. The
+// section's placement is recorded relative to the nearest preceding non-custom
+// standard section seen during binary decode. An AfterSectionID of -1 means
+// the custom section originally appeared before the first standard section.
+type CustomSection struct {
+	Name string
+
+	// Payload contains the raw bytes after the section name field.
+	Payload []byte
+
+	// AfterSectionID is the nearest preceding non-custom standard section id in
+	// the decoded binary. -1 means the custom section preceded the first
+	// standard section.
+	AfterSectionID int
 }
 
 // TypeDef is one entry in Module.Types.

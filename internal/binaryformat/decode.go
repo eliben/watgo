@@ -54,8 +54,9 @@ type decodedNameSection struct {
 }
 
 // DecodeModule decodes a WASM binary module into semantic IR.
-// It returns a decoded module and nil error on success. On failure, it returns
-// a (possibly partial) module and a diag.ErrorList.
+//
+// Returns a decoded module on success. On failure, it returns a (possibly
+// partial) module and a diag.ErrorList.
 func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	out := &wasmir.Module{}
 	var diags diag.ErrorList
@@ -81,6 +82,7 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 	seenCode := false
 	seenData := false
 	lastSectionOrder := 0
+	lastStandardSectionID := -1
 
 	for !atEOF(r) {
 		sectionID, err := readByte(r)
@@ -114,11 +116,14 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 			} else {
 				lastSectionOrder = order
 			}
+			if order != 0 {
+				lastStandardSectionID = int(sectionID)
+			}
 		}
 
 		switch sectionID {
 		case 0:
-			decodeCustomSection(sr, &names, &diags)
+			decodeCustomSection(sr, out, lastStandardSectionID, &names, &diags)
 		case sectionTypeID:
 			if seenType {
 				diags.Addf("duplicate type section")
@@ -289,20 +294,31 @@ func DecodeModule(bin []byte) (*wasmir.Module, error) {
 
 // decodeCustomSection consumes one custom section payload.
 //
-// Unknown custom sections are intentionally skipped. The standard "name"
-// custom section is decoded into names so the encoder can preserve recognized
-// source/debug names across DecodeModule -> EncodeModule round trips.
-func decodeCustomSection(r *bytes.Reader, names *decodedNameSection, diags *diag.ErrorList) {
+// The standard "name" custom section is decoded into names so the encoder can
+// preserve recognized source/debug names across DecodeModule -> EncodeModule
+// round trips. Other custom sections are retained verbatim on wasmir.Module so
+// they can be re-emitted during EncodeModule.
+func decodeCustomSection(r *bytes.Reader, out *wasmir.Module, afterSectionID int, names *decodedNameSection, diags *diag.ErrorList) {
 	name, err := readName(r)
 	if err != nil {
 		diags.Addf("custom section: invalid name: %v", err)
 		return
 	}
-	if name == nameSectionName {
-		decodeNameSection(r, names, diags)
+	payload, err := readN(r, r.Len())
+	if err != nil {
+		diags.Addf("custom section %q: invalid payload: %v", name, err)
+		return
 	}
-	if _, err := r.Seek(0, io.SeekEnd); err != nil {
-		diags.Addf("custom section: failed to skip payload: %v", err)
+	if name == nameSectionName {
+		decodeNameSection(bytes.NewReader(payload), names, diags)
+		return
+	}
+	if out != nil {
+		out.CustomSections = append(out.CustomSections, wasmir.CustomSection{
+			Name:           name,
+			Payload:        append([]byte(nil), payload...),
+			AfterSectionID: afterSectionID,
+		})
 	}
 }
 
