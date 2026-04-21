@@ -230,6 +230,111 @@ func TestPipelineDecodeEncodePreservesUnknownCustomSection(t *testing.T) {
 	}
 }
 
+func TestPipelineDecodeEncodePreservesUnknownCustomSectionBeforeFirstStandardSection(t *testing.T) {
+	base := compilePipelineWAT(t, `
+(module
+  (func (export "id") (param i32) (result i32)
+    local.get 0
+  )
+)`)
+	withCustom := insertCustomSectionAfter(t, base, -1, "before.first", []byte{0xaa, 0xbb})
+
+	decoded, err := DecodeModule(withCustom)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+	if got := len(decoded.CustomSections); got != 1 {
+		t.Fatalf("got %d preserved custom sections, want 1", got)
+	}
+	if got := decoded.CustomSections[0].AfterSectionID; got != -1 {
+		t.Fatalf("custom section AfterSectionID=%d, want -1", got)
+	}
+	if got := decoded.CustomSections[0].Name; got != "before.first" {
+		t.Fatalf("custom section name=%q, want before.first", got)
+	}
+
+	roundTrip, err := EncodeModule(decoded)
+	if err != nil {
+		t.Fatalf("EncodeModule(decoded) error: %v", err)
+	}
+	if !bytes.Equal(roundTrip, withCustom) {
+		t.Fatalf("custom-section roundtrip mismatch:\n got=%x\nwant=%x", roundTrip, withCustom)
+	}
+}
+
+func TestPipelineDecodeEncodePreservesUnknownCustomSectionOrderWithinGap(t *testing.T) {
+	base := compilePipelineWAT(t, `
+(module
+  (func (export "id") (param i32) (result i32)
+    local.get 0
+  )
+)`)
+	withCustoms := insertCustomSectionsAfter(t, base, int(sectionExportID),
+		wasmCustomSectionForTest{name: "first", payload: []byte{0x01}},
+		wasmCustomSectionForTest{name: "second", payload: []byte{0x02, 0x03}},
+	)
+
+	decoded, err := DecodeModule(withCustoms)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+	if got := len(decoded.CustomSections); got != 2 {
+		t.Fatalf("got %d preserved custom sections, want 2", got)
+	}
+	if got := decoded.CustomSections[0].Name; got != "first" {
+		t.Fatalf("custom section[0] name=%q, want first", got)
+	}
+	if got := decoded.CustomSections[1].Name; got != "second" {
+		t.Fatalf("custom section[1] name=%q, want second", got)
+	}
+
+	roundTrip, err := EncodeModule(decoded)
+	if err != nil {
+		t.Fatalf("EncodeModule(decoded) error: %v", err)
+	}
+	if !bytes.Equal(roundTrip, withCustoms) {
+		t.Fatalf("custom-section roundtrip mismatch:\n got=%x\nwant=%x", roundTrip, withCustoms)
+	}
+}
+
+func TestPipelineDecodeEncodePreservesUnknownCustomSectionsAlongsideNameSection(t *testing.T) {
+	base := compilePipelineWAT(t, `
+(module $m
+  (func $id (export "id") (param $x i32) (result i32)
+    local.get $x
+  )
+)`)
+	withCustom := insertCustomSectionAfter(t, base, int(sectionExportID), "acme.meta", []byte{0x99})
+
+	decoded, err := DecodeModule(withCustom)
+	if err != nil {
+		t.Fatalf("DecodeModule error: %v", err)
+	}
+	if got := decoded.Name; got != "m" {
+		t.Fatalf("decoded module name=%q, want m", got)
+	}
+	if got := decoded.Funcs[0].Name; got != "id" {
+		t.Fatalf("decoded func[0] name=%q, want id", got)
+	}
+	if got, want := decoded.Funcs[0].ParamNames, []string{"x"}; !slices.Equal(got, want) {
+		t.Fatalf("decoded param names=%#v, want %#v", got, want)
+	}
+	if got := len(decoded.CustomSections); got != 1 {
+		t.Fatalf("got %d preserved custom sections, want 1", got)
+	}
+	if got := decoded.CustomSections[0].Name; got != "acme.meta" {
+		t.Fatalf("custom section name=%q, want acme.meta", got)
+	}
+
+	roundTrip, err := EncodeModule(decoded)
+	if err != nil {
+		t.Fatalf("EncodeModule(decoded) error: %v", err)
+	}
+	if !bytes.Equal(roundTrip, withCustom) {
+		t.Fatalf("custom-section roundtrip mismatch:\n got=%x\nwant=%x", roundTrip, withCustom)
+	}
+}
+
 func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 	wat := `
 (module
@@ -524,6 +629,16 @@ func customSectionNameNoFatal(payload []byte) (string, []byte, bool) {
 
 func insertCustomSectionAfter(t *testing.T, wasm []byte, afterSectionID int, name string, payload []byte) []byte {
 	t.Helper()
+	return insertCustomSectionsAfter(t, wasm, afterSectionID, wasmCustomSectionForTest{name: name, payload: payload})
+}
+
+type wasmCustomSectionForTest struct {
+	name    string
+	payload []byte
+}
+
+func insertCustomSectionsAfter(t *testing.T, wasm []byte, afterSectionID int, customSections ...wasmCustomSectionForTest) []byte {
+	t.Helper()
 
 	sections := wasmSections(t, wasm)
 	var out bytes.Buffer
@@ -532,13 +647,17 @@ func insertCustomSectionAfter(t *testing.T, wasm []byte, afterSectionID int, nam
 
 	inserted := false
 	if afterSectionID == -1 {
-		writeSection(&out, sectionCustomID, encodedCustomSectionPayload(name, payload))
+		for _, customSection := range customSections {
+			writeSection(&out, sectionCustomID, encodedCustomSectionPayload(customSection.name, customSection.payload))
+		}
 		inserted = true
 	}
 	for _, section := range sections {
 		writeSection(&out, section.id, section.payload)
 		if !inserted && int(section.id) == afterSectionID {
-			writeSection(&out, sectionCustomID, encodedCustomSectionPayload(name, payload))
+			for _, customSection := range customSections {
+				writeSection(&out, sectionCustomID, encodedCustomSectionPayload(customSection.name, customSection.payload))
+			}
 			inserted = true
 		}
 	}
