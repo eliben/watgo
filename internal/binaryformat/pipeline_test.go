@@ -196,6 +196,8 @@ func TestPipelineNameSectionOmittedWithoutSourceNames(t *testing.T) {
 }
 
 func TestPipelineDecodeEncodePreservesUnknownCustomSection(t *testing.T) {
+	// One unknown custom section anchored after a standard section should
+	// survive DecodeModule -> EncodeModule unchanged.
 	base := compilePipelineWAT(t, `
 (module
   (func (export "id") (param i32) (result i32)
@@ -231,6 +233,8 @@ func TestPipelineDecodeEncodePreservesUnknownCustomSection(t *testing.T) {
 }
 
 func TestPipelineDecodeEncodePreservesUnknownCustomSectionBeforeFirstStandardSection(t *testing.T) {
+	// An unknown custom section before the first standard section should keep
+	// its special anchor and round-trip unchanged.
 	base := compilePipelineWAT(t, `
 (module
   (func (export "id") (param i32) (result i32)
@@ -263,6 +267,8 @@ func TestPipelineDecodeEncodePreservesUnknownCustomSectionBeforeFirstStandardSec
 }
 
 func TestPipelineDecodeEncodePreservesUnknownCustomSectionOrderWithinGap(t *testing.T) {
+	// Multiple unknown custom sections sharing one anchor should preserve their
+	// relative order through DecodeModule -> EncodeModule.
 	base := compilePipelineWAT(t, `
 (module
   (func (export "id") (param i32) (result i32)
@@ -298,6 +304,8 @@ func TestPipelineDecodeEncodePreservesUnknownCustomSectionOrderWithinGap(t *test
 }
 
 func TestPipelineDecodeEncodePreservesUnknownCustomSectionsAlongsideNameSection(t *testing.T) {
+	// Unknown custom sections should round-trip even when the module also uses
+	// the synthesized standard "name" custom section path.
 	base := compilePipelineWAT(t, `
 (module $m
   (func $id (export "id") (param $x i32) (result i32)
