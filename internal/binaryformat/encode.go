@@ -156,83 +156,32 @@ func EncodeModule(m *wasmir.Module) ([]byte, error) {
 	out.WriteString(wasmVersion)
 	writePreservedCustomSections(&out, m.CustomSections, -1)
 
-	// They are written in the prescribed module order.
-	typeSection := encodeTypeSection(m.Types, &diags)
-	if len(typeSection) > 0 {
-		writeSection(&out, sectionTypeID, typeSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionTypeID))
+	// Standard sections are emitted in the prescribed module order.
+	type standardSection struct {
+		id      byte
+		payload []byte
 	}
-
-	importSection := encodeImportSection(m.Imports, &diags)
-	if len(importSection) > 0 {
-		writeSection(&out, sectionImportID, importSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionImportID))
+	sections := []standardSection{
+		{id: sectionTypeID, payload: encodeTypeSection(m.Types, &diags)},
+		{id: sectionImportID, payload: encodeImportSection(m.Imports, &diags)},
+		{id: sectionFunctionID, payload: encodeFunctionSection(m.Funcs)},
+		{id: sectionTableID, payload: encodeTableSection(m.Tables, &diags)},
+		{id: sectionMemoryID, payload: encodeMemorySection(m.Memories, &diags)},
+		{id: sectionTagID, payload: encodeTagSection(m.Tags, &diags)},
+		{id: sectionGlobalID, payload: encodeGlobalSection(m.Globals, &diags)},
+		{id: sectionExportID, payload: encodeExportSection(m.Exports, &diags)},
+		{id: sectionStartID, payload: encodeStartSection(m)},
+		{id: sectionElementID, payload: encodeElementSection(m.Elements, &diags)},
+		{id: sectionDataCountID, payload: encodeDataCountSection(m)},
+		{id: sectionCodeID, payload: encodeCodeSection(m.Funcs, &diags)},
+		{id: sectionDataID, payload: encodeDataSection(m.Data, &diags)},
 	}
-
-	functionSection := encodeFunctionSection(m.Funcs)
-	if len(functionSection) > 0 {
-		writeSection(&out, sectionFunctionID, functionSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionFunctionID))
-	}
-
-	tableSection := encodeTableSection(m.Tables, &diags)
-	if len(tableSection) > 0 {
-		writeSection(&out, sectionTableID, tableSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionTableID))
-	}
-
-	memorySection := encodeMemorySection(m.Memories, &diags)
-	if len(memorySection) > 0 {
-		writeSection(&out, sectionMemoryID, memorySection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionMemoryID))
-	}
-
-	tagSection := encodeTagSection(m.Tags, &diags)
-	if len(tagSection) > 0 {
-		writeSection(&out, sectionTagID, tagSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionTagID))
-	}
-
-	globalSection := encodeGlobalSection(m.Globals, &diags)
-	if len(globalSection) > 0 {
-		writeSection(&out, sectionGlobalID, globalSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionGlobalID))
-	}
-
-	exportSection := encodeExportSection(m.Exports, &diags)
-	if len(exportSection) > 0 {
-		writeSection(&out, sectionExportID, exportSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionExportID))
-	}
-
-	startSection := encodeStartSection(m)
-	if len(startSection) > 0 {
-		writeSection(&out, sectionStartID, startSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionStartID))
-	}
-
-	elementSection := encodeElementSection(m.Elements, &diags)
-	if len(elementSection) > 0 {
-		writeSection(&out, sectionElementID, elementSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionElementID))
-	}
-
-	dataCountSection := encodeDataCountSection(m)
-	if len(dataCountSection) > 0 {
-		writeSection(&out, sectionDataCountID, dataCountSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionDataCountID))
-	}
-
-	codeSection := encodeCodeSection(m.Funcs, &diags)
-	if len(codeSection) > 0 {
-		writeSection(&out, sectionCodeID, codeSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionCodeID))
-	}
-
-	dataSection := encodeDataSection(m.Data, &diags)
-	if len(dataSection) > 0 {
-		writeSection(&out, sectionDataID, dataSection)
-		writePreservedCustomSections(&out, m.CustomSections, int(sectionDataID))
+	for _, section := range sections {
+		if len(section.payload) == 0 {
+			continue
+		}
+		writeSection(&out, section.id, section.payload)
+		writePreservedCustomSections(&out, m.CustomSections, int(section.id))
 	}
 
 	nameSection := encodeNameSection(m)

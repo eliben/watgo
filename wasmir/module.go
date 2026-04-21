@@ -880,6 +880,11 @@ type CustomSection struct {
 	// AfterSectionID is the nearest preceding non-custom standard section id in
 	// the decoded binary. -1 means the custom section preceded the first
 	// standard section.
+	//
+	// This is intentionally a minimal placement marker for binary round-trips.
+	// It preserves decode order for sections sharing the same anchor, but it is
+	// not meant to be a fully stable ordering model across arbitrary module
+	// edits.
 	AfterSectionID int
 }
 
