@@ -113,23 +113,26 @@ func TestRunValidateWASM(t *testing.T) {
 	}
 }
 
-func TestRunPrintBinaryWASMNotImplementedYet(t *testing.T) {
-	// The initial `print` CLI plumbing should accept binary wasm input and
-	// reach a clear temporary not-implemented error path.
+func TestRunPrintBinaryWASMToStdout(t *testing.T) {
+	// `watgo print` should render basic binary wasm input as WAT on stdout.
 	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"print"}, bytes.NewReader(wasm), &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("Run returned %d, want 1", code)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0, stderr=%q", code, stderr.String())
 	}
-	if stdout.Len() != 0 {
-		t.Fatalf("unexpected stdout: %q", stdout.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "not implemented yet") {
-		t.Fatalf("stderr %q does not contain not-implemented message", stderr.String())
+	roundTrip, err := watgo.CompileWATToWASM(stdout.Bytes())
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, stdout.String())
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("print roundtrip mismatch:\nprinted:\n%s", stdout.String())
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/eliben/watgo"
+	"github.com/eliben/watgo/internal/printer"
 )
 
 // Run executes the watgo CLI with args and standard streams and returns the
@@ -194,10 +195,21 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	_ = outputPath
-	_ = stdout
-	fmt.Fprintln(stderr, "watgo print: not implemented yet")
-	return 1
+	m, err := watgo.DecodeWASM(src)
+	if err != nil {
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
+		return 1
+	}
+	out, err := printer.PrintModule(m)
+	if err != nil {
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
+		return 1
+	}
+	if err := writeOutput(*outputPath, out, stdout); err != nil {
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // runValidate implements `watgo validate`.
