@@ -94,8 +94,8 @@ func (p *modulePrinter) printTypes() error {
 		switch td.Kind {
 		case wasmir.TypeDefKindFunc:
 			p.buf.WriteString("(func")
-			writeParamDecls(&p.buf, p.m, nil, td.Params)
-			writeResultDecls(&p.buf, p.m, td.Results)
+			p.writeParamDecls(nil, td.Params)
+			p.writeResultDecls(td.Results)
 			p.buf.WriteString("))\n")
 		case wasmir.TypeDefKindStruct:
 			p.buf.WriteString("(struct")
@@ -138,16 +138,16 @@ func (p *modulePrinter) printImports() error {
 			}
 			p.buf.WriteString("(func")
 			p.buf.WriteString(typeUseText(imp.TypeIdx))
-			writeParamDecls(&p.buf, p.m, nil, td.Params)
-			writeResultDecls(&p.buf, p.m, td.Results)
+			p.writeParamDecls(nil, td.Params)
+			p.writeResultDecls(td.Results)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindTable:
 			p.buf.WriteString("(table")
-			writeTableType(&p.buf, p.m, imp.Table)
+			p.writeTableType(imp.Table)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindMemory:
 			p.buf.WriteString("(memory")
-			writeMemoryType(&p.buf, imp.Memory)
+			p.writeMemoryType(imp.Memory)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindGlobal:
 			p.buf.WriteString("(global ")
@@ -171,7 +171,7 @@ func (p *modulePrinter) printDefinedTables() error {
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(table")
-		writeTableType(&p.buf, p.m, table)
+		p.writeTableType(table)
 		if len(table.Init) > 0 {
 			expr, err := formatConstExpr(p.m, table.Init)
 			if err != nil {
@@ -192,7 +192,7 @@ func (p *modulePrinter) printDefinedMemories() error {
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(memory")
-		writeMemoryType(&p.buf, mem)
+		p.writeMemoryType(mem)
 		p.buf.WriteString(")\n")
 	}
 	return nil
@@ -252,9 +252,9 @@ func (p *modulePrinter) printFuncs() error {
 			p.buf.WriteString(formatID(fn.Name))
 		}
 		p.buf.WriteString(typeUseText(fn.TypeIdx))
-		writeParamDecls(&p.buf, p.m, fn.ParamNames, td.Params)
-		writeResultDecls(&p.buf, p.m, td.Results)
-		writeLocalDecls(&p.buf, p.m, fn.LocalNames, fn.Locals)
+		p.writeParamDecls(fn.ParamNames, td.Params)
+		p.writeResultDecls(td.Results)
+		p.writeLocalDecls(fn.LocalNames, fn.Locals)
 		body := fn.Body
 		if len(body) > 0 && body[len(body)-1].Kind == wasmir.InstrEnd {
 			body = body[:len(body)-1]
@@ -582,70 +582,72 @@ func (p *modulePrinter) writeIndent(level int) {
 	}
 }
 
-// writeParamDecls appends parameter declarations to buf, including names when
-// available.
-func writeParamDecls(buf *bytes.Buffer, m *wasmir.Module, names []string, params []wasmir.ValueType) {
+// writeParamDecls appends parameter declarations to the printer buffer,
+// including names when available.
+func (p *modulePrinter) writeParamDecls(names []string, params []wasmir.ValueType) {
 	for i, vt := range params {
-		buf.WriteString(" (param")
+		p.buf.WriteString(" (param")
 		if i < len(names) && names[i] != "" {
-			buf.WriteByte(' ')
-			buf.WriteString(formatID(names[i]))
+			p.buf.WriteByte(' ')
+			p.buf.WriteString(formatID(names[i]))
 		}
-		buf.WriteByte(' ')
-		buf.WriteString(valueTypeText(m, vt))
-		buf.WriteByte(')')
+		p.buf.WriteByte(' ')
+		p.buf.WriteString(valueTypeText(p.m, vt))
+		p.buf.WriteByte(')')
 	}
 }
 
-// writeResultDecls appends result declarations to buf.
-func writeResultDecls(buf *bytes.Buffer, m *wasmir.Module, results []wasmir.ValueType) {
+// writeResultDecls appends result declarations to the printer buffer.
+func (p *modulePrinter) writeResultDecls(results []wasmir.ValueType) {
 	for _, vt := range results {
-		buf.WriteString(" (result ")
-		buf.WriteString(valueTypeText(m, vt))
-		buf.WriteByte(')')
+		p.buf.WriteString(" (result ")
+		p.buf.WriteString(valueTypeText(p.m, vt))
+		p.buf.WriteByte(')')
 	}
 }
 
-// writeLocalDecls appends local declarations to buf, including names when
-// available.
-func writeLocalDecls(buf *bytes.Buffer, m *wasmir.Module, names []string, locals []wasmir.ValueType) {
+// writeLocalDecls appends local declarations to the printer buffer, including
+// names when available.
+func (p *modulePrinter) writeLocalDecls(names []string, locals []wasmir.ValueType) {
 	for i, vt := range locals {
-		buf.WriteString(" (local")
+		p.buf.WriteString(" (local")
 		if i < len(names) && names[i] != "" {
-			buf.WriteByte(' ')
-			buf.WriteString(formatID(names[i]))
+			p.buf.WriteByte(' ')
+			p.buf.WriteString(formatID(names[i]))
 		}
-		buf.WriteByte(' ')
-		buf.WriteString(valueTypeText(m, vt))
-		buf.WriteByte(')')
+		p.buf.WriteByte(' ')
+		p.buf.WriteString(valueTypeText(p.m, vt))
+		p.buf.WriteByte(')')
 	}
 }
 
-// writeTableType appends the textual form of a table type to buf.
-func writeTableType(buf *bytes.Buffer, m *wasmir.Module, table wasmir.Table) {
+// writeTableType appends the textual form of a table type to the printer
+// buffer.
+func (p *modulePrinter) writeTableType(table wasmir.Table) {
 	if table.AddressType == wasmir.ValueTypeI64 {
-		buf.WriteString(" i64")
+		p.buf.WriteString(" i64")
 	}
-	buf.WriteByte(' ')
-	buf.WriteString(strconv.FormatUint(table.Min, 10))
+	p.buf.WriteByte(' ')
+	p.buf.WriteString(strconv.FormatUint(table.Min, 10))
 	if table.Max != nil {
-		buf.WriteByte(' ')
-		buf.WriteString(strconv.FormatUint(*table.Max, 10))
+		p.buf.WriteByte(' ')
+		p.buf.WriteString(strconv.FormatUint(*table.Max, 10))
 	}
-	buf.WriteByte(' ')
-	buf.WriteString(valueTypeText(m, table.RefType))
+	p.buf.WriteByte(' ')
+	p.buf.WriteString(valueTypeText(p.m, table.RefType))
 }
 
-// writeMemoryType appends the textual form of a memory type to buf.
-func writeMemoryType(buf *bytes.Buffer, mem wasmir.Memory) {
+// writeMemoryType appends the textual form of a memory type to the printer
+// buffer.
+func (p *modulePrinter) writeMemoryType(mem wasmir.Memory) {
 	if mem.AddressType == wasmir.ValueTypeI64 {
-		buf.WriteString(" i64")
+		p.buf.WriteString(" i64")
 	}
-	buf.WriteByte(' ')
-	buf.WriteString(strconv.FormatUint(mem.Min, 10))
+	p.buf.WriteByte(' ')
+	p.buf.WriteString(strconv.FormatUint(mem.Min, 10))
 	if mem.Max != nil {
-		buf.WriteByte(' ')
-		buf.WriteString(strconv.FormatUint(*mem.Max, 10))
+		p.buf.WriteByte(' ')
+		p.buf.WriteString(strconv.FormatUint(*mem.Max, 10))
 	}
 }
 
