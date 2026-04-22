@@ -94,8 +94,8 @@ func (p *modulePrinter) printTypes() error {
 		switch td.Kind {
 		case wasmir.TypeDefKindFunc:
 			p.buf.WriteString("(func")
-			writeParamDecls(&p.buf, nil, td.Params)
-			writeResultDecls(&p.buf, td.Results)
+			writeParamDecls(&p.buf, p.m, nil, td.Params)
+			writeResultDecls(&p.buf, p.m, td.Results)
 			p.buf.WriteString("))\n")
 		case wasmir.TypeDefKindStruct:
 			p.buf.WriteString("(struct")
@@ -107,13 +107,13 @@ func (p *modulePrinter) printTypes() error {
 					p.buf.WriteString(formatID(field.Name))
 				}
 				p.buf.WriteByte(' ')
-				p.buf.WriteString(fieldTypeText(field))
+				p.buf.WriteString(fieldTypeText(p.m, field))
 				p.buf.WriteByte(')')
 			}
 			p.buf.WriteString("))\n")
 		case wasmir.TypeDefKindArray:
 			p.buf.WriteString("(array ")
-			p.buf.WriteString(fieldTypeText(td.ElemField))
+			p.buf.WriteString(fieldTypeText(p.m, td.ElemField))
 			p.buf.WriteString("))\n")
 		default:
 			return fmt.Errorf("unsupported type kind %d", td.Kind)
@@ -138,12 +138,12 @@ func (p *modulePrinter) printImports() error {
 			}
 			p.buf.WriteString("(func")
 			p.buf.WriteString(typeUseText(imp.TypeIdx))
-			writeParamDecls(&p.buf, nil, td.Params)
-			writeResultDecls(&p.buf, td.Results)
+			writeParamDecls(&p.buf, p.m, nil, td.Params)
+			writeResultDecls(&p.buf, p.m, td.Results)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindTable:
 			p.buf.WriteString("(table")
-			writeTableType(&p.buf, imp.Table)
+			writeTableType(&p.buf, p.m, imp.Table)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindMemory:
 			p.buf.WriteString("(memory")
@@ -151,7 +151,7 @@ func (p *modulePrinter) printImports() error {
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindGlobal:
 			p.buf.WriteString("(global ")
-			p.buf.WriteString(globalTypeText(imp.GlobalType, imp.GlobalMutable))
+			p.buf.WriteString(globalTypeText(p.m, imp.GlobalType, imp.GlobalMutable))
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindTag:
 			p.buf.WriteString("(tag")
@@ -171,9 +171,9 @@ func (p *modulePrinter) printDefinedTables() error {
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(table")
-		writeTableType(&p.buf, table)
+		writeTableType(&p.buf, p.m, table)
 		if len(table.Init) > 0 {
-			expr, err := formatConstExpr(table.Init)
+			expr, err := formatConstExpr(p.m, table.Init)
 			if err != nil {
 				return fmt.Errorf("table init: %w", err)
 			}
@@ -203,7 +203,7 @@ func (p *modulePrinter) printDefinedGlobals() error {
 		if g.ImportModule != "" {
 			continue
 		}
-		init, err := formatConstExpr(g.Init)
+		init, err := formatConstExpr(p.m, g.Init)
 		if err != nil {
 			return fmt.Errorf("global init: %w", err)
 		}
@@ -214,7 +214,7 @@ func (p *modulePrinter) printDefinedGlobals() error {
 			p.buf.WriteString(formatID(g.Name))
 		}
 		p.buf.WriteByte(' ')
-		p.buf.WriteString(globalTypeText(g.Type, g.Mutable))
+		p.buf.WriteString(globalTypeText(p.m, g.Type, g.Mutable))
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(init)
 		p.buf.WriteString(")\n")
@@ -252,9 +252,9 @@ func (p *modulePrinter) printFuncs() error {
 			p.buf.WriteString(formatID(fn.Name))
 		}
 		p.buf.WriteString(typeUseText(fn.TypeIdx))
-		writeParamDecls(&p.buf, fn.ParamNames, td.Params)
-		writeResultDecls(&p.buf, td.Results)
-		writeLocalDecls(&p.buf, fn.LocalNames, fn.Locals)
+		writeParamDecls(&p.buf, p.m, fn.ParamNames, td.Params)
+		writeResultDecls(&p.buf, p.m, td.Results)
+		writeLocalDecls(&p.buf, p.m, fn.LocalNames, fn.Locals)
 		body := fn.Body
 		if len(body) > 0 && body[len(body)-1].Kind == wasmir.InstrEnd {
 			body = body[:len(body)-1]
@@ -322,7 +322,7 @@ func (p *modulePrinter) printElements() error {
 			p.buf.WriteString(" (table ")
 			p.buf.WriteString(strconv.FormatUint(uint64(elem.TableIndex), 10))
 			p.buf.WriteByte(')')
-			offset, err := formatConstExpr(elemOffsetExprOrSynthetic(elem))
+			offset, err := formatConstExpr(p.m, elemOffsetExprOrSynthetic(elem))
 			if err != nil {
 				return fmt.Errorf("elem offset: %w", err)
 			}
@@ -334,9 +334,9 @@ func (p *modulePrinter) printElements() error {
 
 		if len(elem.Exprs) > 0 {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(valueTypeText(elem.RefType))
+			p.buf.WriteString(valueTypeText(p.m, elem.RefType))
 			for _, expr := range elem.Exprs {
-				text, err := formatElemItemExpr(expr)
+				text, err := formatElemItemExpr(p.m, expr)
 				if err != nil {
 					return err
 				}
@@ -367,7 +367,7 @@ func (p *modulePrinter) printData() error {
 				p.buf.WriteString(strconv.FormatUint(uint64(seg.MemoryIndex), 10))
 				p.buf.WriteByte(')')
 			}
-			offset, err := formatConstExpr(dataOffsetExprOrSynthetic(seg))
+			offset, err := formatConstExpr(p.m, dataOffsetExprOrSynthetic(seg))
 			if err != nil {
 				return fmt.Errorf("data offset: %w", err)
 			}
@@ -419,7 +419,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	name := def.TextName
 	switch ins.Kind {
 	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
-		return name + blockTypeText(ins), nil
+		return name + blockTypeText(p.m, ins), nil
 	case wasmir.InstrElse, wasmir.InstrEnd:
 		return name, nil
 	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
@@ -446,15 +446,17 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		return fmt.Sprintf("%s %d", name, ins.GlobalIndex), nil
 	case wasmir.InstrRefFunc:
 		return fmt.Sprintf("%s %d", name, ins.FuncIndex), nil
-	case wasmir.InstrRefNull, wasmir.InstrRefTest, wasmir.InstrRefCast:
-		return fmt.Sprintf("%s %s", name, valueTypeText(ins.RefType)), nil
+	case wasmir.InstrRefNull:
+		return fmt.Sprintf("%s %s", name, heapTypeText(p.m, ins.RefType.HeapType)), nil
+	case wasmir.InstrRefTest, wasmir.InstrRefCast:
+		return formatFoldedInstr(name, valueTypeText(p.m, ins.RefType)), nil
 	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
-		return fmt.Sprintf("%s %d %s %s", name, ins.BranchDepth, valueTypeText(ins.SourceRefType), valueTypeText(ins.RefType)), nil
+		return fmt.Sprintf("%s %d %s %s", name, ins.BranchDepth, valueTypeText(p.m, ins.SourceRefType), valueTypeText(p.m, ins.RefType)), nil
 	case wasmir.InstrSelect:
 		if ins.SelectType == nil {
 			return name, nil
 		}
-		return fmt.Sprintf("%s (result %s)", name, valueTypeText(*ins.SelectType)), nil
+		return fmt.Sprintf("%s (result %s)", name, valueTypeText(p.m, *ins.SelectType)), nil
 	case wasmir.InstrCallIndirect, wasmir.InstrReturnCallIndirect:
 		var b strings.Builder
 		b.WriteString(name)
@@ -478,36 +480,44 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		if ins.MemoryIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.MemoryIndex), nil
+		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.MemoryIndex), 10)), nil
 	case wasmir.InstrMemoryCopy:
 		if ins.MemoryIndex == 0 && ins.SourceMemoryIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.SourceMemoryIndex), nil
+		return formatFoldedInstr(name,
+			strconv.FormatUint(uint64(ins.MemoryIndex), 10),
+			strconv.FormatUint(uint64(ins.SourceMemoryIndex), 10)), nil
 	case wasmir.InstrMemoryInit:
 		if ins.MemoryIndex == 0 {
 			return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.DataIndex), nil
+		return formatFoldedInstr(name,
+			strconv.FormatUint(uint64(ins.MemoryIndex), 10),
+			strconv.FormatUint(uint64(ins.DataIndex), 10)), nil
 	case wasmir.InstrDataDrop:
 		return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
 	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
 		if ins.TableIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.TableIndex), nil
+		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.TableIndex), 10)), nil
 	case wasmir.InstrTableCopy:
 		if ins.TableIndex == 0 && ins.SourceTableIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.SourceTableIndex), nil
+		return formatFoldedInstr(name,
+			strconv.FormatUint(uint64(ins.TableIndex), 10),
+			strconv.FormatUint(uint64(ins.SourceTableIndex), 10)), nil
 	case wasmir.InstrTableInit:
 		if ins.TableIndex == 0 {
 			return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.ElemIndex), nil
+		return formatFoldedInstr(name,
+			strconv.FormatUint(uint64(ins.TableIndex), 10),
+			strconv.FormatUint(uint64(ins.ElemIndex), 10)), nil
 	case wasmir.InstrElemDrop:
-		return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
+		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.ElemIndex), 10)), nil
 	}
 
 	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {
@@ -526,7 +536,9 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrArrayNewElem, wasmir.InstrArrayInitElem:
 		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.ElemIndex), nil
 	case wasmir.InstrArrayNewFixed:
-		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.FixedCount), nil
+		return formatFoldedInstr(name,
+			strconv.FormatUint(uint64(ins.TypeIndex), 10),
+			strconv.FormatUint(uint64(ins.FixedCount), 10)), nil
 	case wasmir.InstrArrayCopy:
 		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.SourceTypeIndex), nil
 	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
@@ -572,7 +584,7 @@ func (p *modulePrinter) writeIndent(level int) {
 
 // writeParamDecls appends parameter declarations to buf, including names when
 // available.
-func writeParamDecls(buf *bytes.Buffer, names []string, params []wasmir.ValueType) {
+func writeParamDecls(buf *bytes.Buffer, m *wasmir.Module, names []string, params []wasmir.ValueType) {
 	for i, vt := range params {
 		buf.WriteString(" (param")
 		if i < len(names) && names[i] != "" {
@@ -580,23 +592,23 @@ func writeParamDecls(buf *bytes.Buffer, names []string, params []wasmir.ValueTyp
 			buf.WriteString(formatID(names[i]))
 		}
 		buf.WriteByte(' ')
-		buf.WriteString(valueTypeText(vt))
+		buf.WriteString(valueTypeText(m, vt))
 		buf.WriteByte(')')
 	}
 }
 
 // writeResultDecls appends result declarations to buf.
-func writeResultDecls(buf *bytes.Buffer, results []wasmir.ValueType) {
+func writeResultDecls(buf *bytes.Buffer, m *wasmir.Module, results []wasmir.ValueType) {
 	for _, vt := range results {
 		buf.WriteString(" (result ")
-		buf.WriteString(valueTypeText(vt))
+		buf.WriteString(valueTypeText(m, vt))
 		buf.WriteByte(')')
 	}
 }
 
 // writeLocalDecls appends local declarations to buf, including names when
 // available.
-func writeLocalDecls(buf *bytes.Buffer, names []string, locals []wasmir.ValueType) {
+func writeLocalDecls(buf *bytes.Buffer, m *wasmir.Module, names []string, locals []wasmir.ValueType) {
 	for i, vt := range locals {
 		buf.WriteString(" (local")
 		if i < len(names) && names[i] != "" {
@@ -604,13 +616,13 @@ func writeLocalDecls(buf *bytes.Buffer, names []string, locals []wasmir.ValueTyp
 			buf.WriteString(formatID(names[i]))
 		}
 		buf.WriteByte(' ')
-		buf.WriteString(valueTypeText(vt))
+		buf.WriteString(valueTypeText(m, vt))
 		buf.WriteByte(')')
 	}
 }
 
 // writeTableType appends the textual form of a table type to buf.
-func writeTableType(buf *bytes.Buffer, table wasmir.Table) {
+func writeTableType(buf *bytes.Buffer, m *wasmir.Module, table wasmir.Table) {
 	if table.AddressType == wasmir.ValueTypeI64 {
 		buf.WriteString(" i64")
 	}
@@ -621,7 +633,7 @@ func writeTableType(buf *bytes.Buffer, table wasmir.Table) {
 		buf.WriteString(strconv.FormatUint(*table.Max, 10))
 	}
 	buf.WriteByte(' ')
-	buf.WriteString(valueTypeText(table.RefType))
+	buf.WriteString(valueTypeText(m, table.RefType))
 }
 
 // writeMemoryType appends the textual form of a memory type to buf.
@@ -639,15 +651,15 @@ func writeMemoryType(buf *bytes.Buffer, mem wasmir.Memory) {
 
 // globalTypeText returns the WAT spelling of a global type, including
 // mutability.
-func globalTypeText(vt wasmir.ValueType, mutable bool) string {
+func globalTypeText(m *wasmir.Module, vt wasmir.ValueType, mutable bool) string {
 	if !mutable {
-		return valueTypeText(vt)
+		return valueTypeText(m, vt)
 	}
-	return "(mut " + valueTypeText(vt) + ")"
+	return "(mut " + valueTypeText(m, vt) + ")"
 }
 
 // fieldTypeText returns the WAT spelling of a struct or array field type.
-func fieldTypeText(ft wasmir.FieldType) string {
+func fieldTypeText(m *wasmir.Module, ft wasmir.FieldType) string {
 	var storage string
 	switch ft.Packed {
 	case wasmir.PackedTypeI8:
@@ -655,7 +667,7 @@ func fieldTypeText(ft wasmir.FieldType) string {
 	case wasmir.PackedTypeI16:
 		storage = "i16"
 	default:
-		storage = valueTypeText(ft.Type)
+		storage = valueTypeText(m, ft.Type)
 	}
 	if !ft.Mutable {
 		return storage
@@ -670,19 +682,136 @@ func typeUseText(typeIdx uint32) string {
 
 // blockTypeText formats the optional block type annotation for structured
 // control instructions.
-func blockTypeText(ins wasmir.Instruction) string {
+func blockTypeText(m *wasmir.Module, ins wasmir.Instruction) string {
 	if ins.BlockTypeUsesIndex {
 		return fmt.Sprintf(" (type %d)", ins.BlockTypeIndex)
 	}
 	if ins.BlockType == nil {
 		return ""
 	}
-	return " (result " + valueTypeText(*ins.BlockType) + ")"
+	return " (result " + valueTypeText(m, *ins.BlockType) + ")"
 }
 
 // valueTypeText returns the textual name of a value type.
-func valueTypeText(vt wasmir.ValueType) string {
-	return vt.String()
+func valueTypeText(m *wasmir.Module, vt wasmir.ValueType) string {
+	switch vt.Kind {
+	case wasmir.ValueKindI32, wasmir.ValueKindI64, wasmir.ValueKindF32, wasmir.ValueKindF64, wasmir.ValueKindV128:
+		return vt.String()
+	case wasmir.ValueKindRef:
+		switch vt.HeapType.Kind {
+		case wasmir.HeapKindFunc:
+			if vt.Nullable {
+				return "funcref"
+			}
+		case wasmir.HeapKindExtern:
+			if vt.Nullable {
+				return "externref"
+			}
+		case wasmir.HeapKindNone:
+			if vt.Nullable {
+				return "nullref"
+			}
+		case wasmir.HeapKindNoExtern:
+			if vt.Nullable {
+				return "nullexternref"
+			}
+		case wasmir.HeapKindNoFunc:
+			if vt.Nullable {
+				return "nullfuncref"
+			}
+		case wasmir.HeapKindExn:
+			if vt.Nullable {
+				return "exnref"
+			}
+		case wasmir.HeapKindNoExn:
+			if vt.Nullable {
+				return "nullexnref"
+			}
+		case wasmir.HeapKindAny:
+			if vt.Nullable {
+				return "anyref"
+			}
+		case wasmir.HeapKindEq:
+			if vt.Nullable {
+				return "eqref"
+			}
+		case wasmir.HeapKindI31:
+			if vt.Nullable {
+				return "i31ref"
+			}
+		case wasmir.HeapKindArray:
+			if vt.Nullable {
+				return "arrayref"
+			}
+		case wasmir.HeapKindStruct:
+			if vt.Nullable {
+				return "structref"
+			}
+		}
+		if vt.Nullable {
+			return "(ref null " + heapTypeText(m, vt.HeapType) + ")"
+		}
+		return "(ref " + heapTypeText(m, vt.HeapType) + ")"
+	default:
+		return vt.String()
+	}
+}
+
+// heapTypeText returns the textual spelling of a heap type, using type names
+// when available for indexed heap types.
+func heapTypeText(m *wasmir.Module, ht wasmir.HeapType) string {
+	switch ht.Kind {
+	case wasmir.HeapKindFunc:
+		return "func"
+	case wasmir.HeapKindExtern:
+		return "extern"
+	case wasmir.HeapKindNone:
+		return "none"
+	case wasmir.HeapKindNoExtern:
+		return "noextern"
+	case wasmir.HeapKindNoFunc:
+		return "nofunc"
+	case wasmir.HeapKindExn:
+		return "exn"
+	case wasmir.HeapKindNoExn:
+		return "noexn"
+	case wasmir.HeapKindAny:
+		return "any"
+	case wasmir.HeapKindEq:
+		return "eq"
+	case wasmir.HeapKindI31:
+		return "i31"
+	case wasmir.HeapKindArray:
+		return "array"
+	case wasmir.HeapKindStruct:
+		return "struct"
+	case wasmir.HeapKindTypeIndex:
+		return typeRefText(m, ht.TypeIndex)
+	default:
+		return fmt.Sprintf("heaptype(kind=%d)", ht.Kind)
+	}
+}
+
+// typeRefText formats a type reference using the type's name when available,
+// or its numeric index otherwise.
+func typeRefText(m *wasmir.Module, typeIdx uint32) string {
+	if m != nil && int(typeIdx) < len(m.Types) && m.Types[typeIdx].Name != "" {
+		return formatID(m.Types[typeIdx].Name)
+	}
+	return strconv.FormatUint(uint64(typeIdx), 10)
+}
+
+// formatFoldedInstr formats an instruction in folded s-expression form.
+func formatFoldedInstr(name string, operands ...string) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	b.WriteString(name)
+	for _, operand := range operands {
+		b.WriteByte(' ')
+		b.WriteString(operand)
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 // formatID normalizes an identifier into the `$name` form used in WAT.
@@ -698,7 +827,7 @@ func formatID(name string) string {
 
 // formatConstExpr formats a constant expression in parenthesized WAT form.
 // For now only a single non-final instruction is supported.
-func formatConstExpr(expr []wasmir.Instruction) (string, error) {
+func formatConstExpr(m *wasmir.Module, expr []wasmir.Instruction) (string, error) {
 	if len(expr) == 0 {
 		return "", fmt.Errorf("empty const expression")
 	}
@@ -708,7 +837,7 @@ func formatConstExpr(expr []wasmir.Instruction) (string, error) {
 	if len(expr) != 1 {
 		return "", fmt.Errorf("multi-instruction const expressions are not implemented yet")
 	}
-	text, err := instructionTextNoContext(expr[0])
+	text, err := instructionTextNoContext(m, expr[0])
 	if err != nil {
 		return "", err
 	}
@@ -716,7 +845,7 @@ func formatConstExpr(expr []wasmir.Instruction) (string, error) {
 }
 
 // formatElemItemExpr formats a single element-segment item expression.
-func formatElemItemExpr(expr []wasmir.Instruction) (string, error) {
+func formatElemItemExpr(m *wasmir.Module, expr []wasmir.Instruction) (string, error) {
 	if len(expr) == 0 {
 		return "", fmt.Errorf("empty elem item expression")
 	}
@@ -726,13 +855,13 @@ func formatElemItemExpr(expr []wasmir.Instruction) (string, error) {
 	if len(expr) != 1 {
 		return "", fmt.Errorf("multi-instruction elem item expressions are not implemented yet")
 	}
-	return instructionTextNoContext(expr[0])
+	return instructionTextNoContext(m, expr[0])
 }
 
 // instructionTextNoContext formats an instruction that does not need module or
 // function context for index-to-name resolution.
-func instructionTextNoContext(ins wasmir.Instruction) (string, error) {
-	p := modulePrinter{}
+func instructionTextNoContext(m *wasmir.Module, ins wasmir.Instruction) (string, error) {
+	p := modulePrinter{m: m}
 	return p.instructionText(ins, nil)
 }
 

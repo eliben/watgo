@@ -14,19 +14,6 @@ import (
 
 const wasmWatSamplesDir = "."
 
-// unsupportedPrintRoundTripSamples tracks sample directories that currently hit
-// known printer limitations during WAT -> wasm -> WAT -> wasm roundtrips.
-var unsupportedPrintRoundTripSamples = map[string]string{
-	"gc-array-of-structs":   "printer does not yet emit valid WAT for typed GC refs",
-	"gc-cast-check-and-i31": "printer does not yet emit valid WAT for typed GC refs",
-	"gc-cast-type":          "printer does not yet emit valid WAT for typed GC refs",
-	"gc-collect-demo":       "printer does not yet emit valid WAT for typed GC refs",
-	"gc-linked-list":        "printer does not yet emit valid WAT for typed GC refs",
-	"gc-print-scheme-pairs": "printer does not yet emit valid WAT for typed GC refs",
-	"memory-multiple":       "printer does not yet emit valid WAT for multi-memory instructions",
-	"reference-types":       "printer does not yet emit valid WAT for typed function references",
-}
-
 func TestWasmWatSamples(t *testing.T) {
 	// The upstream sample corpus should compile from source WAT and pass its
 	// JavaScript integration checks unchanged.
@@ -76,11 +63,6 @@ func runWasmWatSamples(t *testing.T, printRoundTrip bool) {
 
 	for _, sample := range samples {
 		t.Run(sample, func(t *testing.T) {
-			if printRoundTrip {
-				if reason, ok := unsupportedPrintRoundTripSamples[sample]; ok {
-					t.Skip(reason)
-				}
-			}
 			runWasmWatSample(t, nodePath, filepath.Join(wasmWatSamplesDir, sample), printRoundTrip)
 		})
 	}
