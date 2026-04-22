@@ -27,6 +27,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "parse":
 		return runParse(args[1:], stdin, stdout, stderr)
+	case "print":
+		return runPrint(args[1:], stdin, stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdin, stdout, stderr)
 	case "-V", "--version":
@@ -40,6 +42,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		switch args[1] {
 		case "parse":
 			return runParse([]string{"--help"}, stdin, stdout, stderr)
+		case "print":
+			return runPrint([]string{"--help"}, stdin, stdout, stderr)
 		case "validate":
 			return runValidate([]string{"--help"}, stdin, stdout, stderr)
 		default:
@@ -137,6 +141,63 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// runPrint implements `watgo print`.
+//
+// args are the subcommand arguments after the "print" token. Input is read
+// either from the optional positional path or from stdin when the path is
+// omitted or "-". Only binary wasm input is accepted for now.
+func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, err := normalizeArgs(args, map[string]bool{
+		"-o":       true,
+		"--output": true,
+		"-h":       false,
+		"--help":   false,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
+		return 2
+	}
+
+	fs := flag.NewFlagSet("print", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	outputPath := fs.String("output", "", "")
+	fs.StringVar(outputPath, "o", "", "")
+	fs.Usage = func() {
+		printPrintUsage(stderr)
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() > 1 {
+		fmt.Fprintln(stderr, "watgo print: too many arguments")
+		printPrintUsage(stderr)
+		return 2
+	}
+
+	inputPath := "-"
+	if fs.NArg() == 1 {
+		inputPath = fs.Arg(0)
+	}
+	src, err := readInput(inputPath, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
+		return 1
+	}
+	if !isBinaryWasm(src) {
+		fmt.Fprintln(stderr, "watgo print: only binary wasm input is supported for now")
+		return 1
+	}
+
+	_ = outputPath
+	_ = stdout
+	fmt.Fprintln(stderr, "watgo print: not implemented yet")
+	return 1
 }
 
 // runValidate implements `watgo validate`.
@@ -260,10 +321,12 @@ func printRootUsage(w io.Writer) {
 
 Usage:
   watgo parse [OPTIONS] [INPUT]
+  watgo print [OPTIONS] [INPUT]
   watgo validate [INPUT]
 
 Commands:
   parse              Parse WebAssembly text format and write binary output
+  print              Print a WebAssembly binary as text
   validate           Validate a WebAssembly text or binary file
   help               Show help for the root command or a subcommand
   -V, --version      Print version information
@@ -295,6 +358,24 @@ Arguments:
 Options:
   -o, --output <OUTPUT>
             Where to place binary output. If omitted, stdout is used.
+  -h, --help
+            Print help
+`)
+}
+
+// printPrintUsage prints help text for `watgo print`.
+func printPrintUsage(w io.Writer) {
+	fmt.Fprint(w, `Print a WebAssembly binary as text.
+
+Usage:
+  watgo print [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]    Input file to process, or "-" for stdin
+
+Options:
+  -o, --output <OUTPUT>
+            Where to place text output. If omitted, stdout is used.
   -h, --help
             Print help
 `)

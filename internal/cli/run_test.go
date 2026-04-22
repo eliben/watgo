@@ -113,6 +113,42 @@ func TestRunValidateWASM(t *testing.T) {
 	}
 }
 
+func TestRunPrintBinaryWASMNotImplementedYet(t *testing.T) {
+	// The initial `print` CLI plumbing should accept binary wasm input and
+	// reach a clear temporary not-implemented error path.
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print"}, bytes.NewReader(wasm), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("Run returned %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "not implemented yet") {
+		t.Fatalf("stderr %q does not contain not-implemented message", stderr.String())
+	}
+}
+
+func TestRunPrintRejectsTextInputForNow(t *testing.T) {
+	// The initial `print` command should reject text input until WAT emission is
+	// implemented.
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print"}, strings.NewReader("(module)"), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("Run returned %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "only binary wasm input is supported for now") {
+		t.Fatalf("stderr %q does not contain text-input rejection", stderr.String())
+	}
+}
+
 func TestRunRootHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"help"}, strings.NewReader(""), &stdout, &stderr)
@@ -127,6 +163,9 @@ func TestRunRootHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "watgo parse") {
 		t.Fatalf("stdout %q does not mention parse", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "watgo print") {
+		t.Fatalf("stdout %q does not mention print", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "--version") {
 		t.Fatalf("stdout %q does not mention version", stdout.String())
@@ -189,6 +228,36 @@ func TestRunHelpParse(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "watgo parse [OPTIONS] [INPUT]") {
 		t.Fatalf("stderr %q does not contain parse usage", stderr.String())
+	}
+}
+
+func TestRunPrintHelp(t *testing.T) {
+	// `watgo print --help` should show the print subcommand usage.
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print", "--help"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "watgo print [OPTIONS] [INPUT]") {
+		t.Fatalf("stderr %q does not contain print usage", stderr.String())
+	}
+}
+
+func TestRunHelpPrint(t *testing.T) {
+	// `watgo help print` should show the same print subcommand usage.
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"help", "print"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "watgo print [OPTIONS] [INPUT]") {
+		t.Fatalf("stderr %q does not contain print usage", stderr.String())
 	}
 }
 
