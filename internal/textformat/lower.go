@@ -2460,6 +2460,22 @@ func (fl *functionLowerer) lowerPlainCallIndirect(pi *PlainInstr) {
 	fl.lowerFoldedCallIndirect(fi)
 }
 
+// lowerPlainRefTestCast lowers flat ref.test/ref.cast forms that carry one
+// reference type immediate.
+func (fl *functionLowerer) lowerPlainRefTestCast(pi *PlainInstr) {
+	if len(pi.Operands) != 1 {
+		fl.diagf(pi.Loc(), "%s expects 1 operand", pi.Name)
+		return
+	}
+	refType, ok := lowerCastTypeOperand(pi.Operands[0], fl.mod.typesByName)
+	if !ok {
+		fl.diagf(pi.Operands[0].Loc(), "invalid %s reference type", pi.Name)
+		return
+	}
+	kind, _ := instructionKind(pi.Name)
+	fl.emitInstr(wasmir.Instruction{Kind: kind, RefType: refType, SourceLoc: pi.Loc()})
+}
+
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
@@ -2516,6 +2532,9 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		return
 	case "call_indirect":
 		fl.lowerPlainCallIndirect(pi)
+		return
+	case "ref.test", "ref.cast":
+		fl.lowerPlainRefTestCast(pi)
 		return
 	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill", "struct.new", "struct.new_default":
 		if len(pi.Operands) != 1 {

@@ -356,6 +356,46 @@ func TestLowerModule_LowersPassiveDataAndMemoryInit(t *testing.T) {
 	}
 }
 
+func TestLowerModule_LowersPlainRefTestCast(t *testing.T) {
+	wat := `(module
+  (type $T (struct))
+  (func (param anyref)
+    local.get 0
+    ref.test (ref $T)
+    local.get 0
+    ref.cast anyref
+    drop
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) != 6 {
+		t.Fatalf("got %d body instructions, want 6", len(body))
+	}
+	if body[1].Kind != wasmir.InstrRefTest {
+		t.Fatalf("body[1]=%#v, want ref.test", body[1])
+	}
+	if got := body[1].RefType; got.Kind != wasmir.ValueKindRef || got.Nullable || got.HeapType.Kind != wasmir.HeapKindTypeIndex || got.HeapType.TypeIndex != 0 {
+		t.Fatalf("ref.test type=%#v, want non-null ref type[0]", got)
+	}
+	if body[3].Kind != wasmir.InstrRefCast {
+		t.Fatalf("body[3]=%#v, want ref.cast", body[3])
+	}
+	if got := body[3].RefType; got != wasmir.RefTypeAny(true) {
+		t.Fatalf("ref.cast type=%#v, want anyref", got)
+	}
+}
+
 func TestLowerModule_LowersFoldedIf(t *testing.T) {
 	wat := `(module
   (func (result i64)
