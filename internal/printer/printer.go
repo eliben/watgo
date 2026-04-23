@@ -80,44 +80,98 @@ func (p *modulePrinter) printModule() error {
 
 func (p *modulePrinter) printTypes() error {
 	for i := 0; i < len(p.m.Types); i++ {
-		td := p.m.Types[i]
-		if td.RecGroupSize != 0 || td.SubType {
-			return fmt.Errorf("printing recursive/subtype type definitions is not implemented yet")
+		groupSize := int(p.m.Types[i].RecGroupSize)
+		if groupSize > 0 {
+			if i+groupSize > len(p.m.Types) {
+				return fmt.Errorf("recursive type group at %d has invalid size %d", i, groupSize)
+			}
+			// Module.Types is flattened, but the text format groups recursive
+			// types under one wrapper:
+			//   (rec
+			//     (type $a (sub (struct ...)))
+			//     (type $b (sub $a (struct ...))))
+			p.writeIndent(1)
+			p.buf.WriteString("(rec\n")
+			for j := 0; j < groupSize; j++ {
+				if err := p.printTypeDef(i+j, 2); err != nil {
+					return err
+				}
+			}
+			p.writeIndent(1)
+			p.buf.WriteString(")\n")
+			i += groupSize - 1
+			continue
 		}
-		p.writeIndent(1)
-		p.buf.WriteString("(type")
-		if td.Name != "" {
+		if err := p.printTypeDef(i, 1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printTypeDef emits one `(type ...)` declaration at the requested indentation.
+func (p *modulePrinter) printTypeDef(typeIdx int, indent int) error {
+	td := p.m.Types[typeIdx]
+	p.writeIndent(indent)
+	p.buf.WriteString("(type")
+	if td.Name != "" {
+		p.buf.WriteByte(' ')
+		p.buf.WriteString(formatID(td.Name))
+	}
+	p.buf.WriteByte(' ')
+	if td.SubType {
+		// Subtype metadata wraps the ordinary composite type body:
+		//   (type $child (sub final $base (struct (field i32))))
+		p.buf.WriteString("(sub")
+		if td.Final {
+			p.buf.WriteString(" final")
+		}
+		for _, super := range td.SuperTypes {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(td.Name))
+			p.buf.WriteString(typeRefText(p.m, super))
 		}
 		p.buf.WriteByte(' ')
-		switch td.Kind {
-		case wasmir.TypeDefKindFunc:
-			p.buf.WriteString("(func")
-			p.writeParamDecls(nil, td.Params)
-			p.writeResultDecls(td.Results)
-			p.buf.WriteString("))\n")
-		case wasmir.TypeDefKindStruct:
-			p.buf.WriteString("(struct")
-			for _, field := range td.Fields {
-				p.buf.WriteByte(' ')
-				p.buf.WriteString("(field")
-				if field.Name != "" {
-					p.buf.WriteByte(' ')
-					p.buf.WriteString(formatID(field.Name))
-				}
-				p.buf.WriteByte(' ')
-				p.buf.WriteString(fieldTypeText(p.m, field))
-				p.buf.WriteByte(')')
-			}
-			p.buf.WriteString("))\n")
-		case wasmir.TypeDefKindArray:
-			p.buf.WriteString("(array ")
-			p.buf.WriteString(fieldTypeText(p.m, td.ElemField))
-			p.buf.WriteString("))\n")
-		default:
-			return fmt.Errorf("unsupported type kind %d", td.Kind)
+		if err := p.writeTypeBody(td); err != nil {
+			return err
 		}
+		p.buf.WriteString("))\n")
+		return nil
+	}
+	if err := p.writeTypeBody(td); err != nil {
+		return err
+	}
+	p.buf.WriteString(")\n")
+	return nil
+}
+
+// writeTypeBody appends a function, struct, or array type body.
+func (p *modulePrinter) writeTypeBody(td wasmir.TypeDef) error {
+	switch td.Kind {
+	case wasmir.TypeDefKindFunc:
+		p.buf.WriteString("(func")
+		p.writeParamDecls(nil, td.Params)
+		p.writeResultDecls(td.Results)
+		p.buf.WriteByte(')')
+	case wasmir.TypeDefKindStruct:
+		p.buf.WriteString("(struct")
+		for _, field := range td.Fields {
+			p.buf.WriteByte(' ')
+			p.buf.WriteString("(field")
+			if field.Name != "" {
+				p.buf.WriteByte(' ')
+				p.buf.WriteString(formatID(field.Name))
+			}
+			p.buf.WriteByte(' ')
+			p.buf.WriteString(fieldTypeText(p.m, field))
+			p.buf.WriteByte(')')
+		}
+		p.buf.WriteByte(')')
+	case wasmir.TypeDefKindArray:
+		p.buf.WriteString("(array ")
+		p.buf.WriteString(fieldTypeText(p.m, td.ElemField))
+		p.buf.WriteByte(')')
+	default:
+		return fmt.Errorf("unsupported type kind %d", td.Kind)
 	}
 	return nil
 }

@@ -197,6 +197,39 @@ func TestPrintModule_TryTableRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrintModule_RecursiveSubtypeRoundTrip(t *testing.T) {
+	// Recursive and subtype type declarations should print using `(rec ...)`
+	// and `(sub ...)` wrappers that compile back to the same binary.
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (rec
+    (type $base (sub (struct)))
+    (type $child (sub final $base (struct (field i32))))
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	printed := printDecodedModule(t, wasm)
+	printedText := string(printed)
+	for _, want := range []string{
+		"(rec",
+		"(type $base (sub (struct)))",
+		"(type $child (sub final $base (struct (field i32))))",
+	} {
+		if !strings.Contains(printedText, want) {
+			t.Fatalf("printed WAT missing %q:\n%s", want, printed)
+		}
+	}
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("roundtrip mismatch\nprinted:\n%s", printed)
+	}
+}
+
 func printDecodedModule(t *testing.T, wasm []byte) []byte {
 	t.Helper()
 
