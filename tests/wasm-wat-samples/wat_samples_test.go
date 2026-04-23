@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,28 +22,19 @@ func TestWasmWatSamples(t *testing.T) {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
 	}
 
-	runWasmWatSamples(t, false)
+	runWasmWatSamplesWith(t, runWasmWatSample)
 }
 
 func TestWasmWatSamplesPrintRoundTrip(t *testing.T) {
-	// The sample corpus should still pass its integration checks after each WAT
-	// module is compiled to wasm, printed back to WAT, and recompiled.
-	if os.Getenv("WATGO_INTEGRATION") == "0" {
-		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
-	}
-
-	runWasmWatSamples(t, true)
+	// Each sample module should remain byte-for-byte stable after a
+	// wasm->print->wat->wasm roundtrip.
+	runWasmWatSamplesWith(t, checkWasmWatSamplePrintRoundTrip)
 }
 
-// runWasmWatSamples executes the sample corpus, optionally forcing each module
-// through a print roundtrip before running its JavaScript integration check.
-func runWasmWatSamples(t *testing.T, printRoundTrip bool) {
+// runWasmWatSamplesWith discovers the sample directories once and runs fn for
+// each sample as its own subtest.
+func runWasmWatSamplesWith(t *testing.T, fn func(t *testing.T, srcDir string)) {
 	t.Helper()
-
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatalf("node executable not found (set WATGO_INTEGRATION=0 to skip integration tests): %v", err)
-	}
 
 	entries, err := os.ReadDir(wasmWatSamplesDir)
 	if err != nil {
@@ -63,16 +55,20 @@ func runWasmWatSamples(t *testing.T, printRoundTrip bool) {
 
 	for _, sample := range samples {
 		t.Run(sample, func(t *testing.T) {
-			runWasmWatSample(t, nodePath, filepath.Join(wasmWatSamplesDir, sample), printRoundTrip)
+			fn(t, filepath.Join(wasmWatSamplesDir, sample))
 		})
 	}
 }
 
 // runWasmWatSample prepares one sample directory, compiles its WAT files, and
-// runs the sample's Node.js test script. When printRoundTrip is true, each
-// module is recompiled from printer output before execution.
-func runWasmWatSample(t *testing.T, nodePath, srcDir string, printRoundTrip bool) {
+// runs the sample's Node.js test script.
+func runWasmWatSample(t *testing.T, srcDir string) {
 	t.Helper()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("node executable not found (set WATGO_INTEGRATION=0 to skip integration tests): %v", err)
+	}
 
 	workDir := filepath.Join(t.TempDir(), filepath.Base(srcDir))
 	if err := copyDirFiles(srcDir, workDir); err != nil {
@@ -101,20 +97,6 @@ func runWasmWatSample(t *testing.T, nodePath, srcDir string, printRoundTrip bool
 		if err != nil {
 			t.Fatalf("CompileWATToWASM %q failed: %v", watPath, err)
 		}
-		if printRoundTrip {
-			decoded, err := watgo.DecodeWASM(wasmBytes)
-			if err != nil {
-				t.Fatalf("DecodeWASM %q failed: %v", watPath, err)
-			}
-			printed, err := printer.PrintModule(decoded)
-			if err != nil {
-				t.Fatalf("PrintModule %q failed: %v", watPath, err)
-			}
-			wasmBytes, err = watgo.CompileWATToWASM(printed)
-			if err != nil {
-				t.Fatalf("CompileWATToWASM(print output for %q) failed: %v\nprinted:\n%s", watPath, err, printed)
-			}
-		}
 
 		wasmPath := strings.TrimSuffix(watPath, filepath.Ext(watPath)) + ".wasm"
 		if err := os.WriteFile(wasmPath, wasmBytes, 0o644); err != nil {
@@ -136,6 +118,55 @@ func runWasmWatSample(t *testing.T, nodePath, srcDir string, printRoundTrip bool
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node %q failed: %v\noutput:\n%s", testJSPath, err, out)
+	}
+}
+
+// checkWasmWatSamplePrintRoundTrip verifies that every WAT module in one sample
+// directory is byte-stable after a print roundtrip.
+func checkWasmWatSamplePrintRoundTrip(t *testing.T, srcDir string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		t.Fatalf("ReadDir %q failed: %v", srcDir, err)
+	}
+
+	watCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".wat") {
+			continue
+		}
+
+		watCount++
+		watPath := filepath.Join(srcDir, entry.Name())
+		src, err := os.ReadFile(watPath)
+		if err != nil {
+			t.Fatalf("ReadFile %q failed: %v", watPath, err)
+		}
+
+		wasmBytes, err := watgo.CompileWATToWASM(src)
+		if err != nil {
+			t.Fatalf("CompileWATToWASM %q failed: %v", watPath, err)
+		}
+		decoded, err := watgo.DecodeWASM(wasmBytes)
+		if err != nil {
+			t.Fatalf("DecodeWASM %q failed: %v", watPath, err)
+		}
+		printed, err := printer.PrintModule(decoded)
+		if err != nil {
+			t.Fatalf("PrintModule %q failed: %v", watPath, err)
+		}
+		roundTripped, err := watgo.CompileWATToWASM(printed)
+		if err != nil {
+			t.Fatalf("CompileWATToWASM(print output for %q) failed: %v\nprinted:\n%s", watPath, err, printed)
+		}
+		if !bytes.Equal(roundTripped, wasmBytes) {
+			t.Fatalf("print roundtrip changed bytes for %q\nprinted:\n%s", watPath, printed)
+		}
+	}
+
+	if watCount == 0 {
+		t.Fatalf("no .wat files found in %q", srcDir)
 	}
 }
 
