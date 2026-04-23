@@ -449,7 +449,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrRefNull:
 		return fmt.Sprintf("%s %s", name, heapTypeText(p.m, ins.RefType.HeapType)), nil
 	case wasmir.InstrRefTest, wasmir.InstrRefCast:
-		return formatFoldedInstr(name, valueTypeText(p.m, ins.RefType)), nil
+		return fmt.Sprintf("%s %s", name, valueTypeText(p.m, ins.RefType)), nil
 	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
 		return fmt.Sprintf("%s %d %s %s", name, ins.BranchDepth, valueTypeText(p.m, ins.SourceRefType), valueTypeText(p.m, ins.RefType)), nil
 	case wasmir.InstrSelect:
@@ -480,44 +480,36 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		if ins.MemoryIndex == 0 {
 			return name, nil
 		}
-		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.MemoryIndex), 10)), nil
+		return fmt.Sprintf("%s %d", name, ins.MemoryIndex), nil
 	case wasmir.InstrMemoryCopy:
 		if ins.MemoryIndex == 0 && ins.SourceMemoryIndex == 0 {
 			return name, nil
 		}
-		return formatFoldedInstr(name,
-			strconv.FormatUint(uint64(ins.MemoryIndex), 10),
-			strconv.FormatUint(uint64(ins.SourceMemoryIndex), 10)), nil
+		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.SourceMemoryIndex), nil
 	case wasmir.InstrMemoryInit:
 		if ins.MemoryIndex == 0 {
 			return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
 		}
-		return formatFoldedInstr(name,
-			strconv.FormatUint(uint64(ins.MemoryIndex), 10),
-			strconv.FormatUint(uint64(ins.DataIndex), 10)), nil
+		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.DataIndex), nil
 	case wasmir.InstrDataDrop:
 		return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
 	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
 		if ins.TableIndex == 0 {
 			return name, nil
 		}
-		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.TableIndex), 10)), nil
+		return fmt.Sprintf("%s %d", name, ins.TableIndex), nil
 	case wasmir.InstrTableCopy:
 		if ins.TableIndex == 0 && ins.SourceTableIndex == 0 {
 			return name, nil
 		}
-		return formatFoldedInstr(name,
-			strconv.FormatUint(uint64(ins.TableIndex), 10),
-			strconv.FormatUint(uint64(ins.SourceTableIndex), 10)), nil
+		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.SourceTableIndex), nil
 	case wasmir.InstrTableInit:
 		if ins.TableIndex == 0 {
 			return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
 		}
-		return formatFoldedInstr(name,
-			strconv.FormatUint(uint64(ins.TableIndex), 10),
-			strconv.FormatUint(uint64(ins.ElemIndex), 10)), nil
+		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.ElemIndex), nil
 	case wasmir.InstrElemDrop:
-		return formatFoldedInstr(name, strconv.FormatUint(uint64(ins.ElemIndex), 10)), nil
+		return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
 	}
 
 	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {
@@ -536,9 +528,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrArrayNewElem, wasmir.InstrArrayInitElem:
 		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.ElemIndex), nil
 	case wasmir.InstrArrayNewFixed:
-		return formatFoldedInstr(name,
-			strconv.FormatUint(uint64(ins.TypeIndex), 10),
-			strconv.FormatUint(uint64(ins.FixedCount), 10)), nil
+		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.FixedCount), nil
 	case wasmir.InstrArrayCopy:
 		return fmt.Sprintf("%s %d %d", name, ins.TypeIndex, ins.SourceTypeIndex), nil
 	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
@@ -801,19 +791,6 @@ func typeRefText(m *wasmir.Module, typeIdx uint32) string {
 		return formatID(m.Types[typeIdx].Name)
 	}
 	return strconv.FormatUint(uint64(typeIdx), 10)
-}
-
-// formatFoldedInstr formats an instruction in folded s-expression form.
-func formatFoldedInstr(name string, operands ...string) string {
-	var b strings.Builder
-	b.WriteByte('(')
-	b.WriteString(name)
-	for _, operand := range operands {
-		b.WriteByte(' ')
-		b.WriteString(operand)
-	}
-	b.WriteByte(')')
-	return b.String()
 }
 
 // formatID normalizes an identifier into the `$name` form used in WAT.

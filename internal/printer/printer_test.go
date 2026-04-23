@@ -2,6 +2,7 @@ package printer
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/eliben/watgo"
@@ -55,6 +56,54 @@ func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(roundTrip, wasm) {
 		t.Fatalf("roundtrip mismatch\nprinted:\n%s", printed)
+	}
+}
+
+func TestPrintModule_PrintsFormerlyFoldedInstructionsFlat(t *testing.T) {
+	// Instructions that used folded printer output only to satisfy parser gaps
+	// should now print as ordinary flat instruction lines.
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (type $Box (array (ref eq)))
+  (memory 1)
+  (memory 1)
+  (func (param anyref) (result i32)
+    local.get 0
+    ref.test (ref i31)
+    local.get 0
+    ref.cast anyref
+    drop
+  )
+  (func (param i32)
+    i32.const 0
+    i32.const 0
+    local.get 0
+    memory.copy 1 0
+  )
+  (func (result (ref $Box))
+    i32.const 1
+    ref.i31
+    array.new_fixed $Box 1
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	printed := printDecodedModule(t, wasm)
+	printedText := string(printed)
+	for _, folded := range []string{"(ref.test", "(ref.cast", "(memory.copy", "(array.new_fixed"} {
+		if strings.Contains(printedText, folded) {
+			t.Fatalf("printed WAT contains folded %q form:\n%s", folded, printed)
+		}
+	}
+	for _, flat := range []string{"ref.test (ref i31)", "ref.cast anyref", "memory.copy 1 0", "array.new_fixed 0 1"} {
+		if !strings.Contains(printedText, flat) {
+			t.Fatalf("printed WAT missing flat %q form:\n%s", flat, printed)
+		}
+	}
+
+	if _, err := watgo.CompileWATToWASM(printed); err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
 	}
 }
 
