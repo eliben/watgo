@@ -486,6 +486,36 @@ func TestLowerModule_Memory64DataOffset(t *testing.T) {
 	}
 }
 
+func TestLowerModule_FlatConstExprContexts(t *testing.T) {
+	wat := `(module
+  (memory 1)
+  (table 1 funcref)
+  (func)
+  (global i32 i32.const 1 i32.const 2 i32.add)
+  (data (offset i32.const 3 i32.const 4 i32.add) "x")
+  (elem (offset i32.const 0 i32.const 0 i32.add) func 0)
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	if got := m.Globals[0].Init; len(got) != 3 || got[2].Kind != wasmir.InstrI32Add {
+		t.Fatalf("global init=%#v, want flat i32.add const expression", got)
+	}
+	if got := m.Data[0].OffsetI64; got != 7 {
+		t.Fatalf("data offset=%d, want 7", got)
+	}
+	if got := m.Elements[0].OffsetI64; got != 0 {
+		t.Fatalf("elem offset=%d, want 0", got)
+	}
+}
+
 func TestLowerModule_Memory64MemArgOffset(t *testing.T) {
 	wat := `(module
   (memory i64 1)

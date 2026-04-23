@@ -35,6 +35,15 @@ func mustFoldedInstr(t *testing.T, instr Instruction) *FoldedInstr {
 	return fi
 }
 
+func mustInstrSeq(t *testing.T, instr Instruction) *InstrSeq {
+	t.Helper()
+	seq, ok := instr.(*InstrSeq)
+	if !ok {
+		t.Fatalf("expected *InstrSeq, got %T", instr)
+	}
+	return seq
+}
+
 func showForTest(sx *SExpr) string {
 	if sx.IsList() {
 		var parts []string
@@ -791,6 +800,31 @@ func TestParseModule_DataOffsetClause(t *testing.T) {
 	fi := mustFoldedInstr(t, m.Data[0].Offset)
 	if fi.Name != "i32.const" {
 		t.Fatalf("offset instruction name=%q, want i32.const", fi.Name)
+	}
+}
+
+func TestParseModule_FlatConstExprContexts(t *testing.T) {
+	wat := `(module
+  (global i32 i32.const 1 i32.const 2 i32.add)
+  (data (offset i32.const 3 i32.const 4 i32.add) "x")
+  (elem (offset i32.const 0 i32.const 0 i32.add) func)
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	globalInit := mustInstrSeq(t, m.Globals[0].Init)
+	if len(globalInit.Instrs) != 3 {
+		t.Fatalf("global init has %d instructions, want 3", len(globalInit.Instrs))
+	}
+	dataOffset := mustInstrSeq(t, m.Data[0].Offset)
+	if len(dataOffset.Instrs) != 3 {
+		t.Fatalf("data offset has %d instructions, want 3", len(dataOffset.Instrs))
+	}
+	elemOffset := mustInstrSeq(t, m.Elems[0].Offset)
+	if len(elemOffset.Instrs) != 3 {
+		t.Fatalf("elem offset has %d instructions, want 3", len(elemOffset.Instrs))
 	}
 }
 

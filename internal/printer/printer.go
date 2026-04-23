@@ -326,8 +326,9 @@ func (p *modulePrinter) printElements() error {
 			if err != nil {
 				return fmt.Errorf("elem offset: %w", err)
 			}
-			p.buf.WriteByte(' ')
+			p.buf.WriteString(" (offset ")
 			p.buf.WriteString(offset)
+			p.buf.WriteByte(')')
 		default:
 			return fmt.Errorf("unsupported element mode %d", elem.Mode)
 		}
@@ -371,8 +372,9 @@ func (p *modulePrinter) printData() error {
 			if err != nil {
 				return fmt.Errorf("data offset: %w", err)
 			}
-			p.buf.WriteByte(' ')
+			p.buf.WriteString(" (offset ")
 			p.buf.WriteString(offset)
+			p.buf.WriteByte(')')
 		}
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(quoteString(seg.Init))
@@ -804,8 +806,8 @@ func formatID(name string) string {
 	return "$" + name
 }
 
-// formatConstExpr formats a constant expression in parenthesized WAT form.
-// For now only a single non-final instruction is supported.
+// formatConstExpr formats a constant expression as a flat WAT instruction
+// sequence, matching wasm-tools' default print style.
 func formatConstExpr(m *wasmir.Module, expr []wasmir.Instruction) (string, error) {
 	if len(expr) == 0 {
 		return "", fmt.Errorf("empty const expression")
@@ -813,14 +815,10 @@ func formatConstExpr(m *wasmir.Module, expr []wasmir.Instruction) (string, error
 	if expr[len(expr)-1].Kind == wasmir.InstrEnd {
 		expr = expr[:len(expr)-1]
 	}
-	if len(expr) != 1 {
-		return "", fmt.Errorf("multi-instruction const expressions are not implemented yet")
+	if len(expr) == 0 {
+		return "", fmt.Errorf("empty const expression")
 	}
-	text, err := instructionTextNoContext(m, expr[0])
-	if err != nil {
-		return "", err
-	}
-	return "(" + text + ")", nil
+	return formatConstExprInstructions(m, expr)
 }
 
 // formatElemItemExpr formats a single element-segment item expression.
@@ -831,10 +829,24 @@ func formatElemItemExpr(m *wasmir.Module, expr []wasmir.Instruction) (string, er
 	if expr[len(expr)-1].Kind == wasmir.InstrEnd {
 		expr = expr[:len(expr)-1]
 	}
-	if len(expr) != 1 {
-		return "", fmt.Errorf("multi-instruction elem item expressions are not implemented yet")
+	if len(expr) == 0 {
+		return "", fmt.Errorf("empty elem item expression")
 	}
-	return instructionTextNoContext(m, expr[0])
+	return formatConstExprInstructions(m, expr)
+}
+
+// formatConstExprInstructions prints a constant expression as a space-separated
+// flat instruction sequence.
+func formatConstExprInstructions(m *wasmir.Module, expr []wasmir.Instruction) (string, error) {
+	parts := make([]string, 0, len(expr))
+	for _, ins := range expr {
+		text, err := instructionTextNoContext(m, ins)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, text)
+	}
+	return strings.Join(parts, " "), nil
 }
 
 // instructionTextNoContext formats an instruction that does not need module or

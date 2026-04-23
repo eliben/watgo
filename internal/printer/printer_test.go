@@ -107,6 +107,65 @@ func TestPrintModule_PrintsFormerlyFoldedInstructionsFlat(t *testing.T) {
 	}
 }
 
+func TestPrintModule_MultiInstructionConstExprRoundTrip(t *testing.T) {
+	// Multi-instruction constant expressions should print as flat instruction
+	// sequences that compile back to the same binary.
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (memory 1)
+  (global i32 (i32.add (i32.const 1) (i32.const 2)))
+  (data (i32.add (i32.const 4) (i32.const 5)) "x")
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	printed := printDecodedModule(t, wasm)
+	printedText := string(printed)
+	for _, want := range []string{
+		"(global i32 i32.const 1 i32.const 2 i32.add)",
+		"(data (offset i32.const 4 i32.const 5 i32.add) \"x\")",
+	} {
+		if !strings.Contains(printedText, want) {
+			t.Fatalf("printed WAT missing %q:\n%s", want, printed)
+		}
+	}
+
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("roundtrip mismatch\nprinted:\n%s", printed)
+	}
+}
+
+func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
+	// GC aggregate constant expressions should print as flat WAT in table
+	// initializers and element item expressions.
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (type $Arr (array i32))
+  (table 1 (ref $Arr) i32.const 4 array.new_default $Arr)
+  (elem declare (ref $Arr) (item i32.const 7 i32.const 8 array.new_fixed $Arr 2))
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	printed := printDecodedModule(t, wasm)
+	printedText := string(printed)
+	for _, want := range []string{
+		"i32.const 4 array.new_default 0",
+		"(item i32.const 7 i32.const 8 array.new_fixed 0 2)",
+	} {
+		if !strings.Contains(printedText, want) {
+			t.Fatalf("printed WAT missing %q:\n%s", want, printed)
+		}
+	}
+	if _, err := watgo.CompileWATToWASM(printed); err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+}
+
 func printDecodedModule(t *testing.T, wasm []byte) []byte {
 	t.Helper()
 

@@ -3586,7 +3586,8 @@ type loweredConstInstr struct {
 // Supported forms are:
 //   - i32.const
 //   - global.get of immutable i32 globals (including spectest.global_i32)
-//   - folded i32.add/i32.sub/i32.mul over supported constant sub-expressions
+//   - i32.add/i32.sub/i32.mul over supported constant sub-expressions, in
+//     either folded or flat instruction-sequence form
 func (l *moduleLowerer) evalI32ConstExpr(init Instruction) (int32, bool) {
 	switch in := init.(type) {
 	case *FoldedInstr:
@@ -3621,17 +3622,7 @@ func (l *moduleLowerer) evalI32ConstExpr(init Instruction) (int32, bool) {
 	if !ok {
 		return 0, false
 	}
-	if len(ci.Instrs) != 1 {
-		return 0, false
-	}
-	switch ci.Instrs[0].Kind {
-	case wasmir.InstrI32Const:
-		return ci.Instrs[0].I32Const, true
-	case wasmir.InstrGlobalGet:
-		return l.evalImportedI32Global(ci.Instrs[0].GlobalIndex)
-	default:
-		return 0, false
-	}
+	return l.evalLoweredI32ConstInstrs(ci.Instrs)
 }
 
 // evalI64ConstExpr evaluates a memory64 offset constant expression to i64.
@@ -3680,15 +3671,99 @@ func (l *moduleLowerer) evalI64ConstExpr(init Instruction) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	if len(ci.Instrs) != 1 {
+	return evalLoweredI64ConstInstrs(ci.Instrs)
+}
+
+// evalLoweredI32ConstInstrs evaluates an already-lowered i32 constant
+// expression by interpreting its flat instruction sequence.
+func (l *moduleLowerer) evalLoweredI32ConstInstrs(instrs []wasmir.Instruction) (int32, bool) {
+	var stack []int32
+	pop := func() (int32, bool) {
+		if len(stack) == 0 {
+			return 0, false
+		}
+		v := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		return v, true
+	}
+	for _, ins := range instrs {
+		switch ins.Kind {
+		case wasmir.InstrI32Const:
+			stack = append(stack, ins.I32Const)
+		case wasmir.InstrGlobalGet:
+			v, ok := l.evalImportedI32Global(ins.GlobalIndex)
+			if !ok {
+				return 0, false
+			}
+			stack = append(stack, v)
+		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul:
+			right, ok := pop()
+			if !ok {
+				return 0, false
+			}
+			left, ok := pop()
+			if !ok {
+				return 0, false
+			}
+			switch ins.Kind {
+			case wasmir.InstrI32Add:
+				stack = append(stack, left+right)
+			case wasmir.InstrI32Sub:
+				stack = append(stack, left-right)
+			case wasmir.InstrI32Mul:
+				stack = append(stack, left*right)
+			}
+		default:
+			return 0, false
+		}
+	}
+	if len(stack) != 1 {
 		return 0, false
 	}
-	switch ci.Instrs[0].Kind {
-	case wasmir.InstrI64Const:
-		return ci.Instrs[0].I64Const, true
-	default:
+	return stack[0], true
+}
+
+// evalLoweredI64ConstInstrs evaluates an already-lowered i64 constant
+// expression by interpreting its flat instruction sequence.
+func evalLoweredI64ConstInstrs(instrs []wasmir.Instruction) (int64, bool) {
+	var stack []int64
+	pop := func() (int64, bool) {
+		if len(stack) == 0 {
+			return 0, false
+		}
+		v := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		return v, true
+	}
+	for _, ins := range instrs {
+		switch ins.Kind {
+		case wasmir.InstrI64Const:
+			stack = append(stack, ins.I64Const)
+		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
+			right, ok := pop()
+			if !ok {
+				return 0, false
+			}
+			left, ok := pop()
+			if !ok {
+				return 0, false
+			}
+			switch ins.Kind {
+			case wasmir.InstrI64Add:
+				stack = append(stack, left+right)
+			case wasmir.InstrI64Sub:
+				stack = append(stack, left-right)
+			case wasmir.InstrI64Mul:
+				stack = append(stack, left*right)
+			}
+		default:
+			return 0, false
+		}
+	}
+	if len(stack) != 1 {
 		return 0, false
 	}
+	return stack[0], true
 }
 
 func (l *moduleLowerer) evalMemoryOffsetConst(init Instruction, addrType wasmir.ValueType) (int64, bool) {
@@ -3745,9 +3820,10 @@ func (l *moduleLowerer) evalImportedI32Global(globalIdx uint32) (int32, bool) {
 // lowerConstInstr lowers init as a module-level constant expression.
 //
 // Besides simple one-op forms like `i32.const` and `ref.null`, this also
-// accepts folded GC aggregate initializers such as:
+// accepts folded or flat multi-op expressions. Examples include:
 //   - (array.new $arr (i32.const 10) (i32.const 12))
 //   - (array.new_default $arr (i32.const 12))
+//   - i32.const 1 i32.const 2 i32.add
 //
 // The returned loweredConstInstr contains the full flat instruction sequence
 // plus the statically known resulting value type.
@@ -3758,21 +3834,157 @@ func (l *moduleLowerer) lowerConstInstr(init Instruction) (*loweredConstInstr, b
 	case *FoldedInstr:
 		return l.lowerFoldedConstInstr(in)
 	case *InstrSeq:
-		if len(in.Instrs) == 0 {
-			return &loweredConstInstr{}, true
+		return l.lowerConstInstrSeq(in)
+	default:
+		return nil, false
+	}
+}
+
+// lowerConstInstrSeq lowers a flat const-expression instruction sequence using
+// the same stack discipline as ordinary Wasm execution. Nested folded
+// expressions are allowed and contribute one value to the sequence stack.
+func (l *moduleLowerer) lowerConstInstrSeq(seq *InstrSeq) (*loweredConstInstr, bool) {
+	var instrs []wasmir.Instruction
+	var stack []wasmir.ValueType
+	pop := func(want wasmir.ValueType) bool {
+		if len(stack) == 0 {
+			return false
 		}
-		out := &loweredConstInstr{}
-		for _, child := range in.Instrs {
-			ci, ok := l.lowerConstInstr(child)
+		got := stack[len(stack)-1]
+		if !matchesExpectedValueType(got, want) {
+			return false
+		}
+		stack = stack[:len(stack)-1]
+		return true
+	}
+	popN := func(n uint32) bool {
+		if len(stack) < int(n) {
+			return false
+		}
+		stack = stack[:len(stack)-int(n)]
+		return true
+	}
+
+	for _, child := range seq.Instrs {
+		switch in := child.(type) {
+		case *FoldedInstr, *InstrSeq:
+			ci, ok := l.lowerConstInstr(in)
 			if !ok {
 				return nil, false
 			}
-			out.Instrs = append(out.Instrs, ci.Instrs...)
-			out.Type = ci.Type
+			instrs = append(instrs, ci.Instrs...)
+			stack = append(stack, ci.Type)
+		case *PlainInstr:
+			if ci, ok := l.lowerPlainConstInstr(in.Name, in.Operands); ok {
+				instrs = append(instrs, ci.Instrs...)
+				stack = append(stack, ci.Type)
+				continue
+			}
+			ins, resultType, ok := l.lowerPlainConstStackInstr(in, &stack, pop, popN)
+			if !ok {
+				return nil, false
+			}
+			instrs = append(instrs, ins)
+			stack = append(stack, resultType)
+		default:
+			return nil, false
 		}
-		return out, true
-	default:
+	}
+	if len(stack) != 1 {
 		return nil, false
+	}
+	return &loweredConstInstr{Instrs: instrs, Type: stack[0]}, true
+}
+
+// lowerPlainConstStackInstr lowers a plain instruction that consumes values
+// from the current const-expression stack, such as `i32.add` or
+// `array.new_fixed`. Leaf const instructions are handled by lowerPlainConstInstr.
+func (l *moduleLowerer) lowerPlainConstStackInstr(pi *PlainInstr, stack *[]wasmir.ValueType, pop func(wasmir.ValueType) bool, popN func(uint32) bool) (wasmir.Instruction, wasmir.ValueType, bool) {
+	switch pi.Name {
+	case "i32.add", "i32.sub", "i32.mul":
+		if len(pi.Operands) != 0 || !pop(wasmir.ValueTypeI32) || !pop(wasmir.ValueTypeI32) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		kind, _ := instructionKind(pi.Name)
+		return wasmir.Instruction{Kind: kind}, wasmir.ValueTypeI32, true
+	case "i64.add", "i64.sub", "i64.mul":
+		if len(pi.Operands) != 0 || !pop(wasmir.ValueTypeI64) || !pop(wasmir.ValueTypeI64) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		kind, _ := instructionKind(pi.Name)
+		return wasmir.Instruction{Kind: kind}, wasmir.ValueTypeI64, true
+	case "struct.new":
+		if len(pi.Operands) != 1 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(pi.Operands[0])
+		if !ok || int(typeIdx) >= len(l.out.Types) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		td := l.out.Types[typeIdx]
+		if td.Kind != wasmir.TypeDefKindStruct || !popN(uint32(len(td.Fields))) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrStructNew, TypeIndex: typeIdx}, wasmir.RefTypeIndexed(typeIdx, false), true
+	case "array.new":
+		if len(pi.Operands) != 1 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(pi.Operands[0])
+		if !ok || !pop(wasmir.ValueTypeI32) || len(*stack) == 0 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		*stack = (*stack)[:len(*stack)-1]
+		return wasmir.Instruction{Kind: wasmir.InstrArrayNew, TypeIndex: typeIdx}, wasmir.RefTypeIndexed(typeIdx, false), true
+	case "array.new_default":
+		if len(pi.Operands) != 1 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(pi.Operands[0])
+		if !ok || !pop(wasmir.ValueTypeI32) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrArrayNewDefault, TypeIndex: typeIdx}, wasmir.RefTypeIndexed(typeIdx, false), true
+	case "array.new_fixed":
+		if len(pi.Operands) != 2 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		typeIdx, ok := l.lowerConstTypeIndexOperand(pi.Operands[0])
+		if !ok {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		fixedCount, ok := lowerFieldIndexOperand(pi.Operands[1])
+		if !ok || !popN(fixedCount) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrArrayNewFixed, TypeIndex: typeIdx, FixedCount: fixedCount}, wasmir.RefTypeIndexed(typeIdx, false), true
+	case "ref.i31":
+		if len(pi.Operands) != 0 || !pop(wasmir.ValueTypeI32) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		return wasmir.Instruction{Kind: wasmir.InstrRefI31}, wasmir.RefTypeI31(false), true
+	case "extern.convert_any":
+		if len(pi.Operands) != 0 || len(*stack) == 0 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		valueType := (*stack)[len(*stack)-1]
+		if !matchesExpectedValueType(valueType, wasmir.RefTypeAny(true)) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		*stack = (*stack)[:len(*stack)-1]
+		return wasmir.Instruction{Kind: wasmir.InstrExternConvertAny}, wasmir.RefTypeExtern(valueType.Nullable), true
+	case "any.convert_extern":
+		if len(pi.Operands) != 0 || len(*stack) == 0 {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		valueType := (*stack)[len(*stack)-1]
+		if !matchesExpectedValueType(valueType, wasmir.RefTypeExtern(true)) {
+			return wasmir.Instruction{}, wasmir.ValueType{}, false
+		}
+		*stack = (*stack)[:len(*stack)-1]
+		return wasmir.Instruction{Kind: wasmir.InstrAnyConvertExtern}, wasmir.RefTypeAny(valueType.Nullable), true
+	default:
+		return wasmir.Instruction{}, wasmir.ValueType{}, false
 	}
 }
 

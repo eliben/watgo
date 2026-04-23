@@ -674,7 +674,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		case "elem":
 			p.parseElemRefs(td, sx.list[cursor])
 		default:
-			td.Init = p.parseFoldedInstr(sx.list[cursor])
+			td.Init = p.parseConstExprRange(sx, cursor, len(sx.list))
 		}
 		return td
 	}
@@ -713,7 +713,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 		case "elem":
 			p.parseElemRefs(td, sx.list[cursor])
 		default:
-			td.Init = p.parseFoldedInstr(sx.list[cursor])
+			td.Init = p.parseConstExprRange(sx, cursor, len(sx.list))
 		}
 	}
 	return td
@@ -835,21 +835,25 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 		dd.Strings = p.parseDataStringsFrom(sx, cursor)
 		return dd
 	}
-	if !sx.list[cursor].IsList() {
-		p.emitError(sx.list[cursor].loc, "data declaration offset must be instruction expression")
-		return dd
-	}
 	offsetExpr := sx.list[cursor]
 	if offsetExpr.HeadKeyword() == "offset" {
-		if len(offsetExpr.list) != 2 || !offsetExpr.list[1].IsList() {
-			p.emitError(offsetExpr.loc, "data offset clause expects one instruction list")
+		if len(offsetExpr.list) < 2 {
+			p.emitError(offsetExpr.loc, "data offset clause expects an instruction expression")
 			return dd
 		}
-		dd.Offset = p.parseFoldedInstr(offsetExpr.list[1])
+		dd.Offset = p.parseConstExprFrom(offsetExpr, 1)
+		dd.Strings = p.parseDataStringsFrom(sx, cursor+1)
 	} else {
-		dd.Offset = p.parseFoldedInstr(offsetExpr)
+		stringStart := len(sx.list)
+		for i := cursor; i < len(sx.list); i++ {
+			if sx.list[i].IsTokenKind(STRING) {
+				stringStart = i
+				break
+			}
+		}
+		dd.Offset = p.parseConstExprRange(sx, cursor, stringStart)
+		dd.Strings = p.parseDataStringsFrom(sx, stringStart)
 	}
-	dd.Strings = p.parseDataStringsFrom(sx, cursor+1)
 	return dd
 }
 
@@ -926,29 +930,7 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		p.emitError(sx.loc, "global declaration missing initializer")
 		return gd
 	}
-	if len(sx.list[cursor:]) == 1 {
-		// The common case is a single folded const-expression initializer.
-		initSx := sx.list[cursor]
-		if !initSx.IsList() {
-			p.emitError(initSx.loc, "global initializer must be instruction expression")
-			return gd
-		}
-		gd.Init = p.parseFoldedInstr(initSx)
-		return gd
-	}
-	// Keep multiple trailing instruction expressions as a small sequence node
-	// instead of silently ignoring the extras. This is mainly for invalid spec
-	// tests such as `(global i32 (i32.const 0) (nop))`, where the parser should
-	// preserve the full initializer shape so later stages can reject it.
-	seq := &InstrSeq{loc: sx.list[cursor].loc}
-	for _, initSx := range sx.list[cursor:] {
-		if !initSx.IsList() {
-			p.emitError(initSx.loc, "global initializer must be instruction expression")
-			return gd
-		}
-		seq.Instrs = append(seq.Instrs, p.parseFoldedInstr(initSx))
-	}
-	gd.Init = seq
+	gd.Init = p.parseConstExprRange(sx, cursor, len(sx.list))
 	return gd
 }
 
@@ -1297,10 +1279,10 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	if ed.Mode != ElemModeDeclarative && cursor < len(sx.list) && sx.list[cursor].IsList() {
 		switch sx.list[cursor].HeadKeyword() {
 		case "offset":
-			if len(sx.list[cursor].list) != 2 || !sx.list[cursor].list[1].IsList() {
-				p.emitError(sx.list[cursor].loc, "elem offset clause expects one instruction list")
+			if len(sx.list[cursor].list) < 2 {
+				p.emitError(sx.list[cursor].loc, "elem offset clause expects an instruction expression")
 			} else {
-				ed.Offset = p.parseFoldedInstr(sx.list[cursor].list[1])
+				ed.Offset = p.parseConstExprFrom(sx.list[cursor], 1)
 			}
 			cursor++
 		case "ref", "item":
@@ -1359,25 +1341,46 @@ func (p *Parser) parseElemItemExprs(item *SExpr) []Instruction {
 		p.emitError(item.loc, "elem item must contain an expression")
 		return nil
 	}
-	if len(item.list) == 2 && item.list[1].IsList() {
-		return []Instruction{p.parseFoldedInstr(item.list[1])}
-	}
-	instrs := p.parseInstrs(item, 1)
-	if len(instrs) != 1 {
-		p.emitError(item.loc, "elem item must contain exactly one expression")
+	return []Instruction{p.parseConstExprFrom(item, 1)}
+}
+
+// parseConstExprFrom parses a constant-expression instruction sequence from
+// sx[start:] while preserving a single folded expression as a FoldedInstr.
+func (p *Parser) parseConstExprFrom(sx *SExpr, start int) Instruction {
+	return p.parseConstExprRange(sx, start, len(sx.list))
+}
+
+// parseConstExprRange parses a constant-expression instruction sequence from
+// sx[start:end]. A single folded expression is kept as-is; flat or multi-item
+// forms become an InstrSeq for stack-based lowering.
+func (p *Parser) parseConstExprRange(sx *SExpr, start, end int) Instruction {
+	if start >= end {
+		p.emitError(sx.loc, "constant expression must contain instructions")
 		return nil
 	}
-	return instrs
+	if end-start == 1 && sx.list[start].IsList() {
+		return p.parseFoldedInstr(sx.list[start])
+	}
+	return &InstrSeq{Instrs: p.parseInstrsRange(sx, start, end), loc: sx.list[start].loc}
 }
 
 // parseInstrs parses a list of instructions from sx, starting at [idx]. It
 // expects all tokens from [idx] until the end of sx to represent instructions,
 // and will emit errors otherwise.
 func (p *Parser) parseInstrs(sx *SExpr, idx int) []Instruction {
+	return p.parseInstrsRange(sx, idx, len(sx.list))
+}
+
+// parseInstrsRange parses instructions from sx[idx:end].
+func (p *Parser) parseInstrsRange(sx *SExpr, idx, end int) []Instruction {
 	var out []Instruction
 
-	for cursor := idx; cursor < len(sx.list); {
+	for cursor := idx; cursor < end; {
 		instr, next := p.parseInstructionElems(sx.list, cursor)
+		if next > end {
+			p.emitError(sx.list[cursor].loc, "instruction operands extend past expression boundary")
+			break
+		}
 		if instr != nil {
 			out = append(out, instr)
 		}
