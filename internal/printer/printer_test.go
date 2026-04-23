@@ -64,7 +64,7 @@ func TestPrintModule_PrintsFormerlyFoldedInstructionsFlat(t *testing.T) {
   )
 )`)
 	assertPrintedNotContains(t, printed, "(ref.test", "(ref.cast", "(memory.copy", "(array.new_fixed")
-	assertPrintedContains(t, printed, "ref.test (ref i31)", "ref.cast anyref", "memory.copy 1 0", "array.new_fixed 0 1")
+	assertPrintedContains(t, printed, "ref.test (ref i31)", "ref.cast anyref", "memory.copy 1 0", "array.new_fixed $Box 1")
 }
 
 func TestPrintModule_MultiInstructionConstExprRoundTrip(t *testing.T) {
@@ -90,8 +90,8 @@ func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
   (elem declare (ref $Arr) (item i32.const 7 i32.const 8 array.new_fixed $Arr 2))
 )`)
 	assertPrintedContains(t, printed,
-		"i32.const 4 array.new_default 0",
-		"(item i32.const 7 i32.const 8 array.new_fixed 0 2)",
+		"i32.const 4 array.new_default $Arr",
+		"(item i32.const 7 i32.const 8 array.new_fixed $Arr 2)",
 	)
 }
 
@@ -108,7 +108,7 @@ func TestPrintModule_TryTableRoundTrip(t *testing.T) {
     end
   )
 )`)
-	assertPrintedContains(t, printed, "try_table (catch 0 0) (catch_all 0)")
+	assertPrintedContains(t, printed, "try_table (catch $e 0) (catch_all 0)")
 }
 
 func TestPrintModule_RecursiveSubtypeRoundTrip(t *testing.T) {
@@ -124,6 +124,44 @@ func TestPrintModule_RecursiveSubtypeRoundTrip(t *testing.T) {
 		"(rec",
 		"(type $base (sub (struct)))",
 		"(type $child (sub final $base (struct (field i32))))",
+	)
+}
+
+func TestPrintModule_PrefersNamedReferences(t *testing.T) {
+	// Named declarations from source/debug info should be reused for internal
+	// references instead of printing raw indices when wasmir carries the names.
+	printed := printRoundTripFromWAT(t, `(module $M
+  (type $T (func))
+  (type $S (struct (field $f i32)))
+  (type $Reader (func (param (ref $S)) (result i32)))
+  (tag $e (param i32))
+  (global $g (mut i32) (i32.const 0))
+  (func $callee (type $T))
+  (func $maker (result (ref $S))
+    struct.new_default $S
+  )
+  (func $reader (type $Reader) (param $s (ref $S)) (result i32)
+    local.get $s
+    struct.get $S $f
+  )
+  (func $starter (type $T)
+    call $callee
+    global.get $g
+    drop
+    i32.const 1
+    throw $e
+    unreachable
+  )
+  (start $starter)
+)`)
+	assertPrintedContains(t, printed,
+		"(module $M",
+		"(func $callee (type $T))",
+		"struct.new_default $S",
+		"struct.get $S $f",
+		"call $callee",
+		"throw $e",
+		"(start $starter)",
 	)
 }
 
