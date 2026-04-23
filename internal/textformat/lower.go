@@ -1376,28 +1376,44 @@ func (fl *functionLowerer) lowerTryTableInstr(ti *TryTableInstr) {
 		return
 	}
 
-	paramTypes := make([]wasmir.ValueType, 0, len(ti.ParamTypes))
-	for _, ty := range ti.ParamTypes {
+	ins, ok := fl.lowerTryTableHeader(ti.TypeRef, ti.ParamTypes, ti.ResultTypes, ti.Catches, ti.Loc())
+	if !ok {
+		return
+	}
+	fl.emitInstr(ins)
+	fl.pushLabel("")
+	for _, bodyInstr := range ti.Body {
+		fl.lowerInstruction(bodyInstr)
+	}
+	fl.popLabel()
+	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: ti.Loc()})
+}
+
+// lowerTryTableHeader lowers the blocktype and catch-vector immediate shared
+// by folded try_table forms and flat try_table headers.
+func (fl *functionLowerer) lowerTryTableHeader(typeRef string, paramTypeNodes []Type, resultTypeNodes []Type, catchNodes []TryTableCatchClause, loc string) (wasmir.Instruction, bool) {
+	paramTypes := make([]wasmir.ValueType, 0, len(paramTypeNodes))
+	for _, ty := range paramTypeNodes {
 		vt, ok := lowerValueType(ty, fl.mod.typesByName)
 		if !ok {
-			fl.diagf(ti.Loc(), "invalid try_table param type")
+			fl.diagf(loc, "invalid try_table param type")
 			continue
 		}
 		paramTypes = append(paramTypes, vt)
 	}
 
-	resultTypes := make([]wasmir.ValueType, 0, len(ti.ResultTypes))
-	for _, ty := range ti.ResultTypes {
+	resultTypes := make([]wasmir.ValueType, 0, len(resultTypeNodes))
+	for _, ty := range resultTypeNodes {
 		vt, ok := lowerValueType(ty, fl.mod.typesByName)
 		if !ok {
-			fl.diagf(ti.Loc(), "invalid try_table result type")
+			fl.diagf(loc, "invalid try_table result type")
 			continue
 		}
 		resultTypes = append(resultTypes, vt)
 	}
 
-	catches := make([]wasmir.TryTableCatch, 0, len(ti.Catches))
-	for _, clause := range ti.Catches {
+	catches := make([]wasmir.TryTableCatch, 0, len(catchNodes))
+	for _, clause := range catchNodes {
 		catch := wasmir.TryTableCatch{Kind: clause.Kind}
 		if clause.Tag != nil {
 			tagIndex, ok := lowerTagIndexOperand(clause.Tag, fl.mod.tagsByName)
@@ -1416,49 +1432,15 @@ func (fl *functionLowerer) lowerTryTableInstr(ti *TryTableInstr) {
 		catches = append(catches, catch)
 	}
 
-	finalParams := paramTypes
-	finalResults := resultTypes
-	useTypeIndex := false
-	var typeIdx uint32
-	if ti.TypeRef != "" {
-		refIdx, refType, ok := fl.resolveTypeRef(ti.TypeRef)
-		if !ok {
-			fl.diagf(ti.Loc(), "unknown try_table type use %q", ti.TypeRef)
-		} else {
-			useTypeIndex = true
-			typeIdx = refIdx
-			if len(paramTypes) > 0 || len(resultTypes) > 0 {
-				if !equalValueTypeSlices(paramTypes, refType.Params) || !equalValueTypeSlices(resultTypes, refType.Results) {
-					fl.diagf(ti.Loc(), "inline function type mismatch in try_table")
-				}
-			} else {
-				finalParams = append([]wasmir.ValueType(nil), refType.Params...)
-				finalResults = append([]wasmir.ValueType(nil), refType.Results...)
-			}
-		}
-	}
-
 	ins := wasmir.Instruction{
 		Kind:            wasmir.InstrTryTable,
 		TryTableCatches: catches,
-		SourceLoc:       ti.Loc(),
+		SourceLoc:       loc,
 	}
-	switch {
-	case useTypeIndex:
-		ins.BlockTypeUsesIndex = true
-		ins.BlockTypeIndex = typeIdx
-	case len(finalParams) > 0 || len(finalResults) > 1:
-		ins.BlockTypeUsesIndex = true
-		ins.BlockTypeIndex = fl.mod.internFuncType(finalParams, finalResults, "")
-	case len(finalResults) == 1:
-		vt := finalResults[0]
-		ins.BlockType = &vt
+	if !fl.applyStructuredBlockType(&ins, "try_table", typeRef, paramTypes, resultTypes, loc) {
+		return wasmir.Instruction{}, false
 	}
-	fl.emitInstr(ins)
-	for _, bodyInstr := range ti.Body {
-		fl.lowerInstruction(bodyInstr)
-	}
-	fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: ti.Loc()})
+	return ins, true
 }
 
 // lowerFoldedSelect lowers both folded and raw typed-select syntax.
@@ -2476,6 +2458,71 @@ func (fl *functionLowerer) lowerPlainRefTestCast(pi *PlainInstr) {
 	fl.emitInstr(wasmir.Instruction{Kind: kind, RefType: refType, SourceLoc: pi.Loc()})
 }
 
+// lowerPlainTryTable lowers a flat try_table header. Catch label depths are
+// resolved before the try_table body label is pushed, matching the binary
+// immediate's scoping.
+func (fl *functionLowerer) lowerPlainTryTable(pi *PlainInstr) {
+	var labelName string
+	var typeRef string
+	var paramTypes []Type
+	var resultTypes []Type
+	var catches []TryTableCatchClause
+	seenCatch := false
+
+	for i, op := range pi.Operands {
+		switch operand := op.(type) {
+		case *IdOperand:
+			if i != 0 || labelName != "" {
+				fl.diagf(op.Loc(), "invalid try_table label")
+				return
+			}
+			labelName = operand.Value
+		case *StructuredTypeClauseOperand:
+			if seenCatch {
+				fl.diagf(op.Loc(), "unexpected try_table signature clause")
+				return
+			}
+			switch operand.Clause {
+			case "type":
+				if typeRef != "" || len(paramTypes) > 0 || len(resultTypes) > 0 {
+					fl.diagf(op.Loc(), "unexpected try_table type clause")
+					return
+				}
+				typeRef = operand.TypeRef
+			case "param":
+				if len(resultTypes) > 0 {
+					fl.diagf(op.Loc(), "unexpected try_table param clause")
+					return
+				}
+				paramTypes = append(paramTypes, operand.Types...)
+			case "result":
+				resultTypes = append(resultTypes, operand.Types...)
+			default:
+				fl.diagf(op.Loc(), "invalid operand for try_table")
+				return
+			}
+		case *TryTableCatchOperand:
+			seenCatch = true
+			catches = append(catches, TryTableCatchClause{
+				Kind:  operand.Kind,
+				Tag:   operand.Tag,
+				Label: operand.Label,
+				loc:   operand.loc,
+			})
+		default:
+			fl.diagf(op.Loc(), "invalid operand for try_table")
+			return
+		}
+	}
+
+	ins, ok := fl.lowerTryTableHeader(typeRef, paramTypes, resultTypes, catches, pi.Loc())
+	if !ok {
+		return
+	}
+	fl.emitInstr(ins)
+	fl.pushLabel(labelName)
+}
+
 // lowerPlainInstr lowers one plain instruction into fl.body.
 func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	instrLoc := pi.Loc()
@@ -2535,6 +2582,9 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		return
 	case "ref.test", "ref.cast":
 		fl.lowerPlainRefTestCast(pi)
+		return
+	case "try_table":
+		fl.lowerPlainTryTable(pi)
 		return
 	case "array.new", "array.new_default", "array.get", "array.get_s", "array.get_u", "array.set", "array.fill", "struct.new", "struct.new_default":
 		if len(pi.Operands) != 1 {

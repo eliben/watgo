@@ -1411,7 +1411,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 	// clauses such as `(result ...)` or `(type ...)`. Give those parsers a
 	// first chance here; when they return ok=false we intentionally fall
 	// through to the ordinary plain-instruction switch below.
-	if instructionHasSyntaxClass(name, instrdef.InstrSyntaxStructured) || name == "else" || name == "end" {
+	if instructionHasSyntaxClass(name, instrdef.InstrSyntaxStructured) || name == "try_table" || name == "else" || name == "end" {
 		if instr, next, ok := p.parsePlainStructuredInstr(name, elems, cursor); ok {
 			return instr, next
 		}
@@ -1800,6 +1800,8 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 //	if (param i32) (result f32)
 func (p *Parser) parsePlainStructuredInstr(name string, elems []*SExpr, cursor int) (Instruction, int, bool) {
 	switch name {
+	case "try_table":
+		return p.parsePlainTryTableInstr(elems, cursor)
 	case "block", "loop", "if":
 		operands := make([]Operand, 0, 4)
 		next := cursor + 1
@@ -1827,6 +1829,50 @@ func (p *Parser) parsePlainStructuredInstr(name string, elems []*SExpr, cursor i
 	default:
 		return nil, cursor, false
 	}
+}
+
+// parsePlainTryTableInstr parses only the flat try_table header:
+//
+//	try_table [(type ...)|(param ...)|(result ...)]* (catch ...)*
+//
+// It consumes signature and catch clauses, then stops before the first body
+// instruction. The body and matching end are parsed later as ordinary flat
+// instructions.
+func (p *Parser) parsePlainTryTableInstr(elems []*SExpr, cursor int) (Instruction, int, bool) {
+	operands := make([]Operand, 0, 4)
+	next := cursor + 1
+	if next < len(elems) && elems[next].IsTokenKind(ID) {
+		operands = append(operands, p.parseOperand(elems[next]))
+		next++
+	}
+	for next < len(elems) {
+		clauseOp, ok := p.parsePlainControlTypeOperand(elems[next])
+		if !ok {
+			break
+		}
+		if clauseOp != nil {
+			operands = append(operands, clauseOp)
+		}
+		next++
+	}
+	for next < len(elems) && elems[next].IsList() {
+		switch elems[next].HeadKeyword() {
+		case "catch", "catch_ref", "catch_all", "catch_all_ref":
+			clause, ok := p.parseTryTableCatchClause(elems[next])
+			if ok {
+				operands = append(operands, &TryTableCatchOperand{
+					Kind:  clause.Kind,
+					Tag:   clause.Tag,
+					Label: clause.Label,
+					loc:   clause.loc,
+				})
+			}
+			next++
+		default:
+			return &PlainInstr{Name: "try_table", Operands: operands, loc: elems[cursor].loc}, next, true
+		}
+	}
+	return &PlainInstr{Name: "try_table", Operands: operands, loc: elems[cursor].loc}, next, true
 }
 
 // parsePlainCallIndirectInstr parses one flat call_indirect with optional

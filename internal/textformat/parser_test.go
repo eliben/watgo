@@ -996,6 +996,41 @@ func TestParseModule_PlainIfWithResultClause(t *testing.T) {
 	}
 }
 
+func TestParseModule_PlainTryTableHeader(t *testing.T) {
+	wat := `(module
+  (tag $e)
+  (func
+    block
+      try_table (catch $e 0) (catch_all 0)
+        nop
+      end
+    end
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if len(f.Instrs) < 2 {
+		t.Fatalf("got %d instructions, want at least 2", len(f.Instrs))
+	}
+	tryTable := mustPlainInstr(t, f.Instrs[1])
+	if tryTable.Name != "try_table" {
+		t.Fatalf("instruction name=%q, want try_table", tryTable.Name)
+	}
+	if len(tryTable.Operands) != 2 {
+		t.Fatalf("try_table operands=%d, want 2 catch clauses", len(tryTable.Operands))
+	}
+	for i, op := range tryTable.Operands {
+		if _, ok := op.(*TryTableCatchOperand); !ok {
+			t.Fatalf("try_table operand[%d]=%T, want *TryTableCatchOperand", i, op)
+		}
+	}
+}
+
 func TestParseModule_FoldedStructuredBodyAllowsPlainInstructions(t *testing.T) {
 	wat := `(module
   (func

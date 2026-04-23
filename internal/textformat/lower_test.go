@@ -443,6 +443,46 @@ func TestLowerModule_LowersFoldedIf(t *testing.T) {
 	}
 }
 
+func TestLowerModule_LowersPlainTryTable(t *testing.T) {
+	wat := `(module
+  (tag $e)
+  (func
+    block
+      try_table (catch $e 0) (catch_all 0)
+        nop
+      end
+    end
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) < 2 {
+		t.Fatalf("got %d body instructions, want at least 2", len(body))
+	}
+	if body[1].Kind != wasmir.InstrTryTable {
+		t.Fatalf("body[1]=%#v, want try_table", body[1])
+	}
+	catches := body[1].TryTableCatches
+	if len(catches) != 2 {
+		t.Fatalf("try_table catches=%d, want 2", len(catches))
+	}
+	if catches[0].Kind != wasmir.TryTableCatchKindTag || catches[0].TagIndex != 0 || catches[0].LabelDepth != 0 {
+		t.Fatalf("catch[0]=%#v, want tag 0 -> label 0", catches[0])
+	}
+	if catches[1].Kind != wasmir.TryTableCatchKindAll || catches[1].LabelDepth != 0 {
+		t.Fatalf("catch[1]=%#v, want catch_all -> label 0", catches[1])
+	}
+}
+
 func TestLowerModule_Memory64DataOffset(t *testing.T) {
 	wat := `(module
   (memory (export "memory") i64 2 250000)

@@ -233,6 +233,22 @@ func (op *StructuredTypeClauseOperand) Loc() string {
 	return op.loc.String()
 }
 
+// TryTableCatchOperand preserves one flat try_table catch clause such as
+// `(catch $tag $label)` or `(catch_all $label)`.
+type TryTableCatchOperand struct {
+	Kind  wasmir.TryTableCatchKind
+	Tag   Operand
+	Label Operand
+	loc   location
+}
+
+func (*TryTableCatchOperand) isOperand() {}
+
+// Loc returns the source location of this operand as "line:column".
+func (op *TryTableCatchOperand) Loc() string {
+	return op.loc.String()
+}
+
 // instrInfo is the shared instruction metadata stored in instructionInfoByName.
 // It gives textformat code the semantic opcode plus the broad syntax family
 // needed by parser and lowering decisions.

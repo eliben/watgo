@@ -166,6 +166,37 @@ func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrintModule_TryTableRoundTrip(t *testing.T) {
+	// try_table should print as a flat structured-control header with catch
+	// clauses and compile back to the same binary.
+	wasm, err := watgo.CompileWATToWASM([]byte(`(module
+  (tag $e)
+  (func
+    block
+      try_table (catch $e 0) (catch_all 0)
+        nop
+      end
+    end
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	printed := printDecodedModule(t, wasm)
+	printedText := string(printed)
+	if !strings.Contains(printedText, "try_table (catch 0 0) (catch_all 0)") {
+		t.Fatalf("printed WAT missing flat try_table header:\n%s", printed)
+	}
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("roundtrip mismatch\nprinted:\n%s", printed)
+	}
+}
+
 func printDecodedModule(t *testing.T, wasm []byte) []byte {
 	t.Helper()
 

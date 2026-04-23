@@ -403,7 +403,7 @@ func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function
 		p.buf.WriteString(text)
 		p.buf.WriteByte('\n')
 		switch ins.Kind {
-		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
+		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf, wasmir.InstrTryTable:
 			indent++
 		case wasmir.InstrElse:
 			indent++
@@ -422,6 +422,8 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	switch ins.Kind {
 	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 		return name + blockTypeText(p.m, ins), nil
+	case wasmir.InstrTryTable:
+		return p.tryTableText(name, ins)
 	case wasmir.InstrElse, wasmir.InstrEnd:
 		return name, nil
 	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
@@ -544,14 +546,45 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		wasmir.InstrI64x2ReplaceLane, wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
 		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
 		return fmt.Sprintf("%s %d", name, ins.LaneIndex), nil
-	case wasmir.InstrTryTable:
-		return "", fmt.Errorf("printing try_table is not implemented yet")
 	}
 
 	if def.Text.SyntaxClass == instrdef.InstrSyntaxPlain {
 		return name, nil
 	}
 	return "", fmt.Errorf("printing %s is not implemented yet", name)
+}
+
+// tryTableText formats a flat try_table header including its catch clauses.
+func (p *modulePrinter) tryTableText(name string, ins wasmir.Instruction) (string, error) {
+	var b strings.Builder
+	b.WriteString(name)
+	b.WriteString(blockTypeText(p.m, ins))
+	for _, catch := range ins.TryTableCatches {
+		catchText, err := tryTableCatchText(catch)
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(' ')
+		b.WriteString(catchText)
+	}
+	return b.String(), nil
+}
+
+// tryTableCatchText formats one try_table catch clause.
+func tryTableCatchText(catch wasmir.TryTableCatch) (string, error) {
+	label := strconv.FormatUint(uint64(catch.LabelDepth), 10)
+	switch catch.Kind {
+	case wasmir.TryTableCatchKindTag:
+		return fmt.Sprintf("(catch %d %s)", catch.TagIndex, label), nil
+	case wasmir.TryTableCatchKindTagRef:
+		return fmt.Sprintf("(catch_ref %d %s)", catch.TagIndex, label), nil
+	case wasmir.TryTableCatchKindAll:
+		return fmt.Sprintf("(catch_all %s)", label), nil
+	case wasmir.TryTableCatchKindAllRef:
+		return fmt.Sprintf("(catch_all_ref %s)", label), nil
+	default:
+		return "", fmt.Errorf("unsupported try_table catch kind %d", catch.Kind)
+	}
 }
 
 // funcType resolves a function type index and verifies that it names a func
