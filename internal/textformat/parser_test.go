@@ -379,6 +379,241 @@ func TestParseModule_BrTableStopsBeforeFollowingFoldedInstruction(t *testing.T) 
 	}
 }
 
+func TestParseModule_PlainRefTestCastConsumesTypeOnly(t *testing.T) {
+	// Plain ref.test/ref.cast should consume only the reference-type immediate,
+	// leaving stack-producing instructions as separate linear instructions.
+	wat := `
+(module
+  (type $T (struct))
+  (func
+    ref.test (ref $T)
+    local.get 0
+    ref.cast anyref
+    drop
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 4; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	refTest := mustPlainInstr(t, f.Instrs[0])
+	if refTest.Name != "ref.test" {
+		t.Fatalf("instr0 name=%q, want ref.test", refTest.Name)
+	}
+	if got, want := len(refTest.Operands), 1; got != want {
+		t.Fatalf("ref.test operand count=%d, want %d", got, want)
+	}
+	refTestType, ok := refTest.Operands[0].(*TypeOperand)
+	if !ok {
+		t.Fatalf("ref.test operand type=%T, want *TypeOperand", refTest.Operands[0])
+	}
+	if got, want := refTestType.Ty.String(), "(ref $T)"; got != want {
+		t.Fatalf("ref.test type=%q, want %q", got, want)
+	}
+
+	next := mustPlainInstr(t, f.Instrs[1])
+	if next.Name != "local.get" {
+		t.Fatalf("instr1 name=%q, want local.get", next.Name)
+	}
+
+	refCast := mustPlainInstr(t, f.Instrs[2])
+	if refCast.Name != "ref.cast" {
+		t.Fatalf("instr2 name=%q, want ref.cast", refCast.Name)
+	}
+	refCastType, ok := refCast.Operands[0].(*TypeOperand)
+	if !ok {
+		t.Fatalf("ref.cast operand type=%T, want *TypeOperand", refCast.Operands[0])
+	}
+	if got, want := refCastType.Ty.String(), "anyref"; got != want {
+		t.Fatalf("ref.cast type=%q, want %q", got, want)
+	}
+}
+
+func TestParseModule_PlainCopyInstructionsConsumeIndexPairs(t *testing.T) {
+	// Plain memory.copy/table.copy should consume either zero operands or a
+	// destination/source pair, without swallowing following stack operands.
+	wat := `
+(module
+  (func
+    memory.copy 1 0
+    i32.const 7
+    table.copy $dst $src
+    drop
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 4; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	memCopy := mustPlainInstr(t, f.Instrs[0])
+	if memCopy.Name != "memory.copy" {
+		t.Fatalf("instr0 name=%q, want memory.copy", memCopy.Name)
+	}
+	if got, want := len(memCopy.Operands), 2; got != want {
+		t.Fatalf("memory.copy operand count=%d, want %d", got, want)
+	}
+	if op, ok := memCopy.Operands[0].(*IntOperand); !ok || op.Value != "1" {
+		t.Fatalf("memory.copy operand[0]=%T(%v), want *IntOperand(1)", memCopy.Operands[0], memCopy.Operands[0])
+	}
+	if op, ok := memCopy.Operands[1].(*IntOperand); !ok || op.Value != "0" {
+		t.Fatalf("memory.copy operand[1]=%T(%v), want *IntOperand(0)", memCopy.Operands[1], memCopy.Operands[1])
+	}
+
+	next := mustPlainInstr(t, f.Instrs[1])
+	if next.Name != "i32.const" {
+		t.Fatalf("instr1 name=%q, want i32.const", next.Name)
+	}
+
+	tableCopy := mustPlainInstr(t, f.Instrs[2])
+	if tableCopy.Name != "table.copy" {
+		t.Fatalf("instr2 name=%q, want table.copy", tableCopy.Name)
+	}
+	if got, want := len(tableCopy.Operands), 2; got != want {
+		t.Fatalf("table.copy operand count=%d, want %d", got, want)
+	}
+	if op, ok := tableCopy.Operands[0].(*IdOperand); !ok || op.Value != "$dst" {
+		t.Fatalf("table.copy operand[0]=%T(%v), want *IdOperand($dst)", tableCopy.Operands[0], tableCopy.Operands[0])
+	}
+	if op, ok := tableCopy.Operands[1].(*IdOperand); !ok || op.Value != "$src" {
+		t.Fatalf("table.copy operand[1]=%T(%v), want *IdOperand($src)", tableCopy.Operands[1], tableCopy.Operands[1])
+	}
+}
+
+func TestParseModule_PlainOptionalIndexInstructions(t *testing.T) {
+	// Plain memory/table ops with optional index immediates should consume one
+	// index when present and stop before the next instruction.
+	wat := `
+(module
+  (func
+    memory.size 1
+    memory.grow $mem
+    memory.fill 2
+    table.fill $tab
+    i32.const 0
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 5; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	tests := []struct {
+		index int
+		name  string
+		want  string
+	}{
+		{0, "memory.size", "1"},
+		{1, "memory.grow", "$mem"},
+		{2, "memory.fill", "2"},
+		{3, "table.fill", "$tab"},
+	}
+	for _, tt := range tests {
+		instr := mustPlainInstr(t, f.Instrs[tt.index])
+		if instr.Name != tt.name {
+			t.Fatalf("instr%d name=%q, want %q", tt.index, instr.Name, tt.name)
+		}
+		if got, want := len(instr.Operands), 1; got != want {
+			t.Fatalf("%s operand count=%d, want %d", tt.name, got, want)
+		}
+		switch op := instr.Operands[0].(type) {
+		case *IdOperand:
+			if op.Value != tt.want {
+				t.Fatalf("%s operand=%q, want %q", tt.name, op.Value, tt.want)
+			}
+		case *IntOperand:
+			if op.Value != tt.want {
+				t.Fatalf("%s operand=%q, want %q", tt.name, op.Value, tt.want)
+			}
+		default:
+			t.Fatalf("%s operand type=%T, want ID or INT", tt.name, instr.Operands[0])
+		}
+	}
+
+	last := mustPlainInstr(t, f.Instrs[4])
+	if last.Name != "i32.const" {
+		t.Fatalf("instr4 name=%q, want i32.const", last.Name)
+	}
+}
+
+func TestParseModule_PlainArrayNewFixedTableInitAndElemDrop(t *testing.T) {
+	// Plain array.new_fixed, table.init, and elem.drop should consume their
+	// declared immediates and leave following stack instructions separate.
+	wat := `
+(module
+  (func
+    array.new_fixed $Arr 5
+    table.init $t $e
+    elem.drop $e
+    i32.const 0
+  )
+)`
+
+	m, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+
+	f := m.Funcs[0]
+	if got, want := len(f.Instrs), 4; got != want {
+		t.Fatalf("got %d instructions, want %d", got, want)
+	}
+
+	arrayNewFixed := mustPlainInstr(t, f.Instrs[0])
+	if arrayNewFixed.Name != "array.new_fixed" {
+		t.Fatalf("instr0 name=%q, want array.new_fixed", arrayNewFixed.Name)
+	}
+	if got, want := len(arrayNewFixed.Operands), 2; got != want {
+		t.Fatalf("array.new_fixed operand count=%d, want %d", got, want)
+	}
+	if op, ok := arrayNewFixed.Operands[0].(*IdOperand); !ok || op.Value != "$Arr" {
+		t.Fatalf("array.new_fixed operand[0]=%T(%v), want *IdOperand($Arr)", arrayNewFixed.Operands[0], arrayNewFixed.Operands[0])
+	}
+	if op, ok := arrayNewFixed.Operands[1].(*IntOperand); !ok || op.Value != "5" {
+		t.Fatalf("array.new_fixed operand[1]=%T(%v), want *IntOperand(5)", arrayNewFixed.Operands[1], arrayNewFixed.Operands[1])
+	}
+
+	tableInit := mustPlainInstr(t, f.Instrs[1])
+	if tableInit.Name != "table.init" {
+		t.Fatalf("instr1 name=%q, want table.init", tableInit.Name)
+	}
+	if got, want := len(tableInit.Operands), 2; got != want {
+		t.Fatalf("table.init operand count=%d, want %d", got, want)
+	}
+
+	elemDrop := mustPlainInstr(t, f.Instrs[2])
+	if elemDrop.Name != "elem.drop" {
+		t.Fatalf("instr2 name=%q, want elem.drop", elemDrop.Name)
+	}
+	if got, want := len(elemDrop.Operands), 1; got != want {
+		t.Fatalf("elem.drop operand count=%d, want %d", got, want)
+	}
+
+	last := mustPlainInstr(t, f.Instrs[3])
+	if last.Name != "i32.const" {
+		t.Fatalf("instr3 name=%q, want i32.const", last.Name)
+	}
+}
+
 func TestParseModule_PlainTypedSelectStopsBeforeNextInstruction(t *testing.T) {
 	wat := `
 (module

@@ -1424,7 +1424,7 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 	}
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "return_call", "call_ref", "return_call_ref", "throw", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "data.drop",
+	case "local.get", "local.set", "local.tee", "call", "return_call", "call_ref", "return_call_ref", "throw", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "i32.const", "i64.const", "f32.const", "f64.const", "ref.null", "data.drop", "elem.drop",
 		"i8x16.extract_lane_s", "i8x16.extract_lane_u", "i8x16.replace_lane",
 		"i16x8.extract_lane_s", "i16x8.extract_lane_u", "i16x8.replace_lane",
 		"i32x4.extract_lane", "i32x4.replace_lane",
@@ -1443,6 +1443,18 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 		}
 		if !isValidPlainOperand(name, operand) {
 			p.emitError(operandSx.loc, "invalid operand for %s", name)
+			return nil, cursor + 2
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
+	case "ref.test", "ref.cast":
+		if cursor+1 >= len(elems) {
+			p.emitError(elem.loc, "%s expects one reference type operand", name)
+			return nil, cursor + 1
+		}
+		operandSx := elems[cursor+1]
+		operand := p.parseTypeOperand(operandSx)
+		if operand == nil {
+			p.emitError(operandSx.loc, "invalid reference type for %s", name)
 			return nil, cursor + 2
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{operand}, loc: elem.loc}, cursor + 2
@@ -1500,6 +1512,42 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			}
 		}
 		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+	case "memory.size", "memory.grow", "memory.fill", "table.fill":
+		// Memory/table ops with an optional index immediate default to index 0.
+		operands := []Operand{}
+		if cursor+1 < len(elems) {
+			next := elems[cursor+1]
+			op := p.parseOperand(next)
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				operands = append(operands, op)
+				return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, cursor + 2
+			}
+		}
+		return &PlainInstr{Name: name, loc: elem.loc}, cursor + 1
+	case "memory.copy", "table.copy":
+		// copy instructions accept either no explicit index operands, or a
+		// destination index followed by a source index.
+		operands := []Operand{}
+		next := cursor + 1
+		for next < len(elems) && len(operands) < 2 {
+			op := p.parseOperand(elems[next])
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				operands = append(operands, op)
+				next++
+			default:
+				next = len(elems) + 1
+			}
+			if next == len(elems)+1 {
+				break
+			}
+		}
+		if len(operands) == 1 {
+			p.emitError(elem.loc, "%s expects 0 or 2 operands", name)
+			return nil, cursor + 1 + len(operands)
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, cursor + 1 + len(operands)
 	case "memory.init":
 		// memory.init has two flat-text forms:
 		//   memory.init <dataidx>
@@ -1580,6 +1628,26 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 3
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{dstOp, srcOp}, loc: elem.loc}, cursor + 3
+	case "array.new_fixed":
+		if cursor+2 >= len(elems) {
+			p.emitError(elem.loc, "%s expects two operands", name)
+			return nil, cursor + 1
+		}
+		typeOp := p.parseOperand(elems[cursor+1])
+		countOp := p.parseOperand(elems[cursor+2])
+		switch typeOp.(type) {
+		case *IdOperand, *IntOperand:
+		default:
+			p.emitError(elems[cursor+1].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		switch countOp.(type) {
+		case *IntOperand:
+		default:
+			p.emitError(elems[cursor+2].loc, "invalid operand for %s", name)
+			return nil, cursor + 3
+		}
+		return &PlainInstr{Name: name, Operands: []Operand{typeOp, countOp}, loc: elem.loc}, cursor + 3
 	case "struct.get", "struct.get_s", "struct.get_u":
 		if cursor+2 >= len(elems) {
 			p.emitError(elem.loc, "%s expects two operands", name)
@@ -1656,6 +1724,31 @@ func (p *Parser) parseInstructionElems(elems []*SExpr, cursor int) (Instruction,
 			return nil, cursor + 4
 		}
 		return &PlainInstr{Name: name, Operands: []Operand{labelOp, srcTy, dstTy}, loc: elem.loc}, cursor + 4
+	case "table.init":
+		if cursor+1 >= len(elems) {
+			p.emitError(elem.loc, "%s expects one or two operands", name)
+			return nil, cursor + 1
+		}
+		operands := []Operand{}
+		next := cursor + 1
+		for next < len(elems) && len(operands) < 2 {
+			op := p.parseOperand(elems[next])
+			switch op.(type) {
+			case *IdOperand, *IntOperand:
+				operands = append(operands, op)
+				next++
+			default:
+				next = len(elems) + 1
+			}
+			if next == len(elems)+1 {
+				break
+			}
+		}
+		if len(operands) == 0 {
+			p.emitError(elem.loc, "%s expects one or two operands", name)
+			return nil, cursor + 1
+		}
+		return &PlainInstr{Name: name, Operands: operands, loc: elem.loc}, cursor + 1 + len(operands)
 	default:
 		if instructionHasSyntaxClass(name, instrdef.InstrSyntaxMemory) {
 			operands := make([]Operand, 0, 3)
@@ -2207,7 +2300,7 @@ func (p *Parser) parseTypeOperand(sx *SExpr) Operand {
 // instructions that have one immediate operand.
 func isValidPlainOperand(name string, op Operand) bool {
 	switch name {
-	case "local.get", "local.set", "local.tee", "call", "call_ref", "throw", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "memory.init", "data.drop":
+	case "local.get", "local.set", "local.tee", "call", "call_ref", "throw", "br", "br_if", "br_on_null", "br_on_non_null", "global.get", "global.set", "ref.func", "memory.init", "data.drop", "elem.drop":
 		switch op.(type) {
 		case *IdOperand, *IntOperand:
 			return true
