@@ -1063,12 +1063,26 @@ func (p *modulePrinter) localRefText(fn *wasmir.Function, index uint32) string {
 
 // formatF32 formats an f32 constant from its raw IEEE-754 bits.
 func formatF32(bits uint32) string {
+	if bits&0x7f800000 == 0x7f800000 && bits&0x007fffff != 0 {
+		payload := bits & 0x007fffff
+		if bits&0x80000000 != 0 {
+			return fmt.Sprintf("-nan:0x%x", payload)
+		}
+		return fmt.Sprintf("nan:0x%x", payload)
+	}
 	v := float64(math.Float32frombits(bits))
 	return formatFloat(v, 32)
 }
 
 // formatF64 formats an f64 constant from its raw IEEE-754 bits.
 func formatF64(bits uint64) string {
+	if bits&0x7ff0000000000000 == 0x7ff0000000000000 && bits&0x000fffffffffffff != 0 {
+		payload := bits & 0x000fffffffffffff
+		if bits&0x8000000000000000 != 0 {
+			return fmt.Sprintf("-nan:0x%x", payload)
+		}
+		return fmt.Sprintf("nan:0x%x", payload)
+	}
 	return formatFloat(math.Float64frombits(bits), 64)
 }
 

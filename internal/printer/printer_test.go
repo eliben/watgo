@@ -95,6 +95,22 @@ func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
 	)
 }
 
+func TestPrintModule_PreservesNaNPayloads(t *testing.T) {
+	// Floating-point constants should preserve NaN payload bits through printer
+	// output so recompiling the printed WAT yields identical bytes.
+	printed := printRoundTripFromWAT(t, `(module
+  (func (result i32)
+    f32.const nan:0x20
+    i32.reinterpret_f32
+  )
+  (func (result i64)
+    f64.const -nan:0x20
+    i64.reinterpret_f64
+  )
+)`)
+	assertPrintedContains(t, printed, "f32.const nan:0x20", "f64.const -nan:0x20")
+}
+
 func TestPrintModule_TryTableRoundTrip(t *testing.T) {
 	// try_table should print as a flat structured-control header with catch
 	// clauses and compile back to the same binary.
