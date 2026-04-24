@@ -19,9 +19,12 @@ import (
 const wasmSpecScriptsDir = "scripts"
 const wasmSpecDebugEnvVar = "WATGO_WASMSPEC_DEBUG"
 
-// wasmSpecPrintRoundTripSkippedScripts lists wasmspec scripts whose valid
-// modules currently exercise known printer gaps, so the print-roundtrip pass
-// skips them for now instead of failing the whole corpus.
+// wasmSpecPrintRoundTripSkippedScripts lists wasmspec scripts intentionally
+// excluded from the broad print-roundtrip pass.
+//
+// These are either binary-only cases that do not normalize through our fixed
+// decode/encode path yet, or scripts whose semantics depend on information WAT
+// text roundtrips are not meant to preserve.
 var wasmSpecPrintRoundTripSkippedScripts = []string{
 	// Binary-module scripts below rely on encodings that our binary
 	// decode/encode fixed-point helper does not normalize yet in this path.
@@ -30,8 +33,8 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 	// through print -> parse in the broad coverage pass.
 	"elem.wast",
 
-	// `custom` depends on custom-section text forms, which print is not meant to
-	// preserve through WAT text.
+	// `custom` depends on custom-section text forms, which print is not meant
+	// to preserve through WAT text.
 	"custom.wast",
 
 	// `names` relies on byte-for-byte preservation of the binary name section,
@@ -39,23 +42,8 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 	"names.wast",
 }
 
-var wasmSpecPrintRoundTripSkippedPrefixes = []string{}
-
 func wasmSpecDebugEnabled() bool {
 	return os.Getenv(wasmSpecDebugEnvVar) != ""
-}
-
-func wasmSpecShouldSkipPrintRoundTrip(scriptPath string) bool {
-	rel := filepath.ToSlash(strings.TrimPrefix(scriptPath, wasmSpecScriptsDir+string(filepath.Separator)))
-	if slices.Contains(wasmSpecPrintRoundTripSkippedScripts, rel) {
-		return true
-	}
-	for _, prefix := range wasmSpecPrintRoundTripSkippedPrefixes {
-		if strings.HasPrefix(rel, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestWasmSpecScripts(t *testing.T) {
@@ -196,7 +184,8 @@ func runWasmSpecScriptFile(t *testing.T, scriptPath string) {
 func checkWasmSpecScriptPrintRoundTrip(t *testing.T, scriptPath string) {
 	t.Helper()
 
-	if wasmSpecShouldSkipPrintRoundTrip(scriptPath) {
+	rel := filepath.ToSlash(strings.TrimPrefix(scriptPath, wasmSpecScriptsDir+string(filepath.Separator)))
+	if slices.Contains(wasmSpecPrintRoundTripSkippedScripts, rel) {
 		t.Skip("script is intentionally excluded from broad print-roundtrip coverage for now")
 	}
 
