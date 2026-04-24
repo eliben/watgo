@@ -26,8 +26,9 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 	// Binary-module scripts below rely on encodings that our binary
 	// decode/encode fixed-point helper does not normalize yet in this path.
 	"binary-leb128.wast",
+	// `elem` still exercises legacy element encodings we don't want to preserve
+	// through print -> parse in the broad coverage pass.
 	"elem.wast",
-	"gc/binary-gc.wast",
 
 	// `custom` depends on custom-section text forms, which print is not meant to
 	// preserve through WAT text.

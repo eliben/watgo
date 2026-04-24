@@ -1217,6 +1217,38 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				Exprs:      exprs,
 				RefType:    refType,
 			})
+		case elemSegmentFlagActiveTable0Exprs:
+			offsetExpr, err := decodeConstExprInstrs(r)
+			if err != nil {
+				diags.Addf("element[%d]: invalid offset expr: %v", i, err)
+				break
+			}
+			exprCount, err := readU32(r)
+			if err != nil {
+				diags.Addf("element[%d]: invalid expr vector length: %v", i, err)
+				break
+			}
+			exprCap, err := boundedVectorCapacity(r, exprCount)
+			if err != nil {
+				diags.Addf("element[%d]: invalid expr vector length: %v", i, err)
+				break
+			}
+			exprs := make([][]wasmir.Instruction, 0, exprCap)
+			for j := uint32(0); j < exprCount; j++ {
+				expr, err := decodeConstExprInstrs(r)
+				if err != nil {
+					diags.Addf("element[%d] expr[%d]: invalid const expr: %v", i, j, err)
+					break
+				}
+				exprs = append(exprs, expr)
+			}
+			out = append(out, wasmir.ElementSegment{
+				Mode:       wasmir.ElemSegmentModeActive,
+				TableIndex: 0,
+				OffsetExpr: offsetExpr,
+				Exprs:      exprs,
+				RefType:    wasmir.RefTypeFunc(true),
+			})
 		case elemSegmentFlagPassiveExprs, elemSegmentFlagDeclarativeExprs:
 			refType, err := decodeRefTypeFromReader(r)
 			if err != nil {

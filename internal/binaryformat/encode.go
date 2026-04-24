@@ -109,16 +109,23 @@ const (
 	// elemSegmentFlagActiveExplicitTableFuncIndices encodes an active element
 	// segment with an explicit table index and function indices.
 	elemSegmentFlagActiveExplicitTableFuncIndices byte = 0x02
-	// elemSegmentFlagPassiveFuncIndices encodes a passive function-index segment.
+	// elemSegmentFlagPassiveFuncIndices encodes a passive function-index
+	// segment.
 	elemSegmentFlagPassiveFuncIndices byte = 0x01
-	// elemSegmentFlagDeclarativeFuncIndices encodes a declarative function-index segment.
+	// elemSegmentFlagDeclarativeFuncIndices encodes a declarative
+	// function-index segment.
 	elemSegmentFlagDeclarativeFuncIndices byte = 0x03
+	// elemSegmentFlagActiveTable0Exprs encodes an active table-0 element
+	// segment using reference-typed const expressions with an implicit funcref
+	// payload.
+	elemSegmentFlagActiveTable0Exprs byte = 0x04
 	// elemSegmentFlagActiveExplicitTableExprs encodes an active element segment
 	// with an explicit table index and reference-typed const expressions.
 	elemSegmentFlagActiveExplicitTableExprs byte = 0x06
 	// elemSegmentFlagPassiveExprs encodes a passive ref-expression segment.
 	elemSegmentFlagPassiveExprs byte = 0x05
-	// elemSegmentFlagDeclarativeExprs encodes a declarative ref-expression segment.
+	// elemSegmentFlagDeclarativeExprs encodes a declarative ref-expression
+	// segment.
 	elemSegmentFlagDeclarativeExprs byte = 0x07
 
 	// elemKindFuncRef marks legacy function-index element payloads as funcref.
@@ -531,14 +538,20 @@ func encodeElementSection(elements []wasmir.ElementSegment, diags *diag.ErrorLis
 			case wasmir.ElemSegmentModeDeclarative:
 				payload.WriteByte(elemSegmentFlagDeclarativeExprs)
 			default:
-				payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
-				writeULEB128(&payload, elem.TableIndex)
+				if elem.TableIndex == 0 && elem.RefType == wasmir.RefTypeFunc(true) {
+					payload.WriteByte(elemSegmentFlagActiveTable0Exprs)
+				} else {
+					payload.WriteByte(elemSegmentFlagActiveExplicitTableExprs)
+					writeULEB128(&payload, elem.TableIndex)
+				}
 				encodeElemOffsetExpr(&payload, i, elem, diags)
 			}
 
-			if !encodeValueType(&payload, elem.RefType) {
-				diags.Addf("element[%d]: unsupported expr ref type %s", i, elem.RefType)
-				payload.WriteByte(refTypeFuncRefCode)
+			if elem.Mode != wasmir.ElemSegmentModeActive || elem.TableIndex != 0 || elem.RefType != wasmir.RefTypeFunc(true) {
+				if !encodeValueType(&payload, elem.RefType) {
+					diags.Addf("element[%d]: unsupported expr ref type %s", i, elem.RefType)
+					payload.WriteByte(refTypeFuncRefCode)
+				}
 			}
 
 			writeULEB128(&payload, uint32(len(elem.Exprs)))

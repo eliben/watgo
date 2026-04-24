@@ -264,6 +264,56 @@ func TestDecodeEncodeRoundTrip_AddModuleNameSection(t *testing.T) {
 	}
 }
 
+func TestDecodeEncodeRoundTrip_ActiveTable0ExprElement(t *testing.T) {
+	orig := []byte{
+		0x00, 0x61, 0x73, 0x6d,
+		0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+		0x03, 0x02, 0x01, 0x00,
+		0x04, 0x04, 0x01, 0x70, 0x00, 0x01,
+		0x09, 0x09, 0x01, 0x04, 0x41, 0x00, 0x0b, 0x01, 0xd2, 0x00, 0x0b,
+		0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
+	}
+
+	m, err := DecodeModule(orig)
+	if err != nil {
+		t.Fatalf("DecodeModule failed: %v", err)
+	}
+	if got, want := len(m.Elements), 1; got != want {
+		t.Fatalf("len(Elements)=%d, want %d", got, want)
+	}
+	elem := m.Elements[0]
+	if got, want := elem.Mode, wasmir.ElemSegmentModeActive; got != want {
+		t.Fatalf("element mode=%v, want %v", got, want)
+	}
+	if got := elem.TableIndex; got != 0 {
+		t.Fatalf("element table index=%d, want 0", got)
+	}
+	if got, want := elem.RefType, wasmir.RefTypeFunc(true); got != want {
+		t.Fatalf("element ref type=%v, want %v", got, want)
+	}
+	if got, want := len(elem.Exprs), 1; got != want {
+		t.Fatalf("len(element exprs)=%d, want %d", got, want)
+	}
+
+	got, err := EncodeModule(m)
+	if err != nil {
+		t.Fatalf("EncodeModule failed: %v", err)
+	}
+
+	m2, err := DecodeModule(got)
+	if err != nil {
+		t.Fatalf("DecodeModule(second pass) failed: %v", err)
+	}
+	got2, err := EncodeModule(m2)
+	if err != nil {
+		t.Fatalf("EncodeModule(second pass) failed: %v", err)
+	}
+	if !bytes.Equal(got, got2) {
+		t.Fatalf("roundtrip mismatch:\n pass1=%x\npass2=%x", got, got2)
+	}
+}
+
 func TestDecodeModule_BadMagic(t *testing.T) {
 	bin := canonicalAddModuleBytes()
 	bin[0] = 0xff
