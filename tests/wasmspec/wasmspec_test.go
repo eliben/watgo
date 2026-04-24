@@ -50,7 +50,6 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 var wasmSpecPrintRoundTripSkippedPrefixes = []string{
 	"bulk-memory/",
 	"gc/",
-	"memory64/",
 	"simd/",
 }
 

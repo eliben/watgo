@@ -1113,6 +1113,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				TableIndex:  0,
 				OffsetExpr:  offsetExpr,
 				FuncIndices: funcIndices,
+				RefType:     wasmir.RefTypeFunc(true),
 			})
 		case elemSegmentFlagPassiveFuncIndices:
 			elemKind, err := readByte(r)
@@ -1128,6 +1129,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModePassive,
 				FuncIndices: funcIndices,
+				RefType:     wasmir.RefTypeFunc(true),
 			})
 		case elemSegmentFlagActiveExplicitTableFuncIndices:
 			tableIndex, err := readU32(r)
@@ -1155,6 +1157,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 				TableIndex:  tableIndex,
 				OffsetExpr:  offsetExpr,
 				FuncIndices: funcIndices,
+				RefType:     wasmir.RefTypeFunc(true),
 			})
 		case elemSegmentFlagDeclarativeFuncIndices:
 			elemKind, err := readByte(r)
@@ -1170,6 +1173,7 @@ func decodeElementSection(r *bytes.Reader, diags *diag.ErrorList) []wasmir.Eleme
 			out = append(out, wasmir.ElementSegment{
 				Mode:        wasmir.ElemSegmentModeDeclarative,
 				FuncIndices: funcIndices,
+				RefType:     wasmir.RefTypeFunc(true),
 			})
 		case elemSegmentFlagActiveExplicitTableExprs:
 			tableIndex, err := readU32(r)

@@ -404,6 +404,12 @@ func (p *modulePrinter) printElements() error {
 				p.buf.WriteString(text)
 				p.buf.WriteByte(')')
 			}
+		} else if len(elem.FuncIndices) == 0 {
+			// Empty segments must keep their explicit element type, e.g.
+			// `(elem funcref)`, because the `func` shorthand denotes the legacy
+			// function-index payload form rather than a typed empty payload.
+			p.buf.WriteByte(' ')
+			p.buf.WriteString(p.valueTypeText(elem.RefType))
 		} else {
 			p.buf.WriteString(" func")
 			for _, idx := range elem.FuncIndices {

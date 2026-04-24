@@ -11,7 +11,8 @@ import (
 func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
 	// A simple function-only module should print to WAT that watgo can compile
 	// back to the original bytes.
-	printRoundTripFromWAT(t, `(module
+	printRoundTripFromWAT(t, `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -23,7 +24,8 @@ func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
 func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 	// Basic top-level declarations such as imports, globals, and data segments
 	// should print to valid WAT and round-trip back to the same bytes.
-	printRoundTripFromWAT(t, `(module
+	printRoundTripFromWAT(t, `
+(module
   (import "env" "f" (func (param i32) (result i32)))
   (memory 1)
   (global (mut i32) (i32.const 7))
@@ -40,7 +42,8 @@ func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 func TestPrintModule_PrintsFormerlyFoldedInstructionsFlat(t *testing.T) {
 	// Instructions that used folded printer output only to satisfy parser gaps
 	// should now print as ordinary flat instruction lines.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (type $Box (array (ref eq)))
   (memory 1)
   (memory 1)
@@ -70,7 +73,8 @@ func TestPrintModule_PrintsFormerlyFoldedInstructionsFlat(t *testing.T) {
 func TestPrintModule_MultiInstructionConstExprRoundTrip(t *testing.T) {
 	// Multi-instruction constant expressions should print as flat instruction
 	// sequences that compile back to the same binary.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (memory 1)
   (global i32 (i32.add (i32.const 1) (i32.const 2)))
   (data (i32.add (i32.const 4) (i32.const 5)) "x")
@@ -81,10 +85,29 @@ func TestPrintModule_MultiInstructionConstExprRoundTrip(t *testing.T) {
 	)
 }
 
+func TestPrintModule_EmptyTypedElemSegmentRoundTrip(t *testing.T) {
+	// Empty passive element segments should preserve their explicit ref type
+	// instead of printing the legacy `func` shorthand.
+	printed := printRoundTripFromWAT(t, `
+(module
+  (table 1 funcref)
+  (elem funcref)
+  (func
+    i32.const 0
+    i32.const 0
+    i32.const 0
+    table.init 0
+  )
+)`)
+	assertPrintedContains(t, printed, "(elem funcref)")
+	assertPrintedNotContains(t, printed, "(elem func)")
+}
+
 func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
 	// GC aggregate constant expressions should print as flat WAT in table
 	// initializers and element item expressions.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (type $Arr (array i32))
   (table 1 (ref $Arr) i32.const 4 array.new_default $Arr)
   (elem declare (ref $Arr) (item i32.const 7 i32.const 8 array.new_fixed $Arr 2))
@@ -98,7 +121,8 @@ func TestPrintModule_GCConstExprRoundTrip(t *testing.T) {
 func TestPrintModule_PreservesNaNPayloads(t *testing.T) {
 	// Floating-point constants should preserve NaN payload bits through printer
 	// output so recompiling the printed WAT yields identical bytes.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (func (result i32)
     f32.const nan:0x20
     i32.reinterpret_f32
@@ -130,7 +154,8 @@ func TestPrintModule_TryTableRoundTrip(t *testing.T) {
 func TestPrintModule_RecursiveSubtypeRoundTrip(t *testing.T) {
 	// Recursive and subtype type declarations should print using `(rec ...)`
 	// and `(sub ...)` wrappers that compile back to the same binary.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (rec
     (type $base (sub (struct)))
     (type $child (sub final $base (struct (field i32))))
@@ -146,7 +171,8 @@ func TestPrintModule_RecursiveSubtypeRoundTrip(t *testing.T) {
 func TestPrintModule_PrefersNamedReferences(t *testing.T) {
 	// Named declarations from source/debug info should be reused for internal
 	// references instead of printing raw indices when wasmir carries the names.
-	printed := printRoundTripFromWAT(t, `(module $M
+	printed := printRoundTripFromWAT(t, `
+(module $M
   (type $T (func))
   (type $S (struct (field $f i32)))
   (type $Reader (func (param (ref $S)) (result i32)))
