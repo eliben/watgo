@@ -138,7 +138,8 @@ func TestPrintModule_PreservesNaNPayloads(t *testing.T) {
 func TestPrintModule_TryTableRoundTrip(t *testing.T) {
 	// try_table should print as a flat structured-control header with catch
 	// clauses and compile back to the same binary.
-	printed := printRoundTripFromWAT(t, `(module
+	printed := printRoundTripFromWAT(t, `
+(module
   (tag $e)
   (func
     block

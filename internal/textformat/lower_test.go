@@ -28,7 +28,8 @@ func errorListContains(errs diag.ErrorList, needle string) bool {
 }
 
 func TestLowerModule_AddFunction(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -110,7 +111,8 @@ func TestLowerModule_ModuleName(t *testing.T) {
 }
 
 func TestLowerModule_UnknownLocalName(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param $a i32) (result i32)
     local.get $missing
   )
@@ -129,8 +131,8 @@ func TestLowerModule_UnknownLocalName(t *testing.T) {
 	if !errorListContains(errs, "invalid local.get operand") {
 		t.Fatalf("got errors %q, want invalid local.get operand", errs.Error())
 	}
-	if !errorListContains(errs, "3:15") {
-		t.Fatalf("got errors %q, want source location 3:15", errs.Error())
+	if !errorListContains(errs, "4:15") {
+		t.Fatalf("got errors %q, want source location 4:15", errs.Error())
 	}
 }
 
@@ -154,7 +156,8 @@ func TestLowerModule_UnsupportedType(t *testing.T) {
 }
 
 func TestLowerModule_SIMDEndianFlipSlice(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (import "env" "buffer" (memory 1))
   (func (param $offset i32)
     (v128.store
@@ -200,7 +203,8 @@ func TestLowerModule_SIMDEndianFlipSlice(t *testing.T) {
 }
 
 func TestLowerModule_SIMDV128ConstI16x8(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (result v128)
     (v128.const i16x8 0 1 2 3 4 5 6 7)
   )
@@ -230,7 +234,8 @@ func TestLowerModule_SIMDV128ConstI16x8(t *testing.T) {
 }
 
 func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param $a i32) (result i32)
     local.get $missing
     no.such.instr
@@ -259,7 +264,8 @@ func TestLowerModule_CollectsMultipleDiagnostics(t *testing.T) {
 }
 
 func TestLowerModule_NamedFunctionInDiagnostics(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func $foo (param $a i32) (result i32)
     local.get $missing
   )
@@ -281,7 +287,8 @@ func TestLowerModule_NamedFunctionInDiagnostics(t *testing.T) {
 }
 
 func TestLowerModule_LowersCallByName(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func $callee (result i32)
     (i32.const 42)
   )
@@ -316,7 +323,8 @@ func TestLowerModule_LowersCallByName(t *testing.T) {
 }
 
 func TestLowerModule_LowersPassiveDataAndMemoryInit(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (memory i64 1)
   (data "\aa\bb")
   (func
@@ -357,7 +365,8 @@ func TestLowerModule_LowersPassiveDataAndMemoryInit(t *testing.T) {
 }
 
 func TestLowerModule_LowersPlainRefTestCast(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (type $T (struct))
   (func (param anyref)
     local.get 0
@@ -397,7 +406,8 @@ func TestLowerModule_LowersPlainRefTestCast(t *testing.T) {
 }
 
 func TestLowerModule_LowersFoldedIf(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (result i64)
     (if (result i64) (i64.eqz (i64.const 0))
       (then (i64.const 1))
@@ -606,7 +616,8 @@ func TestLowerModule_FlatCallIndirect(t *testing.T) {
 }
 
 func TestLowerModule_Memory64MemArgOffset(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (memory i64 1)
   (func
     i64.const 0

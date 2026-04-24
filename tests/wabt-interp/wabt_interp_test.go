@@ -792,7 +792,8 @@ func wabtInterpV128ResultHelperBase64(exports []wabtInterpExport) (string, error
 	}
 
 	wabtInterpV128ResultHelperOnce.Do(func() {
-		const helperWAT = `(module
+		const helperWAT = `
+(module
   (import "m" "f" (func $f (result v128)))
   (memory (export "mem") 1)
   (func (export "call")

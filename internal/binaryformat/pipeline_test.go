@@ -13,7 +13,8 @@ import (
 )
 
 func TestPipelineEncodeAddModule(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -375,7 +376,8 @@ func TestPipelineEncodeDecodeSIMDEndianFlipSlice(t *testing.T) {
 }
 
 func TestPipelineEncodeDecodeThrow(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (tag $e (param i32))
   (func (export "boom")
     i32.const 7

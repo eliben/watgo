@@ -224,7 +224,8 @@ func TestParseSmoke(t *testing.T) {
 }
 
 func TestParseModule_StartDeclLoc(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func $main)
   (start $main)
 )`
@@ -239,13 +240,14 @@ func TestParseModule_StartDeclLoc(t *testing.T) {
 	if m.Start.FuncRef != "$main" {
 		t.Fatalf("start func ref=%q, want $main", m.Start.FuncRef)
 	}
-	if got := m.Start.loc.String(); got != "3:3" {
-		t.Fatalf("start loc=%q, want 3:3", got)
+	if got := m.Start.loc.String(); got != "4:3" {
+		t.Fatalf("start loc=%q, want 4:3", got)
 	}
 }
 
 func TestParseModule_LinearAddInstructions(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -270,8 +272,8 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	if instr0.Name != "local.get" {
 		t.Fatalf("instr0 name=%q, want local.get", instr0.Name)
 	}
-	if got := instr0.Loc(); got != "3:5" {
-		t.Fatalf("instr0 loc=%q, want 3:5", got)
+	if got := instr0.Loc(); got != "4:5" {
+		t.Fatalf("instr0 loc=%q, want 4:5", got)
 	}
 	if len(instr0.Operands) != 1 {
 		t.Fatalf("instr0 has %d operands, want 1", len(instr0.Operands))
@@ -283,8 +285,8 @@ func TestParseModule_LinearAddInstructions(t *testing.T) {
 	if op0.Value != "$a" {
 		t.Fatalf("instr0 operand value=%q, want $a", op0.Value)
 	}
-	if got := op0.Loc(); got != "3:15" {
-		t.Fatalf("instr0 operand loc=%q, want 3:15", got)
+	if got := op0.Loc(); got != "4:15" {
+		t.Fatalf("instr0 operand loc=%q, want 4:15", got)
 	}
 
 	instr1 := mustPlainInstr(t, f.Instrs[1])
@@ -717,7 +719,8 @@ func TestParseModule_PlainCallIndirectConsumesTableAndTypeClausesOnly(t *testing
 }
 
 func TestParseModule_FoldedInstructions(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (result i32)
     (i32.add (i32.const 1) (i32.const 2))
   )
@@ -758,7 +761,8 @@ func TestParseModule_FoldedInstructions(t *testing.T) {
 }
 
 func TestParseModule_Memory64InlineDataShorthand(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (memory i64 (data "x"))
 )`
 
@@ -783,7 +787,8 @@ func TestParseModule_Memory64InlineDataShorthand(t *testing.T) {
 }
 
 func TestParseModule_DataOffsetClause(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (data (offset (i32.const 7)) "x")
 )`
 
@@ -804,7 +809,8 @@ func TestParseModule_DataOffsetClause(t *testing.T) {
 }
 
 func TestParseModule_FlatConstExprContexts(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (global i32 i32.const 1 i32.const 2 i32.add)
   (data (offset i32.const 3 i32.const 4 i32.add) "x")
   (elem (offset i32.const 0 i32.const 0 i32.add) func)
@@ -829,7 +835,8 @@ func TestParseModule_FlatConstExprContexts(t *testing.T) {
 }
 
 func TestParseModule_Table64Declaration(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (table i64 10 funcref)
 )`
 
@@ -854,7 +861,8 @@ func TestParseModule_Table64Declaration(t *testing.T) {
 }
 
 func TestParseModule_MultiParamAndResultClauses(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param i32 i64) (result i32 i64)
     local.get 0
     local.get 1
@@ -892,7 +900,8 @@ func TestParseModule_MultiParamAndResultClauses(t *testing.T) {
 }
 
 func TestParseModule_FoldedCall(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func $callee (result i32)
     (i32.const 42)
   )
@@ -927,7 +936,8 @@ func TestParseModule_FoldedCall(t *testing.T) {
 }
 
 func TestParseModule_FoldedIf(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param i64) (result i64)
     (if (result i64) (i64.eqz (local.get 0))
       (then (i64.const 1))
@@ -958,7 +968,8 @@ func TestParseModule_FoldedIf(t *testing.T) {
 }
 
 func TestParseModule_PlainIfWithResultClause(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param i32 i32) (result i32)
     local.get 0
     local.get 1
@@ -997,7 +1008,8 @@ func TestParseModule_PlainIfWithResultClause(t *testing.T) {
 }
 
 func TestParseModule_PlainTryTableHeader(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (tag $e)
   (func
     block
@@ -1032,7 +1044,8 @@ func TestParseModule_PlainTryTableHeader(t *testing.T) {
 }
 
 func TestParseModule_FoldedStructuredBodyAllowsPlainInstructions(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func
     (loop $count (block $done
       (i32.eqz (i32.const 0))
@@ -1087,7 +1100,8 @@ func TestParseModule_FoldedStructuredBodyAllowsPlainInstructions(t *testing.T) {
 }
 
 func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func
     local.get
   )
@@ -1103,7 +1117,8 @@ func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
 }
 
 func TestParseTopLevelSExprs_Multiple(t *testing.T) {
-	src := `(module)
+	src := `
+(module)
 (assert_return (invoke "f"))`
 
 	sxs, err := ParseTopLevelSExprs(src)
@@ -1170,7 +1185,8 @@ func TestParseModule_LinearFunctionBodyParsesViaTopLevelEntry(t *testing.T) {
 }
 
 func TestParseModule_MultipleTopLevelExpressionsRejected(t *testing.T) {
-	src := `(module) (module)`
+	src := `
+(module) (module)`
 
 	_, err := ParseModule(src)
 	if err == nil {
@@ -1182,7 +1198,8 @@ func TestParseModule_MultipleTopLevelExpressionsRejected(t *testing.T) {
 }
 
 func TestParseModuleSExpr(t *testing.T) {
-	src := `(module
+	src := `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
@@ -1241,7 +1258,8 @@ func TestParseModuleSExpr_AllowsAnnotations(t *testing.T) {
 }
 
 func TestParseModule_EmptyListInstructionReportsError(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func
     ()
   )
@@ -1257,7 +1275,8 @@ func TestParseModule_EmptyListInstructionReportsError(t *testing.T) {
 }
 
 func TestParseModule_EmptyListTypeReportsError(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (param ()))
 )`
 
@@ -1271,7 +1290,8 @@ func TestParseModule_EmptyListTypeReportsError(t *testing.T) {
 }
 
 func TestParseModule_EmptyListInstructionDoesNotStopParsing(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (func (result i32)
     ()
     (i32.const 1)
@@ -1299,7 +1319,8 @@ func TestParseModule_EmptyListInstructionDoesNotStopParsing(t *testing.T) {
 
 func TestParseModule_TypeUseFormsFromSpec(t *testing.T) {
 	// Snippet adapted from WebAssembly spec tests (test/core/func.wast).
-	wat := `(module
+	wat := `
+(module
   (type $sig-1 (func))
   (type $sig-2 (func (param i32) (result i32)))
 

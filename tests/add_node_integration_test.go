@@ -21,7 +21,8 @@ func TestAddModuleEndToEndWithNode(t *testing.T) {
 		t.Fatalf("node executable not found (set WATGO_INTEGRATION=0 to skip integration tests): %v", err)
 	}
 
-	wat := `(module
+	wat := `
+(module
   (func (export "add") (param $a i32) (param $b i32) (result i32)
     local.get $a
     local.get $b
