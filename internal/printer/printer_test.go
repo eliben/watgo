@@ -207,6 +207,46 @@ func TestPrintModule_PrefersNamedReferences(t *testing.T) {
 	)
 }
 
+func TestPrintModule_CallRefUsesCallTypeIndex(t *testing.T) {
+	// call_ref and return_call_ref should print their call type immediate, not
+	// an unrelated GC type index field, so reparsing sees the right callee type.
+	printed := printRoundTripFromWAT(t, `
+(module
+  (type $callee (func (result i32)))
+  (global $g (ref $callee) (ref.func $f))
+  (func $f (type $callee) (result i32)
+    i32.const 7
+  )
+  (func (export "call") (result i32)
+    global.get $g
+    call_ref $callee
+  )
+  (func (export "tail") (result i32)
+    global.get $g
+    return_call_ref $callee
+  )
+)`)
+	assertPrintedContains(t, printed, "call_ref $callee", "return_call_ref $callee")
+}
+
+func TestPrintModule_QuotesNonPlainIdentifiers(t *testing.T) {
+	// Identifiers with whitespace or non-ASCII text should print back using the
+	// quoted $"..." form instead of becoming invalid plain `$name` tokens.
+	printed := printRoundTripFromWAT(t, `
+(module
+  (func $" spaced \t name ")
+  (func (call $" spaced \t name "))
+  (func $"")
+  (func (call $""))
+)`)
+	assertPrintedContains(t, printed,
+		`(func $" spaced \t name "`,
+		`call $" spaced \t name "`,
+		`(func $"\ef\98\9a\ef\92\a9"`,
+		`call $"\ef\98\9a\ef\92\a9"`,
+	)
+}
+
 // printRoundTripFromWAT compiles wat, prints the decoded module back to WAT,
 // recompiles the printed text, and checks that the wasm bytes are preserved.
 func printRoundTripFromWAT(t *testing.T, wat string) []byte {

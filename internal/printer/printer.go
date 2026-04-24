@@ -495,7 +495,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrCall, wasmir.InstrReturnCall:
 		return fmt.Sprintf("%s %s", name, p.funcRefText(ins.FuncIndex)), nil
 	case wasmir.InstrCallRef, wasmir.InstrReturnCallRef:
-		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.TypeIndex)), nil
+		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.CallTypeIndex)), nil
 	case wasmir.InstrThrow:
 		return fmt.Sprintf("%s %s", name, p.tagRefText(ins.TagIndex)), nil
 	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
@@ -965,15 +965,47 @@ func (p *modulePrinter) importedTagCount() uint32 {
 	return n
 }
 
-// formatID normalizes an identifier into the `$name` form used in WAT.
+// formatID prints name as a WAT identifier, using $"..." syntax when the
+// decoded identifier text cannot appear as a plain `$name` token.
+//
+// For example:
+//
+//	$fg            -> $fg
+//	$ random \n x  -> $" random \n x"
+//	$           -> $""
 func formatID(name string) string {
 	if name == "" {
 		return ""
 	}
-	if strings.HasPrefix(name, "$") {
+	if !strings.HasPrefix(name, "$") {
+		name = "$" + name
+	}
+	if isPlainWATID(name[1:]) {
 		return name
 	}
-	return "$" + name
+	return "$" + quoteString([]byte(name[1:]))
+}
+
+// isPlainWATID reports whether s can be printed directly after '$' without
+// switching to the quoted $"..." identifier form.
+func isPlainWATID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if '0' <= r && r <= '9' || 'A' <= r && r <= 'Z' || 'a' <= r && r <= 'z' {
+			continue
+		}
+		switch r {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '/':
+			continue
+		case ':', '<', '=', '>', '?', '@', '\\', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // formatConstExpr formats a constant expression as a flat WAT instruction

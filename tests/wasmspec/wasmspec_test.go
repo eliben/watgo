@@ -33,23 +33,12 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 	// preserve through WAT text.
 	"custom.wast",
 
-	// These expose current printer/parser gaps we cover elsewhere with targeted
-	// tests before enabling broad wasmspec coverage.
-	"bulk-memory/table-sub.wast",
-	"bulk-memory/table_init.wast",
-	"call_ref.wast",
-	"const.wast",
-	"float_literals.wast",
-	"float_memory.wast",
-	"id.wast",
-	"local_tee.wast",
+	// `names` relies on byte-for-byte preservation of the binary name section,
+	// which print -> parse through WAT intentionally does not keep.
 	"names.wast",
-	"return_call_ref.wast",
 }
 
 var wasmSpecPrintRoundTripSkippedPrefixes = []string{
-	"bulk-memory/",
-	"gc/",
 	"simd/",
 }
 
