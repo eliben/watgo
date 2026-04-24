@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/eliben/watgo"
+	"github.com/eliben/watgo/internal/printer"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -146,10 +148,17 @@ func TestWABTInterp(t *testing.T) {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
 	}
 
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatalf("node executable not found (set WATGO_INTEGRATION=0 to skip integration tests): %v", err)
-	}
+	runWABTInterpFixturesWith(t, executeWABTInterpFixture)
+}
+
+func TestWABTInterpPrintRoundTrip(t *testing.T) {
+	runWABTInterpFixturesWith(t, checkWABTInterpPrintRoundTrip)
+}
+
+// runWABTInterpFixturesWith discovers the WABT interp fixtures once and runs fn
+// for each supported fixture as its own subtest.
+func runWABTInterpFixturesWith(t *testing.T, fn func(t *testing.T, path string)) {
+	t.Helper()
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -174,20 +183,14 @@ func TestWABTInterp(t *testing.T) {
 			if wabtInterpShouldSkipFixture(file) {
 				t.Skip("fixture is intentionally not covered by this harness")
 			}
-			runWABTInterpCase(t, nodePath, file)
+			fn(t, file)
 		})
 	}
 }
 
-// runWABTInterpCase executes one WABT interp fixture end to end.
-//
-// The flow is:
-//   - extract the embedded module and expected stdout from the .txt fixture
-//   - compile and validate the module with watgo
-//   - discover which exported functions can be driven by this harness
-//   - run those exports under Node
-//   - compare the reconstructed stdout against WABT's expected stdout block
-func runWABTInterpCase(t *testing.T, nodePath, path string) {
+// compileWABTInterpFixture extracts, parses, validates, and encodes one WABT
+// interp fixture's embedded module.
+func compileWABTInterpFixture(t *testing.T, path string) (wabtInterpCase, *wasmir.Module, []byte) {
 	t.Helper()
 
 	src, err := os.ReadFile(path)
@@ -208,14 +211,35 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 		t.Fatalf("ValidateModule %q failed: %v", path, err)
 	}
 
-	exports, err := wabtInterpExports(m)
-	if err != nil {
-		t.Fatalf("wabtInterpExports %q failed: %v", path, err)
-	}
-
 	wasmBytes, err := watgo.EncodeWASM(m)
 	if err != nil {
 		t.Fatalf("EncodeWASM %q failed: %v", path, err)
+	}
+
+	return tc, m, wasmBytes
+}
+
+// executeWABTInterpFixture executes one WABT interp fixture end to end.
+//
+// The flow is:
+//   - extract the embedded module and expected stdout from the .txt fixture
+//   - compile and validate the module with watgo
+//   - discover which exported functions can be driven by this harness
+//   - run those exports under Node
+//   - compare the reconstructed stdout against WABT's expected stdout block
+func executeWABTInterpFixture(t *testing.T, path string) {
+	t.Helper()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("node executable not found (set WATGO_INTEGRATION=0 to skip integration tests): %v", err)
+	}
+
+	tc, m, wasmBytes := compileWABTInterpFixture(t, path)
+
+	exports, err := wabtInterpExports(m)
+	if err != nil {
+		t.Fatalf("wabtInterpExports %q failed: %v", path, err)
 	}
 
 	tmpDir := t.TempDir()
@@ -247,6 +271,30 @@ func runWABTInterpCase(t *testing.T, nodePath, path string) {
 	}
 	if got.Stderr != tc.expectedStderr {
 		t.Fatalf("stderr mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", path, got.Stderr, tc.expectedStderr)
+	}
+}
+
+// checkWABTInterpPrintRoundTrip verifies that printing and reparsing one WABT
+// interp fixture preserves the exact binary encoding of the compiled module.
+func checkWABTInterpPrintRoundTrip(t *testing.T, path string) {
+	t.Helper()
+
+	_, _, wasmBytes := compileWABTInterpFixture(t, path)
+
+	decoded, err := watgo.DecodeWASM(wasmBytes)
+	if err != nil {
+		t.Fatalf("DecodeWASM %q failed: %v", path, err)
+	}
+	printed, err := printer.PrintModule(decoded)
+	if err != nil {
+		t.Fatalf("PrintModule %q failed: %v", path, err)
+	}
+	roundTripped, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output for %q) failed: %v\nprinted:\n%s", path, err, printed)
+	}
+	if !bytes.Equal(roundTripped, wasmBytes) {
+		t.Fatalf("print roundtrip changed bytes for %q\nprinted:\n%s", path, printed)
 	}
 }
 
