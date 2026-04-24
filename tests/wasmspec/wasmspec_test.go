@@ -26,8 +26,9 @@ const wasmSpecDebugEnvVar = "WATGO_WASMSPEC_DEBUG"
 // decode/encode path yet, or scripts whose semantics depend on information WAT
 // text roundtrips are not meant to preserve.
 var wasmSpecPrintRoundTripSkippedScripts = []string{
-	// Binary-module scripts below rely on encodings that our binary
-	// decode/encode fixed-point helper does not normalize yet in this path.
+	// `binary-leb128` exercises binary-only encodings, including non-minimal
+	// LEB forms and custom sections, that the broad WAT print roundtrip is not
+	// meant to preserve as a whole script.
 	"binary-leb128.wast",
 	// `elem` still exercises legacy element encodings we don't want to preserve
 	// through print -> parse in the broad coverage pass.
