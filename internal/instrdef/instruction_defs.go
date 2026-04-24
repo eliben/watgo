@@ -688,13 +688,6 @@ func LookupInstructionByKind(kind InstrKind) (InstructionDef, bool) {
 	return def, ok
 }
 
-// LookupInstructionByName returns the centralized metadata for a WAT
-// opcode spelling such as "i32.add".
-func LookupInstructionByName(name string) (InstructionDef, bool) {
-	def, ok := instructionByName[name]
-	return def, ok
-}
-
 // LookupInstructionByBinary returns the centralized metadata for a
 // direct opcode or prefixed subopcode.
 func LookupInstructionByBinary(prefix byte, opcode uint32) (InstructionDef, bool) {
