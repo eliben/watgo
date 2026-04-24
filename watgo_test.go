@@ -68,12 +68,18 @@ func TestCompileWATToWASM_MultipleErrors_PublicAPI(t *testing.T) {
 		t.Fatal("expected CompileWATToWASM to fail")
 	}
 
-	errs, ok := errors.AsType[diag.ErrorList](err)
-	if !ok {
+	var errs diag.ErrorList
+	if !errors.As(err, &errs) {
 		t.Fatalf("expected diag.ErrorList, got %T (%v)", err, err)
 	}
 	if len(errs) < 2 {
 		t.Fatalf("got %d diagnostics, want >=2 (%v)", len(errs), errs.Error())
+	}
+	if !bytes.Contains([]byte(errs[0].Error()), []byte("func[0]")) {
+		t.Fatalf("first diagnostic %q, want function context", errs[0])
+	}
+	if !bytes.Contains([]byte(errs[1].Error()), []byte("func[1]")) {
+		t.Fatalf("second diagnostic %q, want function context", errs[1])
 	}
 }
 

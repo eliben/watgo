@@ -1,8 +1,11 @@
 package textformat
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/eliben/watgo/diag"
 )
 
 func mustParseSingleSExpr(t *testing.T, input string) *SExpr {
@@ -1113,6 +1116,37 @@ func TestParseModule_LocalGetWithoutOperandIsRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "local.get expects one operand") {
 		t.Fatalf("got error %q, want local.get missing-operand error", err.Error())
+	}
+}
+
+func TestParseModule_MultipleErrors_TraversableAsErrorList(t *testing.T) {
+	src := `
+(module
+  (bogus)
+  (start)
+  (another)
+)`
+
+	_, err := ParseModule(src)
+	if err == nil {
+		t.Fatal("expected ParseModule error, got nil")
+	}
+
+	var errs diag.ErrorList
+	if !errors.As(err, &errs) {
+		t.Fatalf("errors.As(%T) did not recover diag.ErrorList", err)
+	}
+	if len(errs) != 3 {
+		t.Fatalf("got %d parser diagnostics, want 3 (%v)", len(errs), errs.Error())
+	}
+	if !errorListContains(errs, `unsupported module field "bogus"`) {
+		t.Fatalf("got errors %q, want bogus unsupported-field diagnostic", errs.Error())
+	}
+	if !errorListContains(errs, "start expects function reference") {
+		t.Fatalf("got errors %q, want invalid start diagnostic", errs.Error())
+	}
+	if !errorListContains(errs, `unsupported module field "another"`) {
+		t.Fatalf("got errors %q, want another unsupported-field diagnostic", errs.Error())
 	}
 }
 
