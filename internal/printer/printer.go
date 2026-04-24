@@ -580,11 +580,10 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
 	}
 
-	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {
-		return memoryInstrText(name, ins), nil
-	}
-
 	switch ins.Kind {
+	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
+		wasmir.InstrV128Store8Lane, wasmir.InstrV128Store16Lane, wasmir.InstrV128Store32Lane, wasmir.InstrV128Store64Lane:
+		return memoryInstrText(name, ins) + " " + strconv.FormatUint(uint64(ins.LaneIndex), 10), nil
 	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew,
 		wasmir.InstrArrayNewDefault, wasmir.InstrArrayGet, wasmir.InstrArrayGetS, wasmir.InstrArrayGetU,
 		wasmir.InstrArraySet, wasmir.InstrArrayFill:
@@ -599,9 +598,6 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		return fmt.Sprintf("%s %s %d", name, p.typeRefText(ins.TypeIndex), ins.FixedCount), nil
 	case wasmir.InstrArrayCopy:
 		return fmt.Sprintf("%s %s %s", name, p.typeRefText(ins.TypeIndex), p.typeRefText(ins.SourceTypeIndex)), nil
-	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
-		wasmir.InstrV128Store8Lane, wasmir.InstrV128Store16Lane, wasmir.InstrV128Store32Lane, wasmir.InstrV128Store64Lane:
-		return memoryInstrText(name, ins) + " " + strconv.FormatUint(uint64(ins.LaneIndex), 10), nil
 	case wasmir.InstrI8x16Shuffle:
 		return fmt.Sprintf("%s %s", name, formatShuffleLanes(ins.ShuffleLanes)), nil
 	case wasmir.InstrI8x16ExtractLaneS, wasmir.InstrI8x16ExtractLaneU, wasmir.InstrI8x16ReplaceLane,
@@ -610,6 +606,10 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		wasmir.InstrI64x2ReplaceLane, wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
 		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
 		return fmt.Sprintf("%s %d", name, ins.LaneIndex), nil
+	}
+
+	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {
+		return memoryInstrText(name, ins), nil
 	}
 
 	if def.Text.SyntaxClass == instrdef.InstrSyntaxPlain {

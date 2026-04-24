@@ -39,9 +39,7 @@ var wasmSpecPrintRoundTripSkippedScripts = []string{
 	"names.wast",
 }
 
-var wasmSpecPrintRoundTripSkippedPrefixes = []string{
-	"simd/",
-}
+var wasmSpecPrintRoundTripSkippedPrefixes = []string{}
 
 func wasmSpecDebugEnabled() bool {
 	return os.Getenv(wasmSpecDebugEnvVar) != ""

@@ -247,6 +247,29 @@ func TestPrintModule_QuotesNonPlainIdentifiers(t *testing.T) {
 	)
 }
 
+func TestPrintModule_SIMDLaneMemoryInstrsRoundTrip(t *testing.T) {
+	// SIMD load/store lane instructions should print their required lane
+	// immediates in addition to any memory operands.
+	printed := printRoundTripFromWAT(t, `
+(module
+  (memory 1)
+  (func (param i32) (param v128) (result v128)
+    local.get 0
+    local.get 1
+    v128.load8_lane offset=3 7
+  )
+  (func (param i32) (param v128)
+    local.get 0
+    local.get 1
+    v128.store16_lane align=2 5
+  )
+)`)
+	assertPrintedContains(t, printed,
+		"v128.load8_lane offset=3 7",
+		"v128.store16_lane align=2 5",
+	)
+}
+
 // printRoundTripFromWAT compiles wat, prints the decoded module back to WAT,
 // recompiles the printed text, and checks that the wasm bytes are preserved.
 func printRoundTripFromWAT(t *testing.T, wat string) []byte {
