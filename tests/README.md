@@ -4,6 +4,10 @@ This directory holds watgo's end-to-end and integration-style test corpora.
 The corpora are chosen to be self-testing - the WAT modules compiled by watgo
 get executed (using Node.js) and results compared to expected results.
 
+When applicable, the test harnesses also use the WAT code in these corpora to
+run roundtrip printing tests (where the functionality of the `printer` package
+is exercised).
+
 ## Test Sets
 
 - `wasmspec/`

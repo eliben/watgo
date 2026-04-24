@@ -1,27 +1,93 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/eliben/watgo"
+	"github.com/eliben/watgo/internal/printer"
 )
 
 const wasmSpecScriptsDir = "scripts"
 const wasmSpecDebugEnvVar = "WATGO_WASMSPEC_DEBUG"
 
+// wasmSpecPrintRoundTripSkippedScripts lists wasmspec scripts whose valid
+// modules currently exercise known printer gaps, so the print-roundtrip pass
+// skips them for now instead of failing the whole corpus.
+var wasmSpecPrintRoundTripSkippedScripts = []string{
+	// Binary-module scripts below rely on encodings that our binary
+	// decode/encode fixed-point helper does not normalize yet in this path.
+	"binary-leb128.wast",
+	"elem.wast",
+	"gc/binary-gc.wast",
+
+	// `custom` depends on custom-section text forms, which print is not meant to
+	// preserve through WAT text.
+	"custom.wast",
+
+	// These expose current printer/parser gaps we cover elsewhere with targeted
+	// tests before enabling broad wasmspec coverage.
+	"bulk-memory/table-sub.wast",
+	"bulk-memory/table_init.wast",
+	"call_ref.wast",
+	"const.wast",
+	"float_literals.wast",
+	"float_memory.wast",
+	"id.wast",
+	"local_tee.wast",
+	"names.wast",
+	"return_call_ref.wast",
+}
+
+var wasmSpecPrintRoundTripSkippedPrefixes = []string{
+	"bulk-memory/",
+	"gc/",
+	"memory64/",
+	"multi-memory/",
+	"simd/",
+}
+
 func wasmSpecDebugEnabled() bool {
 	return os.Getenv(wasmSpecDebugEnvVar) != ""
+}
+
+func wasmSpecShouldSkipPrintRoundTrip(scriptPath string) bool {
+	rel := filepath.ToSlash(strings.TrimPrefix(scriptPath, wasmSpecScriptsDir+string(filepath.Separator)))
+	if slices.Contains(wasmSpecPrintRoundTripSkippedScripts, rel) {
+		return true
+	}
+	for _, prefix := range wasmSpecPrintRoundTripSkippedPrefixes {
+		if strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWasmSpecScripts(t *testing.T) {
 	if os.Getenv("WATGO_INTEGRATION") == "0" {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
 	}
+
+	runWasmSpecScriptsWith(t, runWasmSpecScriptFile)
+}
+
+func TestWasmSpecScriptsPrintRoundTrip(t *testing.T) {
+	runWasmSpecScriptsWith(t, checkWasmSpecScriptPrintRoundTrip)
+}
+
+// runWasmSpecScriptsWith discovers the wasmspec script files once and runs fn
+// for each script as its own subtest.
+func runWasmSpecScriptsWith(t *testing.T, fn func(t *testing.T, scriptPath string)) {
+	t.Helper()
 
 	scripts, err := findWasmSpecScripts(wasmSpecScriptsDir)
 	if err != nil {
@@ -36,7 +102,7 @@ func TestWasmSpecScripts(t *testing.T) {
 	for _, script := range scripts {
 		name := filepath.ToSlash(strings.TrimSuffix(script, filepath.Ext(script)))
 		t.Run(name, func(t *testing.T) {
-			runWasmSpecScriptFile(t, filepath.Join(wasmSpecScriptsDir, script))
+			fn(t, filepath.Join(wasmSpecScriptsDir, script))
 		})
 	}
 }
@@ -137,4 +203,153 @@ func runWasmSpecScriptFile(t *testing.T, scriptPath string) {
 	if passCount == 0 {
 		t.Fatalf("got %d passed commands, want > 0", passCount)
 	}
+}
+
+// checkWasmSpecScriptPrintRoundTrip verifies that each valid module compiled
+// from a wasmspec script remains byte-stable after a print roundtrip.
+func checkWasmSpecScriptPrintRoundTrip(t *testing.T, scriptPath string) {
+	t.Helper()
+
+	if wasmSpecShouldSkipPrintRoundTrip(scriptPath) {
+		t.Skip("script is intentionally excluded from broad print-roundtrip coverage for now")
+	}
+
+	src, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile %q failed: %v", scriptPath, err)
+	}
+
+	commands, err := parseScript(string(src))
+	if err != nil {
+		t.Fatalf("parseScript for %q failed: %v", scriptPath, err)
+	}
+
+	checked := 0
+	for i, cmd := range commands {
+		wasmBytes, ok, err := compileWasmSpecCommandForPrintRoundTrip(cmd)
+		if err != nil {
+			t.Fatalf("compileWasmSpecCommandForPrintRoundTrip %q command[%d] %s at %s failed: %v", scriptPath, i, cmd.kind, cmd.loc, err)
+		}
+		if !ok {
+			continue
+		}
+		checked++
+
+		decoded, err := watgo.DecodeWASM(wasmBytes)
+		if err != nil {
+			t.Fatalf("DecodeWASM %q command[%d] %s at %s failed: %v", scriptPath, i, cmd.kind, cmd.loc, err)
+		}
+		printed, err := printer.PrintModule(decoded)
+		if err != nil {
+			t.Fatalf("PrintModule %q command[%d] %s at %s failed: %v", scriptPath, i, cmd.kind, cmd.loc, err)
+		}
+		roundTripped, err := watgo.CompileWATToWASM(printed)
+		if err != nil {
+			t.Fatalf("CompileWATToWASM(print output for %q command[%d] %s at %s) failed: %v\nprinted:\n%s", scriptPath, i, cmd.kind, cmd.loc, err, printed)
+		}
+		if !bytes.Equal(roundTripped, wasmBytes) {
+			t.Fatalf("print roundtrip changed bytes for %q command[%d] %s at %s\nprinted:\n%s", scriptPath, i, cmd.kind, cmd.loc, printed)
+		}
+	}
+
+	if checked == 0 {
+		t.Skip("no roundtrip-eligible module commands found")
+	}
+}
+
+// compileWasmSpecCommandForPrintRoundTrip extracts one wasm module from cmd for
+// the broad print-roundtrip pass.
+//
+// It returns:
+//   - wasm bytes normalized through roundTripFixedPoint when cmd contributes one
+//     concrete wasm module we want to check
+//   - ok=false when cmd is not a real wasm module for this purpose, for example
+//     non-module commands or script-only module forms that the harness models
+//     directly
+//   - err when cmd should contribute a module but extracting/compiling that
+//     module fails
+//
+// This helper is intentionally selective: the print-roundtrip pass only wants
+// module shapes that correspond to ordinary wasm binaries, not every script
+// command that happens to mention a module-like form.
+func compileWasmSpecCommandForPrintRoundTrip(cmd scriptCommand) ([]byte, bool, error) {
+	switch cmd.kind {
+	case commandModule:
+		if cmd.moduleExpr == nil {
+			return nil, false, nil
+		}
+		// Skip script-only module forms handled specially by the harness. They do
+		// not compile through the ordinary wasm text/binary pipeline.
+		if isModuleDefinitionExpr(cmd.moduleExpr) || isModuleInstanceExpr(cmd.moduleExpr) {
+			return nil, false, nil
+		}
+		// `(module quote "...")` already stores reconstructed module text.
+		if cmd.quotedWAT != "" {
+			return compileWasmSpecModuleText(cmd.quotedWAT)
+		}
+		// `(module binary "...")` contributes a concrete wasm blob directly, so
+		// normalize it through the binary fixed-point helper before comparing it
+		// against print->parse output.
+		if isModuleBinaryExpr(cmd.moduleExpr) {
+			bytesBlob, err := parseBinaryModuleBytes(cmd.moduleExpr)
+			if err != nil {
+				return nil, false, err
+			}
+			stable, err := roundTripFixedPoint(bytesBlob)
+			if err != nil {
+				return nil, false, err
+			}
+			return stable, true, nil
+		}
+		// Ordinary text `(module ...)` commands are reconstructed back into WAT and
+		// compiled through the same text pipeline used by the main harness.
+		src, err := sexprToWAT(cmd.moduleExpr)
+		if err != nil {
+			return nil, false, fmt.Errorf("module text generation failed: %w", err)
+		}
+		return compileWasmSpecModuleText(src)
+	case commandAssertTrap:
+		// Spec scripts also allow module trap assertions of the form
+		// `(assert_trap (module ...) "...")`; these embed a valid module that is
+		// expected to trap during instantiation, so they still participate in
+		// printer roundtrips.
+		if cmd.moduleExpr == nil {
+			return nil, false, nil
+		}
+		if isModuleBinaryExpr(cmd.moduleExpr) {
+			bytesBlob, err := parseBinaryModuleBytes(cmd.moduleExpr)
+			if err != nil {
+				return nil, false, err
+			}
+			stable, err := roundTripFixedPoint(bytesBlob)
+			if err != nil {
+				return nil, false, err
+			}
+			return stable, true, nil
+		}
+		src, err := sexprToWAT(cmd.moduleExpr)
+		if err != nil {
+			return nil, false, fmt.Errorf("module text generation failed: %w", err)
+		}
+		return compileWasmSpecModuleText(src)
+	default:
+		return nil, false, nil
+	}
+}
+
+// compileWasmSpecModuleText compiles one text module source and normalizes it
+// through the binary fixed-point pass used by the main wasmspec harness.
+func compileWasmSpecModuleText(src string) ([]byte, bool, error) {
+	if trimmed := strings.TrimSpace(src); !strings.HasPrefix(trimmed, "(module") {
+		src = "(module\n" + src + "\n)"
+	}
+	wasmBytes, err := watgo.CompileWATToWASM([]byte(src))
+	if err != nil {
+		return nil, false, err
+	}
+	wasmBytes, err = roundTripFixedPoint(wasmBytes)
+	if err != nil {
+		return nil, false, err
+	}
+	return wasmBytes, true, nil
 }
