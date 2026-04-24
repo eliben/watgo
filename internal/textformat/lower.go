@@ -2431,17 +2431,6 @@ func (fl *functionLowerer) applyStructuredBlockType(ins *wasmir.Instruction, ins
 	return true
 }
 
-// lowerPlainCallIndirect lowers a flat call_indirect using the same immediate
-// forms supported by folded call_indirect: optional table operand plus trailing
-// type/param/result clauses.
-func (fl *functionLowerer) lowerPlainCallIndirect(pi *PlainInstr) {
-	fi := &FoldedInstr{Name: pi.Name, loc: pi.loc}
-	for _, op := range pi.Operands {
-		fi.Args = append(fi.Args, FoldedArg{Operand: op})
-	}
-	fl.lowerFoldedCallIndirect(fi)
-}
-
 // lowerPlainRefTestCast lowers flat ref.test/ref.cast forms that carry one
 // reference type immediate.
 func (fl *functionLowerer) lowerPlainRefTestCast(pi *PlainInstr) {
@@ -2578,7 +2567,11 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 		})
 		return
 	case "call_indirect":
-		fl.lowerPlainCallIndirect(pi)
+		fi := &FoldedInstr{Name: pi.Name, loc: pi.loc}
+		for _, op := range pi.Operands {
+			fi.Args = append(fi.Args, FoldedArg{Operand: op})
+		}
+		fl.lowerFoldedCallIndirect(fi)
 		return
 	case "ref.test", "ref.cast":
 		fl.lowerPlainRefTestCast(pi)

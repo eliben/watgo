@@ -444,7 +444,8 @@ func TestLowerModule_LowersFoldedIf(t *testing.T) {
 }
 
 func TestLowerModule_LowersPlainTryTable(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (tag $e)
   (func
     block
@@ -484,7 +485,8 @@ func TestLowerModule_LowersPlainTryTable(t *testing.T) {
 }
 
 func TestLowerModule_Memory64DataOffset(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (memory (export "memory") i64 2 250000)
   (data (i64.const 32) "abc")
 )`
@@ -527,7 +529,8 @@ func TestLowerModule_Memory64DataOffset(t *testing.T) {
 }
 
 func TestLowerModule_FlatConstExprContexts(t *testing.T) {
-	wat := `(module
+	wat := `
+(module
   (memory 1)
   (table 1 funcref)
   (func)
@@ -553,6 +556,52 @@ func TestLowerModule_FlatConstExprContexts(t *testing.T) {
 	}
 	if got := m.Elements[0].OffsetI64; got != 0 {
 		t.Fatalf("elem offset=%d, want 0", got)
+	}
+}
+
+func TestLowerModule_FlatCallIndirect(t *testing.T) {
+	wat := `
+(module
+  (type $sig (func (param i32) (result i32)))
+  (table 1 funcref)
+  (func (param i32) (result i32)
+    local.get 0
+    i32.const 0
+    call_indirect (type $sig)
+  )
+)`
+
+	ast, err := ParseModule(wat)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule error: %v", err)
+	}
+
+	body := m.Funcs[0].Body
+	if len(body) != 4 {
+		t.Fatalf("got %d body instructions, want 4", len(body))
+	}
+	if body[0].Kind != wasmir.InstrLocalGet || body[0].LocalIndex != 0 {
+		t.Fatalf("body[0]=%#v, want local.get 0", body[0])
+	}
+	if body[1].Kind != wasmir.InstrI32Const || body[1].I32Const != 0 {
+		t.Fatalf("body[1]=%#v, want i32.const 0", body[1])
+	}
+	if body[2].Kind != wasmir.InstrCallIndirect {
+		t.Fatalf("body[2]=%#v, want call_indirect", body[2])
+	}
+	if body[2].CallTypeIndex != 0 {
+		t.Fatalf("call_indirect type index=%d, want 0", body[2].CallTypeIndex)
+	}
+	if body[2].TableIndex != 0 {
+		t.Fatalf("call_indirect table index=%d, want 0", body[2].TableIndex)
+	}
+	if body[3].Kind != wasmir.InstrEnd {
+		t.Fatalf("body[3]=%#v, want end", body[3])
 	}
 }
 
