@@ -23,6 +23,9 @@ func PrintModule(m *wasmir.Module) ([]byte, error) {
 type Options struct {
 	// IndentText is repeated once per indentation level.
 	IndentText string
+
+	// NameUnnamed synthesizes names for otherwise unnamed index-space entries.
+	NameUnnamed bool
 }
 
 // DefaultOptions returns the printer's default formatting options.
@@ -131,9 +134,9 @@ func (p *modulePrinter) printTypeDef(typeIdx int, indent int) error {
 	td := p.m.Types[typeIdx]
 	p.writeIndent(indent)
 	p.buf.WriteString("(type")
-	if td.Name != "" {
+	if name := p.typeDeclName(typeIdx); name != "" {
 		p.buf.WriteByte(' ')
-		p.buf.WriteString(formatID(td.Name))
+		p.buf.WriteString(name)
 	}
 	p.buf.WriteByte(' ')
 	if td.SubType {
@@ -148,35 +151,36 @@ func (p *modulePrinter) printTypeDef(typeIdx int, indent int) error {
 			p.buf.WriteString(p.typeRefText(super))
 		}
 		p.buf.WriteByte(' ')
-		if err := p.writeTypeBody(td); err != nil {
+		if err := p.writeTypeBody(typeIdx, td); err != nil {
 			return err
 		}
 		p.buf.WriteString("))\n")
 		return nil
 	}
-	if err := p.writeTypeBody(td); err != nil {
+	if err := p.writeTypeBody(typeIdx, td); err != nil {
 		return err
 	}
 	p.buf.WriteString(")\n")
 	return nil
 }
 
-// writeTypeBody appends a function, struct, or array type body.
-func (p *modulePrinter) writeTypeBody(td wasmir.TypeDef) error {
+// writeTypeBody appends a function, struct, or array type body. typeIdx is the
+// Module.Types index of td and is used when synthesizing struct field names.
+func (p *modulePrinter) writeTypeBody(typeIdx int, td wasmir.TypeDef) error {
 	switch td.Kind {
 	case wasmir.TypeDefKindFunc:
 		p.buf.WriteString("(func")
-		p.writeParamDecls(nil, td.Params)
+		p.writeParamDecls(nil, td.Params, false)
 		p.writeResultDecls(td.Results)
 		p.buf.WriteByte(')')
 	case wasmir.TypeDefKindStruct:
 		p.buf.WriteString("(struct")
-		for _, field := range td.Fields {
+		for i, field := range td.Fields {
 			p.buf.WriteByte(' ')
 			p.buf.WriteString("(field")
-			if field.Name != "" {
+			if name := p.fieldDeclName(typeIdx, i); name != "" {
 				p.buf.WriteByte(' ')
-				p.buf.WriteString(formatID(field.Name))
+				p.buf.WriteString(name)
 			}
 			p.buf.WriteByte(' ')
 			p.buf.WriteString(p.fieldTypeText(field))
@@ -194,6 +198,7 @@ func (p *modulePrinter) writeTypeBody(td wasmir.TypeDef) error {
 }
 
 func (p *modulePrinter) printImports() error {
+	var funcIdx, globalIdx, tagIdx uint32
 	for _, imp := range p.m.Imports {
 		p.writeIndent(1)
 		p.buf.WriteString("(import ")
@@ -208,10 +213,15 @@ func (p *modulePrinter) printImports() error {
 				return err
 			}
 			p.buf.WriteString("(func")
+			if name := p.funcDeclName(funcIdx); name != "" {
+				p.buf.WriteByte(' ')
+				p.buf.WriteString(name)
+			}
 			p.buf.WriteString(p.typeUseText(imp.TypeIdx))
-			p.writeParamDecls(nil, td.Params)
+			p.writeParamDecls(nil, td.Params, false)
 			p.writeResultDecls(td.Results)
 			p.buf.WriteString("))\n")
+			funcIdx++
 		case wasmir.ExternalKindTable:
 			p.buf.WriteString("(table")
 			p.writeTableType(imp.Table)
@@ -221,13 +231,24 @@ func (p *modulePrinter) printImports() error {
 			p.writeMemoryType(imp.Memory)
 			p.buf.WriteString("))\n")
 		case wasmir.ExternalKindGlobal:
-			p.buf.WriteString("(global ")
+			p.buf.WriteString("(global")
+			if name := p.globalDeclName(globalIdx); name != "" {
+				p.buf.WriteByte(' ')
+				p.buf.WriteString(name)
+			}
+			p.buf.WriteByte(' ')
 			p.buf.WriteString(p.globalTypeText(imp.GlobalType, imp.GlobalMutable))
 			p.buf.WriteString("))\n")
+			globalIdx++
 		case wasmir.ExternalKindTag:
 			p.buf.WriteString("(tag")
+			if name := p.tagDeclName(tagIdx); name != "" {
+				p.buf.WriteByte(' ')
+				p.buf.WriteString(name)
+			}
 			p.buf.WriteString(p.typeUseText(imp.TypeIdx))
 			p.buf.WriteString("))\n")
+			tagIdx++
 		default:
 			return fmt.Errorf("unsupported import kind %d", imp.Kind)
 		}
@@ -270,7 +291,7 @@ func (p *modulePrinter) printDefinedMemories() error {
 }
 
 func (p *modulePrinter) printDefinedGlobals() error {
-	for _, g := range p.m.Globals {
+	for i, g := range p.m.Globals {
 		if g.ImportModule != "" {
 			continue
 		}
@@ -280,9 +301,9 @@ func (p *modulePrinter) printDefinedGlobals() error {
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(global")
-		if g.Name != "" {
+		if name := p.globalDeclName(uint32(i)); name != "" {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(g.Name))
+			p.buf.WriteString(name)
 		}
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(p.globalTypeText(g.Type, g.Mutable))
@@ -294,15 +315,16 @@ func (p *modulePrinter) printDefinedGlobals() error {
 }
 
 func (p *modulePrinter) printDefinedTags() error {
-	for _, tag := range p.m.Tags {
+	importedTags := p.importedTagCount()
+	for i, tag := range p.m.Tags {
 		if tag.ImportModule != "" {
 			continue
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(tag")
-		if tag.Name != "" {
+		if name := p.tagDeclName(importedTags + uint32(i)); name != "" {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(tag.Name))
+			p.buf.WriteString(name)
 		}
 		p.buf.WriteString(p.typeUseText(tag.TypeIdx))
 		p.buf.WriteString(")\n")
@@ -311,21 +333,22 @@ func (p *modulePrinter) printDefinedTags() error {
 }
 
 func (p *modulePrinter) printFuncs() error {
-	for _, fn := range p.m.Funcs {
+	importedFuncs := p.importedFunctionCount()
+	for i, fn := range p.m.Funcs {
 		td, err := p.funcType(fn.TypeIdx)
 		if err != nil {
 			return err
 		}
 		p.writeIndent(1)
 		p.buf.WriteString("(func")
-		if fn.Name != "" {
+		if name := p.funcDeclName(importedFuncs + uint32(i)); name != "" {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(fn.Name))
+			p.buf.WriteString(name)
 		}
 		p.buf.WriteString(p.typeUseText(fn.TypeIdx))
-		p.writeParamDecls(fn.ParamNames, td.Params)
+		p.writeParamDecls(fn.ParamNames, td.Params, true)
 		p.writeResultDecls(td.Results)
-		p.writeLocalDecls(fn.LocalNames, fn.Locals)
+		p.writeLocalDecls(fn.LocalNames, fn.Locals, uint32(len(td.Params)))
 		body := fn.Body
 		if len(body) > 0 && body[len(body)-1].Kind == wasmir.InstrEnd {
 			body = body[:len(body)-1]
@@ -431,7 +454,7 @@ func (p *modulePrinter) printElements() error {
 			p.buf.WriteString(" func")
 			for _, idx := range elem.FuncIndices {
 				p.buf.WriteByte(' ')
-				p.buf.WriteString(strconv.FormatUint(uint64(idx), 10))
+				p.buf.WriteString(p.funcRefText(idx))
 			}
 		}
 		p.buf.WriteString(")\n")
@@ -689,13 +712,14 @@ func (p *modulePrinter) writeIndent(level int) {
 }
 
 // writeParamDecls appends parameter declarations to the printer buffer,
-// including names when available.
-func (p *modulePrinter) writeParamDecls(names []string, params []wasmir.ValueType) {
+// including names when available. synthesize controls whether unnamed
+// parameters receive synthetic local names.
+func (p *modulePrinter) writeParamDecls(names []string, params []wasmir.ValueType, synthesize bool) {
 	for i, vt := range params {
 		p.buf.WriteString(" (param")
-		if i < len(names) && names[i] != "" {
+		if name := p.localDeclName(names, i, uint32(i), synthesize); name != "" {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(names[i]))
+			p.buf.WriteString(name)
 		}
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(p.valueTypeText(vt))
@@ -713,13 +737,14 @@ func (p *modulePrinter) writeResultDecls(results []wasmir.ValueType) {
 }
 
 // writeLocalDecls appends local declarations to the printer buffer, including
-// names when available.
-func (p *modulePrinter) writeLocalDecls(names []string, locals []wasmir.ValueType) {
+// names when available. paramCount is used to compute each local's index in the
+// combined parameter/local index space.
+func (p *modulePrinter) writeLocalDecls(names []string, locals []wasmir.ValueType, paramCount uint32) {
 	for i, vt := range locals {
 		p.buf.WriteString(" (local")
-		if i < len(names) && names[i] != "" {
+		if name := p.localDeclName(names, i, paramCount+uint32(i), true); name != "" {
 			p.buf.WriteByte(' ')
-			p.buf.WriteString(formatID(names[i]))
+			p.buf.WriteString(name)
 		}
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(p.valueTypeText(vt))
@@ -906,7 +931,21 @@ func (p *modulePrinter) typeRefText(typeIdx uint32) string {
 	if p.m != nil && int(typeIdx) < len(p.m.Types) && p.m.Types[typeIdx].Name != "" {
 		return formatID(p.m.Types[typeIdx].Name)
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("type", typeIdx)
+	}
 	return strconv.FormatUint(uint64(typeIdx), 10)
+}
+
+// typeDeclName returns the optional printed name for a type declaration.
+func (p *modulePrinter) typeDeclName(typeIdx int) string {
+	if p.m != nil && typeIdx < len(p.m.Types) && p.m.Types[typeIdx].Name != "" {
+		return formatID(p.m.Types[typeIdx].Name)
+	}
+	if p.opts.NameUnnamed {
+		return syntheticName("type", uint32(typeIdx))
+	}
+	return ""
 }
 
 // funcRefText formats a function reference using the function's name when it
@@ -919,7 +958,25 @@ func (p *modulePrinter) funcRefText(funcIdx uint32) string {
 			return formatID(p.m.Funcs[definedIdx].Name)
 		}
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("func", funcIdx)
+	}
 	return strconv.FormatUint(uint64(funcIdx), 10)
+}
+
+// funcDeclName returns the optional printed name for a function declaration.
+func (p *modulePrinter) funcDeclName(funcIdx uint32) string {
+	importedFuncs := p.importedFunctionCount()
+	if funcIdx >= importedFuncs {
+		definedIdx := funcIdx - importedFuncs
+		if p.m != nil && int(definedIdx) < len(p.m.Funcs) && p.m.Funcs[definedIdx].Name != "" {
+			return formatID(p.m.Funcs[definedIdx].Name)
+		}
+	}
+	if p.opts.NameUnnamed {
+		return syntheticName("func", funcIdx)
+	}
+	return ""
 }
 
 // globalRefText formats a global reference using the global's name when it is
@@ -928,7 +985,21 @@ func (p *modulePrinter) globalRefText(globalIdx uint32) string {
 	if p.m != nil && int(globalIdx) < len(p.m.Globals) && p.m.Globals[globalIdx].Name != "" {
 		return formatID(p.m.Globals[globalIdx].Name)
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("global", globalIdx)
+	}
 	return strconv.FormatUint(uint64(globalIdx), 10)
+}
+
+// globalDeclName returns the optional printed name for a global declaration.
+func (p *modulePrinter) globalDeclName(globalIdx uint32) string {
+	if p.m != nil && int(globalIdx) < len(p.m.Globals) && p.m.Globals[globalIdx].Name != "" {
+		return formatID(p.m.Globals[globalIdx].Name)
+	}
+	if p.opts.NameUnnamed {
+		return syntheticName("global", globalIdx)
+	}
+	return ""
 }
 
 // tagRefText formats a tag reference using the tag's name when it is
@@ -941,7 +1012,25 @@ func (p *modulePrinter) tagRefText(tagIdx uint32) string {
 			return formatID(p.m.Tags[definedIdx].Name)
 		}
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("tag", tagIdx)
+	}
 	return strconv.FormatUint(uint64(tagIdx), 10)
+}
+
+// tagDeclName returns the optional printed name for a tag declaration.
+func (p *modulePrinter) tagDeclName(tagIdx uint32) string {
+	importedTags := p.importedTagCount()
+	if tagIdx >= importedTags {
+		definedIdx := tagIdx - importedTags
+		if p.m != nil && int(definedIdx) < len(p.m.Tags) && p.m.Tags[definedIdx].Name != "" {
+			return formatID(p.m.Tags[definedIdx].Name)
+		}
+	}
+	if p.opts.NameUnnamed {
+		return syntheticName("tag", tagIdx)
+	}
+	return ""
 }
 
 // fieldRefText formats a struct field reference using the field's name when it
@@ -953,7 +1042,37 @@ func (p *modulePrinter) fieldRefText(typeIdx uint32, fieldIdx uint32) string {
 			return formatID(td.Fields[fieldIdx].Name)
 		}
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("field", fieldIdx)
+	}
 	return strconv.FormatUint(uint64(fieldIdx), 10)
+}
+
+// fieldDeclName returns the optional printed name for a struct field declaration.
+func (p *modulePrinter) fieldDeclName(typeIdx int, fieldIdx int) string {
+	if p.m != nil && typeIdx < len(p.m.Types) {
+		td := p.m.Types[typeIdx]
+		if fieldIdx < len(td.Fields) && td.Fields[fieldIdx].Name != "" {
+			return formatID(td.Fields[fieldIdx].Name)
+		}
+	}
+	if p.opts.NameUnnamed {
+		return syntheticName("field", uint32(fieldIdx))
+	}
+	return ""
+}
+
+// localDeclName returns the optional printed name for a parameter or local
+// declaration. localIdx is the function-local index space where parameters come
+// first.
+func (p *modulePrinter) localDeclName(names []string, sliceIdx int, localIdx uint32, synthesize bool) string {
+	if sliceIdx < len(names) && names[sliceIdx] != "" {
+		return formatID(names[sliceIdx])
+	}
+	if synthesize && p.opts.NameUnnamed {
+		return syntheticName("local", localIdx)
+	}
+	return ""
 }
 
 func (p *modulePrinter) importedFunctionCount() uint32 {
@@ -1113,7 +1232,14 @@ func (p *modulePrinter) localRefText(fn *wasmir.Function, index uint32) string {
 			return formatID(fn.LocalNames[localIdx])
 		}
 	}
+	if p.opts.NameUnnamed {
+		return syntheticName("local", index)
+	}
 	return strconv.FormatUint(uint64(index), 10)
+}
+
+func syntheticName(namespace string, idx uint32) string {
+	return fmt.Sprintf("$#%s%d", namespace, idx)
 }
 
 // formatF32 formats an f32 constant from its raw IEEE-754 bits.

@@ -51,6 +51,82 @@ func TestPrintModule_CustomIndent(t *testing.T) {
 	}
 }
 
+func TestPrintModule_NameUnnamed(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte(`
+(module
+  (type (func (result i32)))
+  (global (mut i32) (i32.const 7))
+  (func (type 0) (local i32)
+    global.get 0
+    local.set 0
+    local.get 0
+  )
+  (func (export "call") (result i32)
+    call 0
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	m, err := watgo.DecodeWASM(wasm)
+	if err != nil {
+		t.Fatalf("DecodeWASM failed: %v", err)
+	}
+	printed, err := PrintModuleWithOptions(m, Options{IndentText: "  ", NameUnnamed: true})
+	if err != nil {
+		t.Fatalf("PrintModuleWithOptions failed: %v", err)
+	}
+	assertPrintedContains(t, printed,
+		"(type $#type0",
+		"(global $#global0",
+		"(func $#func0 (type $#type0)",
+		"(local $#local0 i32)",
+		"global.get $#global0",
+		"local.set $#local0",
+		"local.get $#local0",
+		"call $#func0",
+	)
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	if len(roundTrip) == 0 {
+		t.Fatalf("printed WAT compiled to empty wasm\nprinted:\n%s", printed)
+	}
+	if m.Types[0].Name != "" || m.Funcs[0].Name != "" || m.Funcs[0].LocalNames != nil || m.Globals[0].Name != "" {
+		t.Fatalf("NameUnnamed mutated decoded module: %#v", m)
+	}
+}
+
+func TestPrintModule_NameUnnamedStructField(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte(`
+(module
+  (type (struct (field i32)))
+  (func (param (ref null 0)) (result i32)
+    local.get 0
+    struct.get 0 0
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	m, err := watgo.DecodeWASM(wasm)
+	if err != nil {
+		t.Fatalf("DecodeWASM failed: %v", err)
+	}
+	printed, err := PrintModuleWithOptions(m, Options{IndentText: "  ", NameUnnamed: true})
+	if err != nil {
+		t.Fatalf("PrintModuleWithOptions failed: %v", err)
+	}
+	assertPrintedContains(t, printed,
+		"(type $#type0 (struct (field $#field0 i32)))",
+		"struct.get $#type0 $#field0",
+	)
+	if _, err := watgo.CompileWATToWASM(printed); err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+}
+
 func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 	// Basic top-level declarations such as imports, globals, and data segments
 	// should print to valid WAT and round-trip back to the same bytes.

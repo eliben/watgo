@@ -152,12 +152,13 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // omitted or "-". Only binary wasm input is accepted for now.
 func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args, err := normalizeArgs(args, map[string]bool{
-		"-o":            true,
-		"--output":      true,
-		"--indent":      true,
-		"--indent-text": true,
-		"-h":            false,
-		"--help":        false,
+		"-o":             true,
+		"--output":       true,
+		"--indent":       true,
+		"--indent-text":  true,
+		"--name-unnamed": false,
+		"-h":             false,
+		"--help":         false,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
@@ -170,6 +171,7 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.StringVar(outputPath, "o", "", "")
 	indent := intFlag{value: 2}
 	indentText := stringFlag{}
+	nameUnnamed := fs.Bool("name-unnamed", false, "")
 	fs.Var(&indent, "indent", "")
 	fs.Var(&indentText, "indent-text", "")
 	fs.Usage = func() {
@@ -214,6 +216,7 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if indentText.set {
 		printOptions.IndentText = indentText.value
 	}
+	printOptions.NameUnnamed = *nameUnnamed
 	out, err := printer.PrintModuleWithOptions(m, printOptions)
 	if err != nil {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
@@ -402,6 +405,8 @@ Arguments:
 Options:
   -o, --output <OUTPUT>
             Where to place text output. If omitted, stdout is used.
+      --name-unnamed
+            Synthesize names for unnamed wasm items.
       --indent <INDENT>
             Number of spaces used for indentation.
       --indent-text <INDENT_TEXT>
