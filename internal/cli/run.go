@@ -149,6 +149,7 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	indent := intFlag{value: 2}
 	indentText := stringFlag{}
 	nameUnnamed := fs.Bool("name-unnamed", false, "")
+	skeleton := fs.Bool("skeleton", false, "")
 	fs.Var(&indent, "indent", "")
 	fs.Var(&indentText, "indent-text", "")
 	fs.Usage = func() {
@@ -196,6 +197,7 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		printOptions.IndentText = indentText.value
 	}
 	printOptions.NameUnnamed = *nameUnnamed
+	printOptions.Skeleton = *skeleton
 	out, err := printer.PrintModuleWithOptions(m, printOptions)
 	if err != nil {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
@@ -379,6 +381,8 @@ Options:
             Where to place text output. If omitted, stdout is used.
       --name-unnamed
             Synthesize names for unnamed wasm items.
+      --skeleton
+            Elide function bodies and data/element payloads with "...".
       --indent <INDENT>
             Number of spaces used for indentation.
       --indent-text <INDENT_TEXT>

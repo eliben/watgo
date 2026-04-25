@@ -196,6 +196,27 @@ func TestRunPrintNameUnnamed(t *testing.T) {
 	}
 }
 
+func TestRunPrintSkeleton(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print", "--skeleton"}, bytes.NewReader(wasm), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "(func (type 0) (result i32) ...)") {
+		t.Fatalf("stdout %q does not elide function body", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "i32.const 3") {
+		t.Fatalf("stdout %q did not elide function body instruction", stdout.String())
+	}
+}
+
 func TestRunPrintAcceptsFlagsAfterInput(t *testing.T) {
 	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
 	if err != nil {

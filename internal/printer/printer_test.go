@@ -127,6 +127,45 @@ func TestPrintModule_NameUnnamedStructField(t *testing.T) {
 	}
 }
 
+func TestPrintModule_Skeleton(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte(`
+(module
+  (table 1 funcref)
+  (memory 1)
+  (func (local i32)
+    i32.const 1
+    drop
+  )
+  (elem (i32.const 0) func 0)
+  (data (i32.const 0) "hello")
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	m, err := watgo.DecodeWASM(wasm)
+	if err != nil {
+		t.Fatalf("DecodeWASM failed: %v", err)
+	}
+	opts := DefaultOptions()
+	opts.Skeleton = true
+	printed, err := PrintModuleWithOptions(m, opts)
+	if err != nil {
+		t.Fatalf("PrintModuleWithOptions failed: %v", err)
+	}
+	assertPrintedContains(t, printed,
+		"(func (type 0) ...)",
+		"(elem (table 0) (offset i32.const 0) ...)",
+		"(data (offset i32.const 0) ...)",
+	)
+	assertPrintedNotContains(t, printed,
+		"i32.const 1",
+		"drop",
+		"(local",
+		`"hello"`,
+		"func 0",
+	)
+}
+
 func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 	// Basic top-level declarations such as imports, globals, and data segments
 	// should print to valid WAT and round-trip back to the same bytes.

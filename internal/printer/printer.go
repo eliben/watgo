@@ -26,6 +26,9 @@ type Options struct {
 
 	// NameUnnamed synthesizes names for otherwise unnamed index-space entries.
 	NameUnnamed bool
+
+	// Skeleton elides function bodies and data/element payloads with "...".
+	Skeleton bool
 }
 
 // DefaultOptions returns the printer's default formatting options.
@@ -348,6 +351,10 @@ func (p *modulePrinter) printFuncs() error {
 		p.buf.WriteString(p.typeUseText(fn.TypeIdx))
 		p.writeParamDecls(fn.ParamNames, td.Params, true)
 		p.writeResultDecls(td.Results)
+		if p.opts.Skeleton {
+			p.buf.WriteString(" ...)\n")
+			continue
+		}
 		p.writeLocalDecls(fn.LocalNames, fn.Locals, uint32(len(td.Params)))
 		body := fn.Body
 		if len(body) > 0 && body[len(body)-1].Kind == wasmir.InstrEnd {
@@ -431,6 +438,10 @@ func (p *modulePrinter) printElements() error {
 			return fmt.Errorf("unsupported element mode %d", elem.Mode)
 		}
 
+		if p.opts.Skeleton && (len(elem.Exprs) > 0 || len(elem.FuncIndices) > 0) {
+			p.buf.WriteString(" ...)\n")
+			continue
+		}
 		if len(elem.Exprs) > 0 {
 			p.buf.WriteByte(' ')
 			p.buf.WriteString(p.valueTypeText(elem.RefType))
@@ -479,6 +490,10 @@ func (p *modulePrinter) printData() error {
 			p.buf.WriteString(" (offset ")
 			p.buf.WriteString(offset)
 			p.buf.WriteByte(')')
+		}
+		if p.opts.Skeleton {
+			p.buf.WriteString(" ...)\n")
+			continue
 		}
 		p.buf.WriteByte(' ')
 		p.buf.WriteString(quoteString(seg.Init))
