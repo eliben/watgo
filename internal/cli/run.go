@@ -70,17 +70,6 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // omitted or "-". Output is written either to stdout or to the file named by
 // -o/--output.
 func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	args, err := normalizeArgs(args, map[string]bool{
-		"-o":       true,
-		"--output": true,
-		"-h":       false,
-		"--help":   false,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "watgo parse: %v\n", err)
-		return 2
-	}
-
 	fs := flag.NewFlagSet("parse", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	outputPath := fs.String("output", "", "")
@@ -89,21 +78,23 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		printParseUsage(stderr)
 	}
 
-	if err := fs.Parse(args); err != nil {
+	positionals, err := parseSubcommandFlags(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 		return 2
 	}
-	if fs.NArg() > 1 {
+	if len(positionals) > 1 {
 		fmt.Fprintln(stderr, "watgo parse: too many arguments")
 		printParseUsage(stderr)
 		return 2
 	}
 
 	inputPath := "-"
-	if fs.NArg() == 1 {
-		inputPath = fs.Arg(0)
+	if len(positionals) == 1 {
+		inputPath = positionals[0]
 	}
 	src, err := readInput(inputPath, stdin)
 	if err != nil {
@@ -151,20 +142,6 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // either from the optional positional path or from stdin when the path is
 // omitted or "-". Only binary wasm input is accepted for now.
 func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	args, err := normalizeArgs(args, map[string]bool{
-		"-o":             true,
-		"--output":       true,
-		"--indent":       true,
-		"--indent-text":  true,
-		"--name-unnamed": false,
-		"-h":             false,
-		"--help":         false,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "watgo print: %v\n", err)
-		return 2
-	}
-
 	fs := flag.NewFlagSet("print", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	outputPath := fs.String("output", "", "")
@@ -178,21 +155,23 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		printPrintUsage(stderr)
 	}
 
-	if err := fs.Parse(args); err != nil {
+	positionals, err := parseSubcommandFlags(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		fmt.Fprintf(stderr, "watgo print: %v\n", err)
 		return 2
 	}
-	if fs.NArg() > 1 {
+	if len(positionals) > 1 {
 		fmt.Fprintln(stderr, "watgo print: too many arguments")
 		printPrintUsage(stderr)
 		return 2
 	}
 
 	inputPath := "-"
-	if fs.NArg() == 1 {
-		inputPath = fs.Arg(0)
+	if len(positionals) == 1 {
+		inputPath = positionals[0]
 	}
 	src, err := readInput(inputPath, stdin)
 	if err != nil {
@@ -235,36 +214,29 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // accepts either a single optional input path or "-" for stdin and prints
 // nothing on success.
 func runValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	args, err := normalizeArgs(args, map[string]bool{
-		"-h":     false,
-		"--help": false,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "watgo validate: %v\n", err)
-		return 2
-	}
-
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		printValidateUsage(stderr)
 	}
 
-	if err := fs.Parse(args); err != nil {
+	positionals, err := parseSubcommandFlags(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		fmt.Fprintf(stderr, "watgo validate: %v\n", err)
 		return 2
 	}
-	if fs.NArg() > 1 {
+	if len(positionals) > 1 {
 		fmt.Fprintln(stderr, "watgo validate: too many arguments")
 		printValidateUsage(stderr)
 		return 2
 	}
 
 	inputPath := "-"
-	if fs.NArg() == 1 {
-		inputPath = fs.Arg(0)
+	if len(positionals) == 1 {
+		inputPath = positionals[0]
 	}
 	src, err := readInput(inputPath, stdin)
 	if err != nil {
@@ -432,14 +404,14 @@ Options:
 `)
 }
 
-// normalizeArgs reorders recognized flags ahead of positional arguments so the
-// stdlib flag parser can accept wasm-tools-style command lines such as
-// `watgo parse input.wat -o out.wasm`.
+// parseSubcommandFlags parses flags registered in fs while collecting
+// positional arguments.
 //
-// knownFlags maps each accepted flag spelling to whether it consumes a
-// following value.
-func normalizeArgs(args []string, knownFlags map[string]bool) ([]string, error) {
-	var flags []string
+// The standard flag package stops parsing at the first positional argument, but
+// wasm-tools-style CLIs allow flags before or after the input path, e.g.
+// `watgo parse input.wat -o out.wasm`. This helper keeps stdlib flag.Value
+// parsing while making that interspersed-flag behavior explicit.
+func parseSubcommandFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 
 	for i := 0; i < len(args); i++ {
@@ -452,28 +424,59 @@ func normalizeArgs(args []string, knownFlags map[string]bool) ([]string, error) 
 			positional = append(positional, arg)
 			continue
 		}
-		if strings.Contains(arg, "=") {
-			name := arg[:strings.IndexByte(arg, '=')]
-			if _, ok := knownFlags[name]; ok {
-				flags = append(flags, arg)
-				continue
+
+		name := strings.TrimPrefix(arg, "-")
+		name = strings.TrimPrefix(name, "-")
+		value, hasValue := "", false
+		displayName := arg
+		if idx := strings.IndexByte(name, '='); idx >= 0 {
+			displayName = arg[:strings.IndexByte(arg, '=')]
+			value = name[idx+1:]
+			name = name[:idx]
+			hasValue = true
+		}
+
+		if name == "h" || name == "help" {
+			fs.Usage()
+			return nil, flag.ErrHelp
+		}
+
+		f := fs.Lookup(name)
+		if f == nil {
+			return nil, fmt.Errorf("unknown flag %q", displayName)
+		}
+
+		if isBoolFlag(f.Value) {
+			if !hasValue {
+				value = "true"
 			}
-			return nil, fmt.Errorf("unknown flag %q", name)
-		}
-		needsValue, ok := knownFlags[arg]
-		if !ok {
-			return nil, fmt.Errorf("unknown flag %q", arg)
-		}
-		flags = append(flags, arg)
-		if needsValue {
+		} else if !hasValue {
 			if i+1 >= len(args) {
-				return nil, fmt.Errorf("flag needs an argument: %s", arg)
+				return nil, fmt.Errorf("flag needs an argument: %s", displayName)
 			}
 			i++
-			flags = append(flags, args[i])
+			value = args[i]
+		}
+
+		if err := fs.Set(name, value); err != nil {
+			return nil, fmt.Errorf("invalid value %q for flag %s: %w", value, displayName, err)
 		}
 	}
-	return append(flags, positional...), nil
+	return positional, nil
+}
+
+// boolFlag is the optional interface used by the standard flag package to
+// identify boolean flags. Values implementing it can be set without an
+// explicit value, so `--name-unnamed` is accepted as `--name-unnamed=true`.
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
+// isBoolFlag reports whether v supports flag-package boolean shorthand, where
+// `--flag` is equivalent to `--flag=true`.
+func isBoolFlag(v flag.Value) bool {
+	bf, ok := v.(boolFlag)
+	return ok && bf.IsBoolFlag()
 }
 
 // intFlag implements flag.Value for integer flags whose presence matters.

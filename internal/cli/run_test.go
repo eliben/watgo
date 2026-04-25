@@ -196,6 +196,30 @@ func TestRunPrintNameUnnamed(t *testing.T) {
 	}
 }
 
+func TestRunPrintAcceptsFlagsAfterInput(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.wasm")
+	if err := os.WriteFile(input, wasm, 0o644); err != nil {
+		t.Fatalf("WriteFile input failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print", input, "--name-unnamed", "--indent=4"}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n    (type $#type0") {
+		t.Fatalf("stdout %q does not reflect flags after input", stdout.String())
+	}
+}
+
 func TestRunPrintRejectsTextInputForNow(t *testing.T) {
 	// The initial `print` command should reject text input until WAT emission is
 	// implemented.
