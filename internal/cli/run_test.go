@@ -136,6 +136,45 @@ func TestRunPrintBinaryWASMToStdout(t *testing.T) {
 	}
 }
 
+func TestRunPrintIndent(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print", "--indent", "4"}, bytes.NewReader(wasm), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n    (type") {
+		t.Fatalf("stdout %q does not use four-space indentation", stdout.String())
+	}
+}
+
+func TestRunPrintIndentTextTakesPriority(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 3)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"print", "--indent", "4", "--indent-text", "\t"}, bytes.NewReader(wasm), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n\t(type") {
+		t.Fatalf("stdout %q does not use indent-text indentation", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\n    (type") {
+		t.Fatalf("stdout %q used --indent despite --indent-text", stdout.String())
+	}
+}
+
 func TestRunPrintRejectsTextInputForNow(t *testing.T) {
 	// The initial `print` command should reject text input until WAT emission is
 	// implemented.

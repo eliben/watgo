@@ -21,6 +21,36 @@ func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
 )`)
 }
 
+func TestPrintModule_CustomIndent(t *testing.T) {
+	// Custom indentation should affect declaration and instruction levels while
+	// preserving round-trip behavior.
+	wasm, err := watgo.CompileWATToWASM([]byte(`
+(module
+  (func (export "f") (result i32)
+    i32.const 3
+  )
+)`))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+	m, err := watgo.DecodeWASM(wasm)
+	if err != nil {
+		t.Fatalf("DecodeWASM failed: %v", err)
+	}
+	printed, err := PrintModuleWithOptions(m, Options{IndentText: "    "})
+	if err != nil {
+		t.Fatalf("PrintModuleWithOptions failed: %v", err)
+	}
+	assertPrintedContains(t, printed, "\n    (type", "\n        i32.const")
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("roundtrip mismatch\nprinted:\n%s", printed)
+	}
+}
+
 func TestPrintModule_ImportsGlobalAndDataRoundTrip(t *testing.T) {
 	// Basic top-level declarations such as imports, globals, and data segments
 	// should print to valid WAT and round-trip back to the same bytes.

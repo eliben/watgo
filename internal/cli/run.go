@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"github.com/eliben/watgo"
@@ -151,10 +152,12 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // omitted or "-". Only binary wasm input is accepted for now.
 func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args, err := normalizeArgs(args, map[string]bool{
-		"-o":       true,
-		"--output": true,
-		"-h":       false,
-		"--help":   false,
+		"-o":            true,
+		"--output":      true,
+		"--indent":      true,
+		"--indent-text": true,
+		"-h":            false,
+		"--help":        false,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
@@ -165,6 +168,10 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	outputPath := fs.String("output", "", "")
 	fs.StringVar(outputPath, "o", "", "")
+	indent := intFlag{value: 2}
+	indentText := stringFlag{}
+	fs.Var(&indent, "indent", "")
+	fs.Var(&indentText, "indent-text", "")
 	fs.Usage = func() {
 		printPrintUsage(stderr)
 	}
@@ -200,7 +207,14 @@ func runPrint(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
 		return 1
 	}
-	out, err := printer.PrintModule(m)
+	printOptions := printer.DefaultOptions()
+	if indent.set {
+		printOptions.IndentText = strings.Repeat(" ", indent.value)
+	}
+	if indentText.set {
+		printOptions.IndentText = indentText.value
+	}
+	out, err := printer.PrintModuleWithOptions(m, printOptions)
 	if err != nil {
 		fmt.Fprintf(stderr, "watgo print: %v\n", err)
 		return 1
@@ -388,6 +402,10 @@ Arguments:
 Options:
   -o, --output <OUTPUT>
             Where to place text output. If omitted, stdout is used.
+      --indent <INDENT>
+            Number of spaces used for indentation.
+      --indent-text <INDENT_TEXT>
+            String used for one indentation level; takes priority over --indent.
   -h, --help
             Print help
 `)
@@ -451,4 +469,47 @@ func normalizeArgs(args []string, knownFlags map[string]bool) ([]string, error) 
 		}
 	}
 	return append(flags, positional...), nil
+}
+
+// intFlag implements flag.Value for integer flags whose presence matters.
+// It lets callers distinguish an omitted flag from an explicitly provided
+// default value, and rejects negative values during flag parsing.
+type intFlag struct {
+	value int
+	set   bool
+}
+
+func (f *intFlag) String() string {
+	return strconv.Itoa(f.value)
+}
+
+func (f *intFlag) Set(s string) error {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+	if v < 0 {
+		return fmt.Errorf("must be non-negative")
+	}
+	f.value = v
+	f.set = true
+	return nil
+}
+
+// stringFlag implements flag.Value for string flags whose presence matters.
+// This preserves the distinction between an omitted string flag and an
+// explicitly provided empty string.
+type stringFlag struct {
+	value string
+	set   bool
+}
+
+func (f *stringFlag) String() string {
+	return f.value
+}
+
+func (f *stringFlag) Set(s string) error {
+	f.value = s
+	f.set = true
+	return nil
 }

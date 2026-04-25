@@ -16,10 +16,26 @@ import (
 // This printer currently targets a readable canonical form for core modules.
 // It may reject IR features whose text emission is not implemented yet.
 func PrintModule(m *wasmir.Module) ([]byte, error) {
+	return PrintModuleWithOptions(m, DefaultOptions())
+}
+
+// Options configures WAT printing.
+type Options struct {
+	// IndentText is repeated once per indentation level.
+	IndentText string
+}
+
+// DefaultOptions returns the printer's default formatting options.
+func DefaultOptions() Options {
+	return Options{IndentText: "  "}
+}
+
+// PrintModuleWithOptions renders m as WebAssembly text format using opts.
+func PrintModuleWithOptions(m *wasmir.Module, opts Options) ([]byte, error) {
 	if m == nil {
 		return nil, fmt.Errorf("module is nil")
 	}
-	p := modulePrinter{m: m}
+	p := modulePrinter{m: m, opts: opts}
 	if err := p.printModule(); err != nil {
 		return nil, err
 	}
@@ -27,8 +43,9 @@ func PrintModule(m *wasmir.Module) ([]byte, error) {
 }
 
 type modulePrinter struct {
-	m   *wasmir.Module
-	buf bytes.Buffer
+	m    *wasmir.Module
+	opts Options
+	buf  bytes.Buffer
 }
 
 // printModule is the entry point into module printing.
@@ -667,7 +684,7 @@ func (p *modulePrinter) funcType(typeIdx uint32) (wasmir.TypeDef, error) {
 // writeIndent writes one indentation unit per level.
 func (p *modulePrinter) writeIndent(level int) {
 	for i := 0; i < level; i++ {
-		p.buf.WriteString("  ")
+		p.buf.WriteString(p.opts.IndentText)
 	}
 }
 
