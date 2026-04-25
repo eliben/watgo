@@ -18,6 +18,7 @@ The public entry points are in [watgo.go](../watgo.go):
 - `wasmir`: semantic IR and public IR types
 - `internal/textformat`: WAT parsing and lowering
 - `internal/binaryformat`: wasm binary decoding/encoding
+- `internal/printer`: WAT printing from `wasmir`
 - `internal/validate`: semantic validation
 - `internal/instrdef`: shared instruction catalog used by text, binary, and
   validation code
@@ -28,10 +29,12 @@ The main pipeline is:
 2. wasm binary -> `binaryformat` -> `wasmir`
 3. `wasmir` -> `validate`
 4. `wasmir` -> `binaryformat` encoder
+5. `wasmir` -> `printer` -> WAT
 
 `wasmir` is the canonical semantic representation. Text-specific source details
-such as names, folded syntax, and literal spelling are intentionally not
-preserved there.
+such as folded syntax and literal spelling are intentionally not preserved
+there. Binary name-section metadata is preserved where `wasmir` has explicit
+name fields.
 
 ## Testing
 
