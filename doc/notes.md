@@ -8,6 +8,7 @@ WebAssembly. It is not a runtime.
 The public entry points are in [watgo.go](../watgo.go):
 
 - `ParseWAT`: WAT -> `wasmir.Module`
+- `ParseAndValidateWAT`: WAT -> validated `wasmir.Module`
 - `DecodeWASM`: binary wasm -> `wasmir.Module`
 - `ValidateModule`: semantic validation over `wasmir.Module`
 - `EncodeWASM`: `wasmir.Module` -> binary wasm

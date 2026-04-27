@@ -291,11 +291,8 @@ func validateInput(src []byte) error {
 		}
 		return watgo.ValidateModule(m)
 	}
-	m, err := watgo.ParseWAT(src)
-	if err != nil {
-		return err
-	}
-	return watgo.ValidateModule(m)
+	_, err := watgo.ParseAndValidateWAT(src)
+	return err
 }
 
 // isBinaryWasm reports whether src appears to be a WASM binary by checking the

@@ -118,6 +118,33 @@ func TestParseWAT_ParseError_PublicAPI(t *testing.T) {
 	}
 }
 
+func TestParseAndValidateWAT_PublicAPI(t *testing.T) {
+	m, err := watgo.ParseAndValidateWAT([]byte(`
+(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		t.Fatalf("ParseAndValidateWAT failed: %v", err)
+	}
+	if len(m.Funcs) != 1 {
+		t.Fatalf("got %d funcs, want 1", len(m.Funcs))
+	}
+}
+
+func TestParseAndValidateWAT_UsesFoldedValidationHints_PublicAPI(t *testing.T) {
+	_, err := watgo.ParseAndValidateWAT([]byte(`
+(module
+  (func
+    unreachable
+    (drop (i32.eqz (nop))))
+)`))
+	if err == nil {
+		t.Fatal("ParseAndValidateWAT succeeded, want folded operand validation failure")
+	}
+}
+
 func TestValidateModule_PublicAPI(t *testing.T) {
 	m := &wasmir.Module{
 		Types: []wasmir.TypeDef{{
@@ -309,6 +336,58 @@ func ExampleParseWAT_moduleAnalysis() {
 	// i32 params: 3
 	// local.get instructions: 3
 	// i32.add instructions: 2
+}
+
+func ExampleParseAndValidateWAT() {
+	m, err := watgo.ParseAndValidateWAT([]byte(`
+(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(m.Funcs))
+	// Output:
+	// 1
+}
+
+func ExampleParseAndValidateWAT_foldedValidationHints() {
+	src := []byte(`
+(module
+  (func
+    unreachable
+    (drop (i32.eqz (nop)))))
+`)
+
+	// This WAT is invalid: `(nop)` is explicitly supplied as the folded
+	// operand to `i32.eqz`, but `nop` produces no value. ParseWAT lowers folded
+	// WAT into a flat instruction stream, so ValidateModule only sees
+	// `unreachable; nop; i32.eqz; drop`.
+	//
+	// The WebAssembly validation algorithm treats unreachable code as
+	// stack-polymorphic: after a control frame is marked unreachable, popping a
+	// missing operand can synthesize a bottom value instead of underflowing.
+	// See the spec appendix:
+	// https://webassembly.github.io/spec/core/appendix/algorithm.html
+	//
+	// That rule is correct for flat wasm instruction streams, but by itself it
+	// cannot distinguish a truly missing operand from a folded source operand
+	// that was explicitly present and produced no value.
+	m, err := watgo.ParseWAT(src)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(watgo.ValidateModule(m) == nil)
+
+	// ParseAndValidateWAT keeps the lowering hints that record explicit folded
+	// operands, so it rejects the original source shape.
+	_, err = watgo.ParseAndValidateWAT(src)
+	fmt.Println(err != nil)
+	// Output:
+	// true
+	// true
 }
 
 func ExampleDecodeWASM() {

@@ -11,8 +11,9 @@ import (
 // ParseWAT parses and lowers text-format WebAssembly into semantic IR.
 //
 // ParseWAT performs text parsing plus lowering into [wasmir.Module], but does
-// not run semantic validation. Call [ValidateModule] on the returned module
-// before encoding or executing it when you need a validated module.
+// not run semantic validation. Use [ParseAndValidateWAT] when validating WAT
+// source directly; it preserves source-shape metadata needed for full WAT
+// validation.
 //
 // On failure, ParseWAT returns a non-nil error. Most parser and lowering
 // failures are returned as diag.ErrorList values.
@@ -24,6 +25,29 @@ func ParseWAT(src []byte) (*wasmir.Module, error) {
 
 	m, _, err := textformat.LowerModule(tm)
 	return m, err
+}
+
+// ParseAndValidateWAT parses, lowers, and validates text-format WebAssembly.
+//
+// This is the preferred entry point when callers need a validated module from
+// WAT source. It validates with metadata retained from text lowering, including
+// folded-expression facts that are not represented in [wasmir.Module] itself.
+//
+// On failure, ParseAndValidateWAT returns a non-nil error. Most parser,
+// lowering, and validation failures are returned as diag.ErrorList values.
+func ParseAndValidateWAT(src []byte) (*wasmir.Module, error) {
+	tm, err := textformat.ParseModule(string(src))
+	if err != nil {
+		return nil, err
+	}
+	m, hints, err := textformat.LowerModule(tm)
+	if err != nil {
+		return nil, err
+	}
+	if err := validate.ValidateModule(m, hints); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // DecodeWASM decodes binary WebAssembly into semantic IR.
@@ -75,15 +99,8 @@ func PrintWAT(m *wasmir.Module) ([]byte, error) {
 // This is the public end-to-end convenience API when the caller wants binary
 // output directly from WAT input.
 func CompileWATToWASM(src []byte) ([]byte, error) {
-	tm, err := textformat.ParseModule(string(src))
+	m, err := ParseAndValidateWAT(src)
 	if err != nil {
-		return nil, err
-	}
-	m, hints, err := textformat.LowerModule(tm)
-	if err != nil {
-		return nil, err
-	}
-	if err := validate.ValidateModule(m, hints); err != nil {
 		return nil, err
 	}
 	return EncodeWASM(m)

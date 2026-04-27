@@ -5,6 +5,7 @@
 // Text-format WAT and binary WASM both normalize into that IR:
 //
 //   - [ParseWAT] parses and lowers WAT into semantic IR.
+//   - [ParseAndValidateWAT] parses, lowers, and validates WAT.
 //   - [DecodeWASM] decodes binary WASM into semantic IR.
 //   - [ValidateModule] validates semantic IR.
 //   - [EncodeWASM] encodes semantic IR back to binary WASM.
