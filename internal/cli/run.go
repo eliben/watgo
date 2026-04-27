@@ -328,7 +328,7 @@ Usage:
   watgo validate [INPUT]
 
 Commands:
-  parse              Parse WebAssembly text format and write binary output
+  parse              Parse WebAssembly text or binary input and write binary output
   print              Print a WebAssembly binary as text
   validate           Validate a WebAssembly text or binary file
   help               Show help for the root command or a subcommand
@@ -350,13 +350,13 @@ func versionString() string {
 
 // printParseUsage prints help text for `watgo parse`.
 func printParseUsage(w io.Writer) {
-	fmt.Fprint(w, `Parse the WebAssembly text format.
+	fmt.Fprint(w, `Parse WebAssembly text or binary input and write binary output.
 
 Usage:
   watgo parse [OPTIONS] [INPUT]
 
 Arguments:
-  [INPUT]    Input file to process, or "-" for stdin
+  [INPUT]    Input file to process, or "-" for stdin. Text or binary WebAssembly are accepted.
 
 Options:
   -o, --output <OUTPUT>
