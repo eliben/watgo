@@ -1,6 +1,6 @@
 # watgo Notes
 
-`watgo` is a Go toolkit for parsing, validating, and encoding
+`watgo` is a Go toolkit for parsing, printing, validating, and encoding
 WebAssembly. It is not a runtime.
 
 ## Public API
@@ -11,6 +11,7 @@ The public entry points are in [watgo.go](../watgo.go):
 - `DecodeWASM`: binary wasm -> `wasmir.Module`
 - `ValidateModule`: semantic validation over `wasmir.Module`
 - `EncodeWASM`: `wasmir.Module` -> binary wasm
+- `PrintWAT`: `wasmir.Module` -> WAT
 - `CompileWATToWASM`: parse + lower + validate + encode
 
 ## Internal Structure

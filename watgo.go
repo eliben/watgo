@@ -2,6 +2,7 @@ package watgo
 
 import (
 	"github.com/eliben/watgo/internal/binaryformat"
+	"github.com/eliben/watgo/internal/printer"
 	"github.com/eliben/watgo/internal/textformat"
 	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
@@ -56,6 +57,16 @@ func ValidateModule(m *wasmir.Module) error {
 // typically returned as diag.ErrorList values.
 func EncodeWASM(m *wasmir.Module) ([]byte, error) {
 	return binaryformat.EncodeModule(m)
+}
+
+// PrintWAT renders semantic IR as text-format WebAssembly.
+//
+// PrintWAT does not implicitly validate m. Call [ValidateModule] first when
+// you need validation before printing.
+//
+// On failure, PrintWAT returns a non-nil error.
+func PrintWAT(m *wasmir.Module) ([]byte, error) {
+	return printer.PrintModule(m)
 }
 
 // CompileWATToWASM parses, lowers, validates, and encodes text-format

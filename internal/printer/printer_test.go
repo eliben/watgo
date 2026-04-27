@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eliben/watgo"
+	"github.com/eliben/watgo/internal/binaryformat"
+	"github.com/eliben/watgo/internal/textformat"
+	"github.com/eliben/watgo/internal/validate"
+	"github.com/eliben/watgo/wasmir"
 )
 
 func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
@@ -24,7 +27,7 @@ func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
 func TestPrintModule_CustomIndent(t *testing.T) {
 	// Custom indentation should affect declaration and instruction levels while
 	// preserving round-trip behavior.
-	wasm, err := watgo.CompileWATToWASM([]byte(`
+	wasm, err := compileWATToWASM([]byte(`
 (module
   (func (export "f") (result i32)
     i32.const 3
@@ -33,7 +36,7 @@ func TestPrintModule_CustomIndent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
-	m, err := watgo.DecodeWASM(wasm)
+	m, err := decodeWASM(wasm)
 	if err != nil {
 		t.Fatalf("DecodeWASM failed: %v", err)
 	}
@@ -42,7 +45,7 @@ func TestPrintModule_CustomIndent(t *testing.T) {
 		t.Fatalf("PrintModuleWithOptions failed: %v", err)
 	}
 	assertPrintedContains(t, printed, "\n    (type", "\n        i32.const")
-	roundTrip, err := watgo.CompileWATToWASM(printed)
+	roundTrip, err := compileWATToWASM(printed)
 	if err != nil {
 		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
 	}
@@ -52,7 +55,7 @@ func TestPrintModule_CustomIndent(t *testing.T) {
 }
 
 func TestPrintModule_NameUnnamed(t *testing.T) {
-	wasm, err := watgo.CompileWATToWASM([]byte(`
+	wasm, err := compileWATToWASM([]byte(`
 (module
   (type (func (result i32)))
   (global (mut i32) (i32.const 7))
@@ -68,7 +71,7 @@ func TestPrintModule_NameUnnamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
-	m, err := watgo.DecodeWASM(wasm)
+	m, err := decodeWASM(wasm)
 	if err != nil {
 		t.Fatalf("DecodeWASM failed: %v", err)
 	}
@@ -86,7 +89,7 @@ func TestPrintModule_NameUnnamed(t *testing.T) {
 		"local.get $#local0",
 		"call $#func0",
 	)
-	roundTrip, err := watgo.CompileWATToWASM(printed)
+	roundTrip, err := compileWATToWASM(printed)
 	if err != nil {
 		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
 	}
@@ -99,7 +102,7 @@ func TestPrintModule_NameUnnamed(t *testing.T) {
 }
 
 func TestPrintModule_NameUnnamedStructField(t *testing.T) {
-	wasm, err := watgo.CompileWATToWASM([]byte(`
+	wasm, err := compileWATToWASM([]byte(`
 (module
   (type (struct (field i32)))
   (func (param (ref null 0)) (result i32)
@@ -110,7 +113,7 @@ func TestPrintModule_NameUnnamedStructField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
-	m, err := watgo.DecodeWASM(wasm)
+	m, err := decodeWASM(wasm)
 	if err != nil {
 		t.Fatalf("DecodeWASM failed: %v", err)
 	}
@@ -122,13 +125,13 @@ func TestPrintModule_NameUnnamedStructField(t *testing.T) {
 		"(type $#type0 (struct (field $#field0 i32)))",
 		"struct.get $#type0 $#field0",
 	)
-	if _, err := watgo.CompileWATToWASM(printed); err != nil {
+	if _, err := compileWATToWASM(printed); err != nil {
 		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
 	}
 }
 
 func TestPrintModule_Skeleton(t *testing.T) {
-	wasm, err := watgo.CompileWATToWASM([]byte(`
+	wasm, err := compileWATToWASM([]byte(`
 (module
   (table 1 funcref)
   (memory 1)
@@ -142,7 +145,7 @@ func TestPrintModule_Skeleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
-	m, err := watgo.DecodeWASM(wasm)
+	m, err := decodeWASM(wasm)
 	if err != nil {
 		t.Fatalf("DecodeWASM failed: %v", err)
 	}
@@ -421,13 +424,13 @@ func TestPrintModule_SIMDLaneMemoryInstrsRoundTrip(t *testing.T) {
 func printRoundTripFromWAT(t *testing.T, wat string) []byte {
 	t.Helper()
 
-	wasm, err := watgo.CompileWATToWASM([]byte(wat))
+	wasm, err := compileWATToWASM([]byte(wat))
 	if err != nil {
 		t.Fatalf("CompileWATToWASM failed: %v", err)
 	}
 
 	printed := printDecodedModule(t, wasm)
-	roundTrip, err := watgo.CompileWATToWASM(printed)
+	roundTrip, err := compileWATToWASM(printed)
 	if err != nil {
 		t.Fatalf("CompileWATToWASM(print output) failed: %v\nprinted:\n%s", err, printed)
 	}
@@ -467,7 +470,7 @@ func assertPrintedNotContains(t *testing.T, printed []byte, rejects ...string) {
 func printDecodedModule(t *testing.T, wasm []byte) []byte {
 	t.Helper()
 
-	m, err := watgo.DecodeWASM(wasm)
+	m, err := decodeWASM(wasm)
 	if err != nil {
 		t.Fatalf("DecodeWASM failed: %v", err)
 	}
@@ -476,4 +479,23 @@ func printDecodedModule(t *testing.T, wasm []byte) []byte {
 		t.Fatalf("PrintModule failed: %v", err)
 	}
 	return printed
+}
+
+func compileWATToWASM(src []byte) ([]byte, error) {
+	tm, err := textformat.ParseModule(string(src))
+	if err != nil {
+		return nil, err
+	}
+	m, hints, err := textformat.LowerModule(tm)
+	if err != nil {
+		return nil, err
+	}
+	if err := validate.ValidateModule(m, hints); err != nil {
+		return nil, err
+	}
+	return binaryformat.EncodeModule(m)
+}
+
+func decodeWASM(src []byte) (*wasmir.Module, error) {
+	return binaryformat.DecodeModule(src)
 }

@@ -164,6 +164,42 @@ func TestEncodeWASM_PublicAPI(t *testing.T) {
 	}
 }
 
+func TestPrintWAT_PublicAPI(t *testing.T) {
+	m, err := watgo.ParseWAT([]byte(`
+(module
+  (func (export "add") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add
+  )
+)`))
+	if err != nil {
+		t.Fatalf("ParseWAT failed: %v", err)
+	}
+	if err := watgo.ValidateModule(m); err != nil {
+		t.Fatalf("ValidateModule failed: %v", err)
+	}
+
+	printed, err := watgo.PrintWAT(m)
+	if err != nil {
+		t.Fatalf("PrintWAT failed: %v", err)
+	}
+	if !bytes.Contains(printed, []byte("(func (type 0) (param i32) (param i32) (result i32)")) {
+		t.Fatalf("PrintWAT output missing function declaration:\n%s", printed)
+	}
+	roundTrip, err := watgo.CompileWATToWASM(printed)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(PrintWAT output) failed: %v\nprinted:\n%s", err, printed)
+	}
+	want, err := watgo.EncodeWASM(m)
+	if err != nil {
+		t.Fatalf("EncodeWASM failed: %v", err)
+	}
+	if !bytes.Equal(roundTrip, want) {
+		t.Fatalf("PrintWAT roundtrip mismatch:\nprinted:\n%s", printed)
+	}
+}
+
 func TestDecodeWASM_PublicAPI(t *testing.T) {
 	m, err := watgo.DecodeWASM(canonicalAddModuleBytes())
 	if err != nil {
@@ -318,6 +354,28 @@ func ExampleEncodeWASM() {
 		panic(err)
 	}
 	fmt.Println(len(wasm) > 0)
+	// Output:
+	// true
+}
+
+func ExamplePrintWAT() {
+	m, err := watgo.ParseWAT([]byte(`
+(module
+  (func (export "answer") (result i32)
+    i32.const 42
+  )
+)`))
+	if err != nil {
+		panic(err)
+	}
+	if err := watgo.ValidateModule(m); err != nil {
+		panic(err)
+	}
+	wat, err := watgo.PrintWAT(m)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(bytes.Contains(wat, []byte("i32.const 42")))
 	// Output:
 	// true
 }

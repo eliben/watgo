@@ -8,6 +8,7 @@
 //   - [DecodeWASM] decodes binary WASM into semantic IR.
 //   - [ValidateModule] validates semantic IR.
 //   - [EncodeWASM] encodes semantic IR back to binary WASM.
+//   - [PrintWAT] renders semantic IR back to WAT.
 //   - [CompileWATToWASM] is the end-to-end convenience helper for WAT-to-WASM.
 //
 // A typical pipeline is:
