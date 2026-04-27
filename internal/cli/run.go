@@ -13,6 +13,7 @@ import (
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/internal/printer"
+	"github.com/eliben/watgo/wasmir"
 )
 
 // Run executes the watgo CLI with args and standard streams and returns the
@@ -74,6 +75,8 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	outputPath := fs.String("output", "", "")
 	fs.StringVar(outputPath, "o", "", "")
+	watOutput := fs.Bool("wat", false, "")
+	fs.BoolVar(watOutput, "t", false, "")
 	fs.Usage = func() {
 		printParseUsage(stderr)
 	}
@@ -102,9 +105,6 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// If the input is already a WASM binary, we validate it and re-emit it to
-	// the output. This allows `watgo parse` to be used as a general-purpose
-	// WASM validator and reformatter, in addition to compiling WAT text.
 	var out []byte
 	if isBinaryWasm(src) {
 		m, err := watgo.DecodeWASM(src)
@@ -116,7 +116,7 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
 		}
-		out, err = watgo.EncodeWASM(m)
+		out, err = formatParseOutput(m, *watOutput)
 		if err != nil {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
@@ -127,13 +127,33 @@ func runParse(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 			return 1
 		}
-		out = compiled
+		if *watOutput {
+			m, err := watgo.DecodeWASM(compiled)
+			if err != nil {
+				fmt.Fprintf(stderr, "watgo parse: %v\n", err)
+				return 1
+			}
+			out, err = formatParseOutput(m, true)
+			if err != nil {
+				fmt.Fprintf(stderr, "watgo parse: %v\n", err)
+				return 1
+			}
+		} else {
+			out = compiled
+		}
 	}
 	if err := writeOutput(*outputPath, out, stdout); err != nil {
 		fmt.Fprintf(stderr, "watgo parse: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func formatParseOutput(m *wasmir.Module, watOutput bool) ([]byte, error) {
+	if watOutput {
+		return printer.PrintModule(m)
+	}
+	return watgo.EncodeWASM(m)
 }
 
 // runPrint implements `watgo print`.
@@ -328,7 +348,7 @@ Usage:
   watgo validate [INPUT]
 
 Commands:
-  parse              Parse WebAssembly text or binary input and write binary output
+  parse              Parse WebAssembly text or binary input
   print              Print a WebAssembly binary as text
   validate           Validate a WebAssembly text or binary file
   help               Show help for the root command or a subcommand
@@ -350,7 +370,7 @@ func versionString() string {
 
 // printParseUsage prints help text for `watgo parse`.
 func printParseUsage(w io.Writer) {
-	fmt.Fprint(w, `Parse WebAssembly text or binary input and write binary output.
+	fmt.Fprint(w, `Parse WebAssembly text or binary input.
 
 Usage:
   watgo parse [OPTIONS] [INPUT]
@@ -360,7 +380,9 @@ Arguments:
 
 Options:
   -o, --output <OUTPUT>
-            Where to place binary output. If omitted, stdout is used.
+            Where to place output. If omitted, stdout is used.
+  -t, --wat
+            Output WebAssembly text instead of binary.
   -h, --help
             Print help
 `)

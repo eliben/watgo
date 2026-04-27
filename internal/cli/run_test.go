@@ -79,6 +79,59 @@ func TestRunParseBinaryWASMToStdout(t *testing.T) {
 	}
 }
 
+func TestRunParseWatOutputFromWAT(t *testing.T) {
+	wat := []byte("(module (func (export \"f\") (result i32) (i32.const 7)))")
+	want, err := watgo.CompileWATToWASM(wat)
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"parse", "--wat"}, bytes.NewReader(wat), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "(func (type 0) (result i32)") {
+		t.Fatalf("stdout %q does not contain normalized WAT", stdout.String())
+	}
+	roundTrip, err := watgo.CompileWATToWASM(stdout.Bytes())
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(parse --wat output) failed: %v\nprinted:\n%s", err, stdout.String())
+	}
+	if !bytes.Equal(roundTrip, want) {
+		t.Fatalf("parse --wat roundtrip mismatch:\nprinted:\n%s", stdout.String())
+	}
+}
+
+func TestRunParseWatOutputFromBinaryWASM(t *testing.T) {
+	wasm, err := watgo.CompileWATToWASM([]byte("(module (func (export \"f\") (result i32) (i32.const 5)))"))
+	if err != nil {
+		t.Fatalf("CompileWATToWASM failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"parse", "-t"}, bytes.NewReader(wasm), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, stderr=%q", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "i32.const 5") {
+		t.Fatalf("stdout %q does not contain WAT instruction", stdout.String())
+	}
+	roundTrip, err := watgo.CompileWATToWASM(stdout.Bytes())
+	if err != nil {
+		t.Fatalf("CompileWATToWASM(parse -t output) failed: %v\nprinted:\n%s", err, stdout.String())
+	}
+	if !bytes.Equal(roundTrip, wasm) {
+		t.Fatalf("parse -t roundtrip mismatch:\nprinted:\n%s", stdout.String())
+	}
+}
+
 func TestRunValidateWAT(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run(
@@ -341,6 +394,9 @@ func TestRunParseHelp(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "watgo parse [OPTIONS] [INPUT]") {
 		t.Fatalf("stderr %q does not contain parse usage", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--wat") {
+		t.Fatalf("stderr %q does not mention --wat", stderr.String())
 	}
 }
 

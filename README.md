@@ -63,9 +63,6 @@ Examples:
 # Compile WAT text to a WASM binary file.
 watgo parse input.wat -o output.wasm
 
-# Validate and re-emit a WASM binary.
-watgo parse input.wasm -o output.wasm
-
 # Validate a WAT file.
 watgo validate input.wat
 

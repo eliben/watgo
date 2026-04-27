@@ -1,4 +1,3 @@
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it
   later?
-* Future: add "printer" to emit WAT from wasmir
