@@ -52,7 +52,7 @@ including runnable examples for the high-level functions in `package watgo`.
 
 ### CLI
 
-`watgo` currently provides basic `parse` and `validate` subcommands.
+`watgo` currently provides basic `parse`, `print`, and `validate` subcommands.
 
 For supported subcommands and flags, the CLI aims to stay compatible with
 [`wasm-tools`](https://github.com/bytecodealliance/wasm-tools).
@@ -62,6 +62,9 @@ Examples:
 ```sh
 # Compile WAT text to a WASM binary file.
 watgo parse input.wat -o output.wasm
+
+# Validate and re-emit a WASM binary.
+watgo parse input.wasm -o output.wasm
 
 # Validate a WAT file.
 watgo validate input.wat
