@@ -52,10 +52,6 @@ func validatedValueFromType(vt wasmir.ValueType) validatedValue {
 	return validatedValue{Type: vt}
 }
 
-func validatedUnknownValue() validatedValue {
-	return validatedValue{Unknown: true}
-}
-
 func sameValidatedValue(got, want validatedValue) bool {
 	if got.Unknown || want.Unknown {
 		return true
@@ -562,10 +558,6 @@ func isModuleValueSubtype(m *wasmir.Module, got, want wasmir.ValueType) bool {
 	return false
 }
 
-func isTypeFinal(td wasmir.TypeDef) bool {
-	return !td.SubType || td.Final
-}
-
 // isValidDeclaredSubtype validates the declared subtype relation between two
 // type definitions of the same kind.
 func isValidDeclaredSubtype(m *wasmir.Module, sub, super wasmir.TypeDef) bool {
@@ -891,7 +883,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 				diags.Addf("type[%d] super[%d]: type mismatch", i, j)
 				continue
 			}
-			if isTypeFinal(m.Types[super]) || !isValidDeclaredSubtype(m, td, m.Types[super]) {
+			if (!m.Types[super].SubType || m.Types[super].Final) || !isValidDeclaredSubtype(m, td, m.Types[super]) {
 				diags.Addf("type[%d] super[%d]: sub type", i, j)
 			}
 		}
@@ -966,7 +958,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 			continue
 		}
 		if !matchesExpectedValueInModule(m, validatedValue{Type: initType}, validatedValue{Type: g.Type}) {
-			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, valueTypeName(initType), valueTypeName(g.Type))
+			diags.Addf("global[%d]: initializer type mismatch: got %s want %s", i, initType, g.Type)
 		}
 	}
 
@@ -1201,7 +1193,10 @@ func (v *bodyValidator) validate() diag.ErrorList {
 	hints := v.hints
 
 	var diags diag.ErrorList
-	funcLocCtx := functionLocationContext(f)
+	funcLocCtx := ""
+	if f.SourceLoc != "" {
+		funcLocCtx = "at " + f.SourceLoc + ": "
+	}
 	funcImportCount := uint32(len(funcImportTypeIdx))
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
 
@@ -1328,7 +1323,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		missing := n - available
 		padding := make([]validatedValue, missing)
 		for i := range padding {
-			padding[i] = validatedUnknownValue()
+			padding[i] = validatedValue{Unknown: true}
 		}
 		stack = append(stack[:frame.entryHeight], append(padding, stack[frame.entryHeight:]...)...)
 		return true
@@ -2939,7 +2934,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			case v2.Unknown && !v1.Unknown:
 				appendStackValue(v1)
 			case v1.Unknown && v2.Unknown:
-				appendStackValue(validatedUnknownValue())
+				appendStackValue(validatedValue{Unknown: true})
 			default:
 				appendStackValue(v1)
 			}
@@ -4411,13 +4406,6 @@ func functionExportName(m *wasmir.Module, funcIdx uint32) (string, bool) {
 	return "", false
 }
 
-func functionLocationContext(f wasmir.Function) string {
-	if f.SourceLoc == "" {
-		return ""
-	}
-	return "at " + f.SourceLoc + ": "
-}
-
 func operandLabel(callee wasmir.Function, operandIndex int) string {
 	if operandIndex < len(callee.ParamNames) && callee.ParamNames[operandIndex] != "" {
 		return fmt.Sprintf("%d (%s)", operandIndex, callee.ParamNames[operandIndex])
@@ -4432,13 +4420,14 @@ func operandLabelFromDef(callee *wasmir.Function, operandIndex int) string {
 	return operandLabel(*callee, operandIndex)
 }
 
-func valueTypeName(vt wasmir.ValueType) string {
-	return vt.String()
-}
-
 // globalInitType validates a constant initializer expression enough to infer
 // its resulting value type.
 func globalInitType(m *wasmir.Module, init []wasmir.Instruction) (wasmir.ValueType, bool) {
+	// Initializers are stored in wasmir as linear instruction lists, so this
+	// uses a small type-only operand stack rather than the full bodyValidator.
+	// Only constant-expression instructions are accepted here; unsupported
+	// opcodes, underflow, type mismatch, or a final stack arity other than one
+	// make the initializer invalid.
 	stack := make([]wasmir.ValueType, 0, len(init))
 	push := func(vt wasmir.ValueType) {
 		stack = append(stack, vt)
