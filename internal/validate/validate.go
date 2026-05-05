@@ -41,13 +41,11 @@ const (
 	maxTableElems32   uint64 = 1<<32 - 1
 )
 
+// validatedValue is one entry on the validation value stack. Unknown models
+// the spec's stack-polymorphic bottom value in unreachable code.
 type validatedValue struct {
 	Type    wasmir.ValueType
 	Unknown bool
-}
-
-func isRefValueType(vt wasmir.ValueType) bool {
-	return vt.IsRef()
 }
 
 func validatedValueFromType(vt wasmir.ValueType) validatedValue {
@@ -84,16 +82,21 @@ func validatedValueName(v validatedValue) string {
 	return v.Type.String()
 }
 
+// refinedNonNullValue returns the non-null refinement of a reference value
+// after an instruction has proven it cannot be null.
 func refinedNonNullValue(v validatedValue) validatedValue {
 	if v.Unknown {
 		return v
 	}
-	if isRefValueType(v.Type) {
+	if v.Type.IsRef() {
 		v.Type.Nullable = false
 	}
 	return v
 }
 
+// memoryAddressType returns the index/address type expected by a memory's
+// instructions. Unknown memories default to i32 so callers can report the
+// primary index error separately.
 func memoryAddressType(m *wasmir.Module, memoryIndex uint32) wasmir.ValueType {
 	if m != nil && int(memoryIndex) < len(m.Memories) {
 		if m.Memories[memoryIndex].AddressType == wasmir.ValueTypeI64 {
@@ -103,6 +106,9 @@ func memoryAddressType(m *wasmir.Module, memoryIndex uint32) wasmir.ValueType {
 	return wasmir.ValueTypeI32
 }
 
+// tableAddressType returns the index/address type expected by a table's
+// instructions. Unknown tables default to i32 so callers can report the
+// primary index error separately.
 func tableAddressType(m *wasmir.Module, tableIndex uint32) wasmir.ValueType {
 	if m != nil && int(tableIndex) < len(m.Tables) {
 		if m.Tables[tableIndex].AddressType == wasmir.ValueTypeI64 {
@@ -112,6 +118,8 @@ func tableAddressType(m *wasmir.Module, tableIndex uint32) wasmir.ValueType {
 	return wasmir.ValueTypeI32
 }
 
+// validModuleValueType checks that vt is well-formed in m, including referenced
+// heap type indices for GC/reference types.
 func validModuleValueType(m *wasmir.Module, vt wasmir.ValueType) bool {
 	if !vt.IsRef() {
 		return vt.Kind != wasmir.ValueKindInvalid
@@ -122,6 +130,8 @@ func validModuleValueType(m *wasmir.Module, vt wasmir.ValueType) bool {
 	return int(vt.HeapType.TypeIndex) < len(m.Types)
 }
 
+// isDefaultableFieldType reports whether a struct/array field may be
+// initialized by the default constructors.
 func isDefaultableFieldType(ft wasmir.FieldType) bool {
 	if ft.Packed != wasmir.PackedTypeNone {
 		return true
@@ -129,6 +139,8 @@ func isDefaultableFieldType(ft wasmir.FieldType) bool {
 	return isDefaultableValueType(ft.Type)
 }
 
+// elementRefType returns the element segment reference type, inferring funcref
+// for legacy function-index segments that do not carry an explicit ref type.
 func elementRefType(m *wasmir.Module, elemIndex uint32) (wasmir.ValueType, bool) {
 	if m == nil || int(elemIndex) >= len(m.Elements) {
 		return wasmir.ValueType{}, false
@@ -143,6 +155,7 @@ func elementRefType(m *wasmir.Module, elemIndex uint32) (wasmir.ValueType, bool)
 	return wasmir.ValueType{}, false
 }
 
+// typeDefAtIndex resolves a type index with bounds checking.
 func typeDefAtIndex(m *wasmir.Module, typeIndex uint32) (wasmir.TypeDef, bool) {
 	if m == nil || int(typeIndex) >= len(m.Types) {
 		return wasmir.TypeDef{}, false
@@ -150,6 +163,8 @@ func typeDefAtIndex(m *wasmir.Module, typeIndex uint32) (wasmir.TypeDef, bool) {
 	return m.Types[typeIndex], true
 }
 
+// isDefaultableValueType reports whether a value type has a WebAssembly default
+// value. Non-nullable references are intentionally not defaultable.
 func isDefaultableValueType(vt wasmir.ValueType) bool {
 	if vt.IsRef() {
 		return vt.Nullable
@@ -217,6 +232,8 @@ func typeIndexHasKind(m *wasmir.Module, typeIndex uint32, kind wasmir.TypeDefKin
 	return m.Types[typeIndex].Kind == kind
 }
 
+// isTypeIndexSubtype checks nominal subtype reachability for indexed GC types,
+// treating recursive-type equivalence as a subtype match.
 func isTypeIndexSubtype(m *wasmir.Module, got, want uint32) bool {
 	if got == want {
 		return true
@@ -533,6 +550,8 @@ func (c *typeEquivalenceChecker) fieldTypesEquivalent(a, b wasmir.FieldType) boo
 	return c.valueTypesEquivalent(a.Type, b.Type)
 }
 
+// isModuleValueSubtype checks value-type subtyping under the module's type
+// graph. Non-reference value types must match exactly.
 func isModuleValueSubtype(m *wasmir.Module, got, want wasmir.ValueType) bool {
 	if got == want {
 		return true
@@ -547,6 +566,8 @@ func isTypeFinal(td wasmir.TypeDef) bool {
 	return !td.SubType || td.Final
 }
 
+// isValidDeclaredSubtype validates the declared subtype relation between two
+// type definitions of the same kind.
 func isValidDeclaredSubtype(m *wasmir.Module, sub, super wasmir.TypeDef) bool {
 	if sub.Kind != super.Kind {
 		return false
@@ -607,6 +628,8 @@ func isValidDeclaredSubtype(m *wasmir.Module, sub, super wasmir.TypeDef) bool {
 	}
 }
 
+// typeRefVisibleFromType enforces recursive-type visibility: a type may refer
+// to itself, earlier types, or peers in the same recursive group.
 func typeRefVisibleFromType(m *wasmir.Module, fromIndex, targetIndex uint32) bool {
 	if m == nil || int(fromIndex) >= len(m.Types) || int(targetIndex) >= len(m.Types) {
 		return false
@@ -621,6 +644,8 @@ func typeRefVisibleFromType(m *wasmir.Module, fromIndex, targetIndex uint32) boo
 	return groupSize > 1 && targetIndex >= groupStart && targetIndex < groupStart+groupSize
 }
 
+// validateTypeVisibilityRef checks a single value type reference made from a
+// type definition at fromIndex.
 func validateTypeVisibilityRef(m *wasmir.Module, fromIndex uint32, vt wasmir.ValueType) bool {
 	if !vt.UsesTypeIndex() {
 		return true
@@ -628,6 +653,7 @@ func validateTypeVisibilityRef(m *wasmir.Module, fromIndex uint32, vt wasmir.Val
 	return typeRefVisibleFromType(m, fromIndex, vt.HeapType.TypeIndex)
 }
 
+// validateTypeDefVisibility checks every type-index reference made by td.
 func validateTypeDefVisibility(m *wasmir.Module, typeIndex uint32, td wasmir.TypeDef) bool {
 	for _, super := range td.SuperTypes {
 		if !typeRefVisibleFromType(m, typeIndex, super) {
@@ -660,6 +686,8 @@ func validateTypeDefVisibility(m *wasmir.Module, typeIndex uint32, td wasmir.Typ
 	return true
 }
 
+// matchesRefTypeInModule implements reference-type matching, including GC heap
+// type hierarchy checks and indexed type subtyping.
 func matchesRefTypeInModule(m *wasmir.Module, got, want wasmir.ValueType) bool {
 	if got == want {
 		return true
@@ -728,6 +756,8 @@ func matchesRefTypeInModule(m *wasmir.Module, got, want wasmir.ValueType) bool {
 	}
 }
 
+// diffRefType computes the fallthrough reference type after a checked cast or
+// null test has removed the branch-taken portion of the source type.
 func diffRefType(src, target wasmir.ValueType) wasmir.ValueType {
 	if !src.IsRef() || !target.IsRef() {
 		return wasmir.ValueType{}
@@ -750,6 +780,8 @@ func matchesGCExpectedValue(m *wasmir.Module, got, want wasmir.ValueType) bool {
 	return got == want
 }
 
+// matchesExpectedValueInModule compares a stack value against an expected type,
+// with Unknown representing stack-polymorphic bottom.
 func matchesExpectedValueInModule(m *wasmir.Module, got, want validatedValue) bool {
 	if got.Unknown {
 		return true
@@ -757,6 +789,8 @@ func matchesExpectedValueInModule(m *wasmir.Module, got, want validatedValue) bo
 	return matchesGCExpectedValue(m, got.Type, want.Type)
 }
 
+// naturalMemoryAlignExponent returns the largest valid memarg alignment
+// exponent for memory instructions that carry one.
 func naturalMemoryAlignExponent(kind wasmir.InstrKind) (uint32, bool) {
 	switch kind {
 	case wasmir.InstrI32Load8S, wasmir.InstrI32Load8U, wasmir.InstrI64Load8S, wasmir.InstrI64Load8U, wasmir.InstrI32Store8, wasmir.InstrI64Store8:
@@ -810,7 +844,7 @@ func naturalMemoryAlignExponent(kind wasmir.InstrKind) (uint32, bool) {
 // not have folded-source metadata should pass nil.
 //
 // Validation includes module-level checks (type/export indices) and function
-// body type checks for the currently supported instruction subset.
+// body type checks.
 // It returns nil on success. On any failure, it returns diag.ErrorList.
 func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 	if m == nil {
@@ -886,7 +920,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 	for i, f := range m.Funcs {
-		fnCtx := functionContext(m, funcImportCount+uint32(i), funcImportCount)
+		fnCtx := formatFunctionContext(m, funcImportCount+uint32(i), funcImportCount)
 		if int(f.TypeIdx) >= len(m.Types) {
 			diags.Addf("%s has invalid type index %d", fnCtx, f.TypeIdx)
 			continue
@@ -1235,7 +1269,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 	}
 	stackValueIsRef := func(i int) bool {
 		got := stackValue(i)
-		return got.Unknown || isRefValueType(got.Type)
+		return got.Unknown || got.Type.IsRef()
 	}
 	type controlKind uint8
 	const (
@@ -1913,7 +1947,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
-			calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
+			calleeCtx := formatFunctionContext(m, ins.FuncIndex, funcImportCount)
 			if !ok {
 				diags.Addf("%s: call target %s has invalid type index", insCtx, calleeCtx)
 				continue
@@ -1943,7 +1977,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			calleeType, calleeDef, ok := functionTypeAtIndex(m, funcImportTypeIdx, ins.FuncIndex)
-			calleeCtx := functionContext(m, ins.FuncIndex, funcImportCount)
+			calleeCtx := formatFunctionContext(m, ins.FuncIndex, funcImportCount)
 			if !ok {
 				diags.Addf("%s: return_call target %s has invalid type index", insCtx, calleeCtx)
 				continue
@@ -4134,7 +4168,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			top := stackValue(len(stack) - 1)
-			if !top.Unknown && !isRefValueType(top.Type) {
+			if !top.Unknown && !top.Type.IsRef() {
 				diags.Addf("%s: ref.is_null expects reference operand", insCtx)
 				continue
 			}
@@ -4145,7 +4179,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			top := stackValue(len(stack) - 1)
-			if !top.Unknown && !isRefValueType(top.Type) {
+			if !top.Unknown && !top.Type.IsRef() {
 				diags.Addf("%s: ref.as_non_null expects reference operand", insCtx)
 				continue
 			}
@@ -4203,7 +4237,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 	return diags
 }
 
-func functionContext(m *wasmir.Module, funcIdx uint32, funcImportCount uint32) string {
+// formatFunctionContext returns a compact human-readable function identifier for
+// diagnostics, preferring source names or export names when available.
+func formatFunctionContext(m *wasmir.Module, funcIdx uint32, funcImportCount uint32) string {
 	ctx := fmt.Sprintf("func[%d]", funcIdx)
 	if funcIdx >= moduleFunctionCount(m) {
 		return ctx
@@ -4284,6 +4320,8 @@ func declaredFunctionRefs(m *wasmir.Module) map[uint32]bool {
 	return declared
 }
 
+// functionTypeAtIndex resolves an absolute function index to its function type
+// and, for module-defined functions, the function definition.
 func functionTypeAtIndex(m *wasmir.Module, funcImportTypeIdx []uint32, funcIdx uint32) (wasmir.TypeDef, *wasmir.Function, bool) {
 	importCount := uint32(len(funcImportTypeIdx))
 	if funcIdx < importCount {
@@ -4398,6 +4436,8 @@ func valueTypeName(vt wasmir.ValueType) string {
 	return vt.String()
 }
 
+// globalInitType validates a constant initializer expression enough to infer
+// its resulting value type.
 func globalInitType(m *wasmir.Module, init []wasmir.Instruction) (wasmir.ValueType, bool) {
 	stack := make([]wasmir.ValueType, 0, len(init))
 	push := func(vt wasmir.ValueType) {
