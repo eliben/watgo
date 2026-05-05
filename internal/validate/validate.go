@@ -1,3 +1,28 @@
+// Package validate performs semantic validation over wasmir.Module.
+//
+// The validator runs after WAT text or wasm binary has already been lowered
+// into watgo's shared IR. It is not a byte-for-byte implementation of the
+// WebAssembly spec appendix's binary-stream validation algorithm; it applies
+// the same validation model to wasmir instructions and module fields.
+//
+// Useful spec anchors in https://webassembly.github.io/spec/core/valid/index.html:
+//   - Validation conventions: bottom types, instruction types, contexts, and
+//     recursive type conventions.
+//   - Validation types and matching: type validity, equivalence, subtyping,
+//     and reference matching.
+//   - Validation instructions: stack effects and per-instruction typing rules.
+//   - Validation modules: module-level index, type, initializer, import,
+//     export, element, data, memory, table, tag, and start-function checks.
+//   - Validation algorithm appendix: value stack, control stack,
+//     local-initialization tracking, and stack-polymorphic unreachable-code
+//     behavior mirrored by the function-body validator.
+//
+// In code, ValidateModule covers module-level validation. bodyValidator
+// validates one function body with a value stack and control stack. Simple
+// fixed-signature instructions can use metadata from internal/instrdef; rules
+// that depend on indices, immediates, control context, reference subtyping, GC,
+// memory/table address width, exceptions, or SIMD lanes remain handwritten in
+// the instruction switch.
 package validate
 
 import (
