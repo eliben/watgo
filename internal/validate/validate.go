@@ -173,6 +173,8 @@ func isDefaultableValueType(vt wasmir.ValueType) bool {
 	}
 }
 
+// fieldValueType returns the value type produced or consumed for a field.
+// Packed fields are represented as i32 on the operand stack.
 func fieldValueType(ft wasmir.FieldType) wasmir.ValueType {
 	switch ft.Packed {
 	case wasmir.PackedTypeI8, wasmir.PackedTypeI16:
@@ -182,6 +184,8 @@ func fieldValueType(ft wasmir.FieldType) wasmir.ValueType {
 	}
 }
 
+// sameFieldStorage reports whether two fields have the same storage layout,
+// ignoring unpacked mutability rules handled by subtype validation.
 func sameFieldStorage(a, b wasmir.FieldType) bool {
 	if a.Packed != b.Packed {
 		return false
@@ -192,6 +196,8 @@ func sameFieldStorage(a, b wasmir.FieldType) bool {
 	return a.Type == b.Type
 }
 
+// fieldByteWidth returns the byte width used by array data initialization for
+// numeric and vector field storage.
 func fieldByteWidth(ft wasmir.FieldType) (uint32, bool) {
 	switch ft.Packed {
 	case wasmir.PackedTypeI8:
@@ -211,6 +217,8 @@ func fieldByteWidth(ft wasmir.FieldType) (uint32, bool) {
 	}
 }
 
+// elementSegmentType returns the type of values stored by an element segment,
+// inferring funcref for legacy function-index segments.
 func elementSegmentType(_ *wasmir.Module, seg wasmir.ElementSegment) wasmir.ValueType {
 	if seg.RefType.IsRef() {
 		return seg.RefType
@@ -221,6 +229,8 @@ func elementSegmentType(_ *wasmir.Module, seg wasmir.ElementSegment) wasmir.Valu
 	return wasmir.ValueType{}
 }
 
+// typeIndexHasKind checks the kind of an indexed type, returning false for
+// missing indices so callers can use it inside matching predicates.
 func typeIndexHasKind(m *wasmir.Module, typeIndex uint32, kind wasmir.TypeDefKind) bool {
 	if m == nil || int(typeIndex) >= len(m.Types) {
 		return false
@@ -435,6 +445,8 @@ func (c *typeEquivalenceChecker) fieldTypesEquivalentInRecGroup(a, b wasmir.Fiel
 	return c.valueTypesEquivalentInRecGroup(a.Type, b.Type, groupA, groupB, groupSize)
 }
 
+// recGroupInfo returns the recursive group containing idx. Non-grouped types
+// behave like singleton groups.
 func recGroupInfo(m *wasmir.Module, idx uint32) (start uint32, size uint32, pos uint32) {
 	if m == nil || int(idx) >= len(m.Types) {
 		return idx, 1, 0
@@ -4253,6 +4265,8 @@ func formatFunctionContext(m *wasmir.Module, funcIdx uint32, funcImportCount uin
 	return ctx
 }
 
+// importedFunctionTypeIndices maps imported function indices to module type
+// indices, preserving the absolute function-index order.
 func importedFunctionTypeIndices(m *wasmir.Module) []uint32 {
 	out := make([]uint32, 0, len(m.Imports))
 	for _, imp := range m.Imports {
@@ -4263,6 +4277,8 @@ func importedFunctionTypeIndices(m *wasmir.Module) []uint32 {
 	return out
 }
 
+// importedTagTypeIndices maps imported tag indices to module type indices,
+// preserving the absolute tag-index order.
 func importedTagTypeIndices(m *wasmir.Module) []uint32 {
 	out := make([]uint32, 0, len(m.Imports))
 	for _, imp := range m.Imports {
@@ -4273,6 +4289,8 @@ func importedTagTypeIndices(m *wasmir.Module) []uint32 {
 	return out
 }
 
+// moduleFunctionCount returns the absolute function-index space size, including
+// imported and module-defined functions.
 func moduleFunctionCount(m *wasmir.Module) uint32 {
 	var count uint32 = uint32(len(m.Funcs))
 	for _, imp := range m.Imports {
@@ -4397,6 +4415,7 @@ func functionTypeIndexAtIndex(m *wasmir.Module, funcImportTypeIdx []uint32, func
 	return typeIdx, true
 }
 
+// functionExportName finds an export name for funcIdx for diagnostics.
 func functionExportName(m *wasmir.Module, funcIdx uint32) (string, bool) {
 	for _, exp := range m.Exports {
 		if exp.Kind == wasmir.ExternalKindFunction && exp.Index == funcIdx {
