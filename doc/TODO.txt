@@ -1,3 +1,12 @@
+vm:
+
+- better structure than type aliases?
+- validation requires hints? have two apis, or w/o validation at first?
+- sameValueTypes --> slices.Equal?! also cloneValues?!
+- popArgs is weird
+- make*Module funcs in test should parse wat?
+
+
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it
   later?
