@@ -855,6 +855,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		return diag.Fromf("module is nil")
 	}
 
+	// Build index-space summaries shared by multiple module and instruction
+	// validation passes.
 	var diags diag.ErrorList
 	funcImportTypeIdx := importedFunctionTypeIndices(m)
 	funcImportCount := uint32(len(funcImportTypeIdx))
@@ -862,6 +864,9 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 	totalTagCount := uint32(len(tagImportTypeIdx) + len(m.Tags))
 	declaredFuncs := declaredFunctionRefs(m)
 	totalFuncCount := funcImportCount + uint32(len(m.Funcs))
+
+	// Start function validation: the start index must name a function with no
+	// parameters and no results.
 	if m.StartFuncIndex != nil {
 		if *m.StartFuncIndex >= totalFuncCount {
 			diags.Addf("start: unknown function")
@@ -882,6 +887,9 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 			}
 		}
 	}
+
+	// Type section validation: check recursive-reference visibility, declared
+	// subtype relationships, and all value types mentioned by type definitions.
 	for i, td := range m.Types {
 		if !validateTypeDefVisibility(m, uint32(i), td) {
 			diags.Addf("type[%d]: unknown type", i)
@@ -923,6 +931,9 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 			}
 		}
 	}
+
+	// Function validation: each defined function must reference a function
+	// type, have valid locals, and have a body matching its signature.
 	for i, f := range m.Funcs {
 		fnCtx := formatFunctionContext(m, funcImportCount+uint32(i), funcImportCount)
 		if int(f.TypeIdx) >= len(m.Types) {
@@ -956,6 +967,9 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Global validation: imported globals only need valid types; defined
+	// globals also need valid constant initializers assignable to the global
+	// type.
 	for i, g := range m.Globals {
 		if !validModuleValueType(m, g.Type) {
 			diags.Addf("global[%d]: unknown type", i)
@@ -974,6 +988,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Table validation: check table element reference types, limits, and
+	// optional initializer expressions.
 	for i, table := range m.Tables {
 		if !validModuleValueType(m, table.RefType) {
 			diags.Addf("table[%d]: unknown type", i)
@@ -1001,6 +1017,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Memory validation: check memory limits against 32-bit or 64-bit memory
+	// bounds and ensure min <= max when a maximum is present.
 	for i, mem := range m.Memories {
 		addrType := memoryAddressType(m, uint32(i))
 		maxPages := maxMemoryPages32
@@ -1020,6 +1038,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Active data segments must target an existing memory and use an offset
+	// expression/type matching that memory's address width.
 	for i, data := range m.Data {
 		if data.Mode != wasmir.DataSegmentModeActive {
 			continue
@@ -1041,6 +1061,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Memory instruction memargs are immediate-level constraints, so check them
+	// at module scope after memories are known.
 	for i, f := range m.Funcs {
 		for j, ins := range f.Body {
 			natural, ok := naturalMemoryAlignExponent(ins.Kind)
@@ -1057,6 +1079,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Element validation: check segment reference types, active-table offsets,
+	// function indices, and expression element initializers.
 	for i, elem := range m.Elements {
 		if elem.RefType.Kind != wasmir.ValueKindInvalid && !validModuleValueType(m, elem.RefType) {
 			diags.Addf("element[%d]: unknown type", i)
@@ -1107,6 +1131,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Tag imports must reference function types with no results.
 	for i, typeIdx := range tagImportTypeIdx {
 		if int(typeIdx) >= len(m.Types) || m.Types[typeIdx].Kind != wasmir.TypeDefKindFunc {
 			diags.Addf("tag import[%d]: unknown type", i)
@@ -1117,6 +1142,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Defined tags have the same type restriction as imported tags.
 	for i, tag := range m.Tags {
 		if int(tag.TypeIdx) >= len(m.Types) || m.Types[tag.TypeIdx].Kind != wasmir.TypeDefKindFunc {
 			diags.Addf("tag[%d]: unknown type", i)
@@ -1127,6 +1153,8 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 		}
 	}
 
+	// Export validation: export names must be unique and each export index must
+	// be valid for the selected external kind.
 	exportNameFirstSeen := map[string]int{}
 	for i, exp := range m.Exports {
 		if prev, exists := exportNameFirstSeen[exp.Name]; exists {
@@ -1221,6 +1249,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return diags
 	}
 
+	// Convert declared value-type slices into stack values. These helpers keep
+	// call, branch, and block-signature checks aligned with the spec's value
+	// stack model.
 	valueAt := func(types []wasmir.ValueType, i int) validatedValue {
 		return validatedValue{Type: types[i]}
 	}
@@ -1232,6 +1263,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return out
 	}
 
+	// Build the local index space and definite-initialization state. Parameters
+	// start initialized; non-defaultable locals require a local.set before use.
 	locals := make([]wasmir.ValueType, 0, len(ft.Params)+len(f.Locals))
 	locals = append(locals, ft.Params...)
 	locals = append(locals, f.Locals...)
@@ -1243,6 +1276,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		localInitialized[len(ft.Params)+i] = isDefaultableValueType(vt)
 	}
 
+	// The validation operand stack stores types, plus Unknown for values
+	// synthesized by stack-polymorphic unreachable code.
 	stack := make([]validatedValue, 0)
 	stackValue := func(i int) validatedValue {
 		return stack[i]
@@ -1278,6 +1313,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		got := stackValue(i)
 		return got.Unknown || got.Type.IsRef()
 	}
+
+	// The control stack tracks each active structured-control frame and the
+	// operand stack height/local state that must be restored at its boundary.
 	type controlKind uint8
 	const (
 		controlKindBlock controlKind = iota
@@ -1310,6 +1348,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return len(controlStack) > 0 && controlStack[len(controlStack)-1].unreachable
 	}
 
+	// ensureCurrentFrameOperands implements stack-polymorphic operand checking.
+	// In unreachable code it can synthesize Unknown values, but it still honors
+	// explicit folded operands recorded in valhint metadata.
 	ensureCurrentFrameOperands := func(n int, explicitOperands int, bottomOperands int) bool {
 		if len(controlStack) == 0 {
 			return len(stack) >= n
@@ -1341,6 +1382,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return true
 	}
 
+	// validateFrameResult checks the final stack shape when a control frame is
+	// closed or an if branch is split by else.
 	validateFrameResult := func(insCtx string, frame controlFrame, context string) {
 		if frame.unreachable {
 			actualCount := len(stack) - frame.entryHeight
@@ -1374,6 +1417,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		}
 	}
 
+	// validateBranchTarget resolves a label depth and checks that the branch
+	// operands match the target label type.
 	validateBranchTarget := func(insCtx string, depth uint32, opName string) (controlFrame, []validatedValue, int, bool) {
 		if int(depth) >= len(controlStack) {
 			diags.Addf("%s: %s depth %d out of range", insCtx, opName, depth)
@@ -1418,6 +1463,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return valuesOf(target.resultTypes)
 	}
 
+	// tryTableCatchValues computes the values a catch clause supplies to its
+	// branch target.
 	tryTableCatchValues := func(catch wasmir.TryTableCatch) ([]validatedValue, bool) {
 		switch catch.Kind {
 		case wasmir.TryTableCatchKindTag:
@@ -1443,6 +1490,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		}
 	}
 
+	// markCurrentFrameUnreachable resets the current frame to its entry height
+	// and enables stack-polymorphic validation until the frame closes.
 	markCurrentFrameUnreachable := func() {
 		if len(controlStack) == 0 {
 			return
@@ -1453,6 +1502,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		controlStack[len(controlStack)-1] = frame
 	}
 
+	// controlSignature extracts the parameter/result types of block, loop, if,
+	// and try_table instructions from either an inline block type or a type
+	// index.
 	controlSignature := func(ins wasmir.Instruction, insCtx, opname string) ([]wasmir.ValueType, []wasmir.ValueType, bool) {
 		if ins.BlockTypeUsesIndex {
 			if int(ins.BlockTypeIndex) >= len(m.Types) {
@@ -1468,6 +1520,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		return nil, nil, true
 	}
 
+	// stackSigOperandText is used for generic fixed-signature diagnostics.
 	stackSigOperandText := func(sig instrdef.FixedStackSig) string {
 		switch sig.ParamCount {
 		case 0:
@@ -1486,6 +1539,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		}
 	}
 
+	// applyFixedStackSig validates instructions whose complete stack behavior
+	// is encoded in internal/instrdef rather than in a handwritten switch case.
 	applyFixedStackSig := func(insCtx string, ins wasmir.Instruction, sig instrdef.FixedStackSig, hint valhint.InstrHints) {
 		kind := ins.Kind
 		if !ensureCurrentFrameOperands(int(sig.ParamCount), int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
@@ -1505,6 +1560,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 		}
 	}
 
+	// Validate the linear instruction stream, updating the value/control stacks
+	// as each instruction is accepted.
 	for i, ins := range f.Body {
 		insCtx := fmt.Sprintf("instruction %d", i)
 		if ins.SourceLoc != "" {
@@ -1517,6 +1574,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			continue
 		}
 		switch ins.Kind {
+		// Structured control instructions create, split, or close control
+		// frames. Branching instructions are handled later with other
+		// transfers.
 		case wasmir.InstrBlock:
 			params, results, ok := controlSignature(ins, insCtx, "block")
 			if !ok {
@@ -1717,6 +1777,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			frame.sawElse = true
 			frame.unreachable = frame.enteredUnreachable
 			controlStack[len(controlStack)-1] = frame
+
+		// Variable instructions read or update locals/globals and keep local
+		// definite-initialization state in sync.
 		case wasmir.InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
 				diags.Addf("%s: local index %d out of range", insCtx, ins.LocalIndex)
@@ -1787,6 +1850,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			truncateStack(len(stack) - 1)
+
+		// Table instructions validate table index immediates, address-width
+		// operands, and element-reference compatibility.
 		case wasmir.InstrTableGet:
 			if int(ins.TableIndex) >= len(m.Tables) {
 				diags.Addf("%s: table index %d out of range", insCtx, ins.TableIndex)
@@ -1948,6 +2014,10 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			appendStackType(tableAddressType(m, ins.TableIndex))
+
+		// Calls validate the callee type and operands, then push call results.
+		// Tail-call forms additionally require the callee results to match the
+		// enclosing function results and make the current frame unreachable.
 		case wasmir.InstrCall:
 			if ins.FuncIndex >= totalFuncCount {
 				diags.Addf("%s: call function index %d out of range", insCtx, ins.FuncIndex)
@@ -2206,6 +2276,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			markCurrentFrameUnreachable()
+
+		// Exception instructions consume tag payloads or exception references and
+		// transfer control out of the current frame.
 		case wasmir.InstrThrow:
 			tagType, ok := tagTypeAtIndex(m, tagImportTypeIdx, ins.TagIndex)
 			if !ok {
@@ -2247,6 +2320,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			truncateStack(len(stack) - 1)
 			markCurrentFrameUnreachable()
+
+		// GC aggregate and reference-test instructions validate indexed
+		// struct/array types and use module-aware reference matching.
 		case wasmir.InstrStructNew:
 			td, ok := typeDefAtIndex(m, ins.TypeIndex)
 			if !ok {
@@ -2886,6 +2962,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI32))
 
+		// Constants and parametric instructions have direct stack effects. The
+		// typed select form is module-aware; untyped select excludes refs.
 		case wasmir.InstrI32Const:
 			appendStackType(wasmir.ValueTypeI32)
 
@@ -2950,6 +3028,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			default:
 				appendStackValue(v1)
 			}
+
+		// Memory instructions validate memory index immediates, address-width
+		// operands, data-segment indices, and load/store result stack effects.
 		case wasmir.InstrI32Load:
 			if len(m.Memories) == 0 {
 				diags.Addf("%s: i32.load requires memory", insCtx)
@@ -3355,6 +3436,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				diags.Addf("%s: data.drop data index %d out of range", insCtx, ins.DataIndex)
 				continue
 			}
+
+		// Branch and return instructions validate label/function result types and
+		// mark frames unreachable for unconditional transfers.
 		case wasmir.InstrBr:
 			target, _, _, ok := validateBranchTarget(insCtx, ins.BranchDepth, "br")
 			if !ok {
@@ -3651,6 +3735,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			markCurrentFrameUnreachable()
 
+		// Scalar numeric instructions are grouped by operand/result pattern.
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul, wasmir.InstrI32DivS, wasmir.InstrI32DivU,
 			wasmir.InstrI32RemS, wasmir.InstrI32RemU, wasmir.InstrI32Shl, wasmir.InstrI32ShrS, wasmir.InstrI32ShrU,
 			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor, wasmir.InstrI32Rotl, wasmir.InstrI32Rotr:
@@ -3869,6 +3954,9 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			truncateStack(len(stack) - 2)
 			appendStackType(wasmir.ValueTypeI32)
+
+		// SIMD and reinterpret instructions are grouped by lane/immediate and
+		// operand/result shape.
 		case wasmir.InstrI8x16Shuffle:
 			lanesOK := true
 			for _, lane := range ins.ShuffleLanes {
@@ -4152,6 +4240,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF64))
+
+		// Reference instructions that do not need the GC aggregate checks above.
 		case wasmir.InstrRefNull:
 			appendStackValue(validatedValue{Type: ins.RefType})
 		case wasmir.InstrRefFunc:
@@ -4192,6 +4282,8 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			setStackValue(len(stack)-1, refinedNonNullValue(top))
 
+		// end closes one structured-control frame; the final end must close the
+		// implicit function frame.
 		case wasmir.InstrEnd:
 			if len(controlStack) > 0 {
 				frame := controlStack[len(controlStack)-1]
