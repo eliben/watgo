@@ -8,6 +8,7 @@ package wasmvm
 
 import (
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/eliben/watgo/wasmir"
@@ -427,6 +428,57 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, err
 			}
 			stack = append(stack, I32(boolI32(v == 0)))
+		case wasmir.InstrI64Const:
+			stack = append(stack, I64(ins.I64Const))
+		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
+			v, err := evalI64Binary(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, I64(v))
+		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
+			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
+			v, err := evalI64Compare(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, I32(v))
+		case wasmir.InstrI64Eqz:
+			v, err := popI64(pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, I32(boolI32(v == 0)))
+		case wasmir.InstrF32Const:
+			stack = append(stack, F32(math.Float32frombits(ins.F32Const)))
+		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
+			v, err := evalF32Binary(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, F32(v))
+		case wasmir.InstrF32Eq, wasmir.InstrF32Ne,
+			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge:
+			v, err := evalF32Compare(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, I32(v))
+		case wasmir.InstrF64Const:
+			stack = append(stack, F64(math.Float64frombits(ins.F64Const)))
+		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
+			v, err := evalF64Binary(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, F64(v))
+		case wasmir.InstrF64Eq, wasmir.InstrF64Ne,
+			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge:
+			v, err := evalF64Compare(ins.Kind, pop)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, I32(v))
 		case wasmir.InstrCall:
 			if int(ins.FuncIndex) >= len(inst.funcs) {
 				return nil, fmt.Errorf("call function index %d out of range", ins.FuncIndex)
@@ -468,6 +520,166 @@ func zeroValue(vt wasmir.ValueType) (Value, error) {
 		return F64(0), nil
 	default:
 		return Value{}, fmt.Errorf("unsupported local type %s", vt)
+	}
+}
+
+// evalI64Binary pops two i64 operands and applies a supported i64 binary op.
+func evalI64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int64, error) {
+	rhs, err := popI64(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popI64(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrI64Add:
+		return lhs + rhs, nil
+	case wasmir.InstrI64Sub:
+		return lhs - rhs, nil
+	case wasmir.InstrI64Mul:
+		return lhs * rhs, nil
+	default:
+		return 0, fmt.Errorf("unsupported i64 binary instruction %s", instrName(kind))
+	}
+}
+
+// evalI64Compare pops two i64 operands and applies a supported i64 comparison.
+func evalI64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
+	rhs, err := popI64(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popI64(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrI64Eq:
+		return boolI32(lhs == rhs), nil
+	case wasmir.InstrI64Ne:
+		return boolI32(lhs != rhs), nil
+	case wasmir.InstrI64LtS:
+		return boolI32(lhs < rhs), nil
+	case wasmir.InstrI64LeS:
+		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrI64GtS:
+		return boolI32(lhs > rhs), nil
+	case wasmir.InstrI64GeS:
+		return boolI32(lhs >= rhs), nil
+	default:
+		return 0, fmt.Errorf("unsupported i64 comparison instruction %s", instrName(kind))
+	}
+}
+
+// evalF32Binary pops two f32 operands and applies a supported f32 binary op.
+func evalF32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float32, error) {
+	rhs, err := popF32(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popF32(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrF32Add:
+		return lhs + rhs, nil
+	case wasmir.InstrF32Sub:
+		return lhs - rhs, nil
+	case wasmir.InstrF32Mul:
+		return lhs * rhs, nil
+	case wasmir.InstrF32Div:
+		return lhs / rhs, nil
+	default:
+		return 0, fmt.Errorf("unsupported f32 binary instruction %s", instrName(kind))
+	}
+}
+
+// evalF32Compare pops two f32 operands and applies a supported f32 comparison.
+func evalF32Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
+	rhs, err := popF32(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popF32(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrF32Eq:
+		return boolI32(lhs == rhs), nil
+	case wasmir.InstrF32Ne:
+		return boolI32(lhs != rhs), nil
+	case wasmir.InstrF32Lt:
+		return boolI32(lhs < rhs), nil
+	case wasmir.InstrF32Le:
+		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrF32Gt:
+		return boolI32(lhs > rhs), nil
+	case wasmir.InstrF32Ge:
+		return boolI32(lhs >= rhs), nil
+	default:
+		return 0, fmt.Errorf("unsupported f32 comparison instruction %s", instrName(kind))
+	}
+}
+
+// evalF64Binary pops two f64 operands and applies a supported f64 binary op.
+func evalF64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float64, error) {
+	rhs, err := popF64(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popF64(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrF64Add:
+		return lhs + rhs, nil
+	case wasmir.InstrF64Sub:
+		return lhs - rhs, nil
+	case wasmir.InstrF64Mul:
+		return lhs * rhs, nil
+	case wasmir.InstrF64Div:
+		return lhs / rhs, nil
+	default:
+		return 0, fmt.Errorf("unsupported f64 binary instruction %s", instrName(kind))
+	}
+}
+
+// evalF64Compare pops two f64 operands and applies a supported f64 comparison.
+func evalF64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
+	rhs, err := popF64(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popF64(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrF64Eq:
+		return boolI32(lhs == rhs), nil
+	case wasmir.InstrF64Ne:
+		return boolI32(lhs != rhs), nil
+	case wasmir.InstrF64Lt:
+		return boolI32(lhs < rhs), nil
+	case wasmir.InstrF64Le:
+		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrF64Gt:
+		return boolI32(lhs > rhs), nil
+	case wasmir.InstrF64Ge:
+		return boolI32(lhs >= rhs), nil
+	default:
+		return 0, fmt.Errorf("unsupported f64 comparison instruction %s", instrName(kind))
 	}
 }
 
@@ -524,6 +736,42 @@ func popI32(pop func() (Value, error)) (int32, error) {
 		return 0, fmt.Errorf("got %s operand, want i32", v.Type)
 	}
 	return v.I32, nil
+}
+
+// popI64 pops and type-checks an i64 operand.
+func popI64(pop func() (Value, error)) (int64, error) {
+	v, err := pop()
+	if err != nil {
+		return 0, err
+	}
+	if v.Type != wasmir.ValueTypeI64 {
+		return 0, fmt.Errorf("got %s operand, want i64", v.Type)
+	}
+	return v.I64, nil
+}
+
+// popF32 pops and type-checks an f32 operand.
+func popF32(pop func() (Value, error)) (float32, error) {
+	v, err := pop()
+	if err != nil {
+		return 0, err
+	}
+	if v.Type != wasmir.ValueTypeF32 {
+		return 0, fmt.Errorf("got %s operand, want f32", v.Type)
+	}
+	return v.F32, nil
+}
+
+// popF64 pops and type-checks an f64 operand.
+func popF64(pop func() (Value, error)) (float64, error) {
+	v, err := pop()
+	if err != nil {
+		return 0, err
+	}
+	if v.Type != wasmir.ValueTypeF64 {
+		return 0, fmt.Errorf("got %s operand, want f64", v.Type)
+	}
+	return v.F64, nil
 }
 
 // popArgs removes call arguments from the operand stack in parameter order.
@@ -585,6 +833,72 @@ func instrName(kind wasmir.InstrKind) string {
 		return "i32.gt_s"
 	case wasmir.InstrI32GeS:
 		return "i32.ge_s"
+	case wasmir.InstrI64Const:
+		return "i64.const"
+	case wasmir.InstrI64Add:
+		return "i64.add"
+	case wasmir.InstrI64Sub:
+		return "i64.sub"
+	case wasmir.InstrI64Mul:
+		return "i64.mul"
+	case wasmir.InstrI64Eqz:
+		return "i64.eqz"
+	case wasmir.InstrI64Eq:
+		return "i64.eq"
+	case wasmir.InstrI64Ne:
+		return "i64.ne"
+	case wasmir.InstrI64LtS:
+		return "i64.lt_s"
+	case wasmir.InstrI64LeS:
+		return "i64.le_s"
+	case wasmir.InstrI64GtS:
+		return "i64.gt_s"
+	case wasmir.InstrI64GeS:
+		return "i64.ge_s"
+	case wasmir.InstrF32Const:
+		return "f32.const"
+	case wasmir.InstrF32Add:
+		return "f32.add"
+	case wasmir.InstrF32Sub:
+		return "f32.sub"
+	case wasmir.InstrF32Mul:
+		return "f32.mul"
+	case wasmir.InstrF32Div:
+		return "f32.div"
+	case wasmir.InstrF32Eq:
+		return "f32.eq"
+	case wasmir.InstrF32Ne:
+		return "f32.ne"
+	case wasmir.InstrF32Lt:
+		return "f32.lt"
+	case wasmir.InstrF32Le:
+		return "f32.le"
+	case wasmir.InstrF32Gt:
+		return "f32.gt"
+	case wasmir.InstrF32Ge:
+		return "f32.ge"
+	case wasmir.InstrF64Const:
+		return "f64.const"
+	case wasmir.InstrF64Add:
+		return "f64.add"
+	case wasmir.InstrF64Sub:
+		return "f64.sub"
+	case wasmir.InstrF64Mul:
+		return "f64.mul"
+	case wasmir.InstrF64Div:
+		return "f64.div"
+	case wasmir.InstrF64Eq:
+		return "f64.eq"
+	case wasmir.InstrF64Ne:
+		return "f64.ne"
+	case wasmir.InstrF64Lt:
+		return "f64.lt"
+	case wasmir.InstrF64Le:
+		return "f64.le"
+	case wasmir.InstrF64Gt:
+		return "f64.gt"
+	case wasmir.InstrF64Ge:
+		return "f64.ge"
 	case wasmir.InstrCall:
 		return "call"
 	case wasmir.InstrReturn:

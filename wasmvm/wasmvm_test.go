@@ -231,3 +231,150 @@ func TestI32Predicates(t *testing.T) {
 		}
 	}
 }
+
+func TestI64ArithmeticAndPredicates(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "calc") (param i64 i64) (result i64)
+				local.get 0
+				local.get 1
+				i64.mul
+				i64.const 9
+				i64.sub)
+			(func (export "eqz") (param i64) (result i32)
+				local.get 0
+				i64.eqz)
+			(func (export "cmp") (param i64 i64) (result i32)
+				local.get 0
+				local.get 1
+				i64.ge_s))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	calc, ok := inst.ExportedFunc("calc")
+	if !ok {
+		t.Fatal("missing calc export")
+	}
+	results, err := calc.Call(wasmvm.I64(8), wasmvm.I64(7))
+	if err != nil {
+		t.Fatalf("Call calc failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I64(47) {
+		t.Fatalf("calc got results %#v, want i64 47", results)
+	}
+
+	eqz, ok := inst.ExportedFunc("eqz")
+	if !ok {
+		t.Fatal("missing eqz export")
+	}
+	results, err = eqz.Call(wasmvm.I64(0))
+	if err != nil {
+		t.Fatalf("Call eqz failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("eqz got results %#v, want i32 1", results)
+	}
+
+	cmp, ok := inst.ExportedFunc("cmp")
+	if !ok {
+		t.Fatal("missing cmp export")
+	}
+	results, err = cmp.Call(wasmvm.I64(-2), wasmvm.I64(5))
+	if err != nil {
+		t.Fatalf("Call cmp failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("cmp got results %#v, want i32 0", results)
+	}
+}
+
+func TestF32ArithmeticAndPredicates(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "calc") (param f32) (result f32)
+				local.get 0
+				f32.const 2.5
+				f32.mul
+				f32.const 1.0
+				f32.add)
+			(func (export "cmp") (param f32 f32) (result i32)
+				local.get 0
+				local.get 1
+				f32.lt))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	calc, ok := inst.ExportedFunc("calc")
+	if !ok {
+		t.Fatal("missing calc export")
+	}
+	results, err := calc.Call(wasmvm.F32(4))
+	if err != nil {
+		t.Fatalf("Call calc failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.F32(11) {
+		t.Fatalf("calc got results %#v, want f32 11", results)
+	}
+
+	cmp, ok := inst.ExportedFunc("cmp")
+	if !ok {
+		t.Fatal("missing cmp export")
+	}
+	results, err = cmp.Call(wasmvm.F32(-1.5), wasmvm.F32(2.25))
+	if err != nil {
+		t.Fatalf("Call cmp failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("cmp got results %#v, want i32 1", results)
+	}
+}
+
+func TestF64ArithmeticAndPredicates(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "calc") (param f64) (result f64)
+				local.get 0
+				f64.const 8.0
+				f64.add
+				f64.const 2.0
+				f64.div)
+			(func (export "cmp") (param f64 f64) (result i32)
+				local.get 0
+				local.get 1
+				f64.ge))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	calc, ok := inst.ExportedFunc("calc")
+	if !ok {
+		t.Fatal("missing calc export")
+	}
+	results, err := calc.Call(wasmvm.F64(6))
+	if err != nil {
+		t.Fatalf("Call calc failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.F64(7) {
+		t.Fatalf("calc got results %#v, want f64 7", results)
+	}
+
+	cmp, ok := inst.ExportedFunc("cmp")
+	if !ok {
+		t.Fatal("missing cmp export")
+	}
+	results, err = cmp.Call(wasmvm.F64(3.5), wasmvm.F64(3.5))
+	if err != nil {
+		t.Fatalf("Call cmp failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("cmp got results %#v, want i32 1", results)
+	}
+}
