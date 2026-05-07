@@ -307,7 +307,7 @@ func (inst *ModuleInstance) callFunc(index uint32, args []Value) ([]Value, error
 		return nil, fmt.Errorf("func[%d]: %w", index, err)
 	}
 	if fn.host != nil {
-		results, err := fn.host.Func(&Context{Runtime: inst.rt, Instance: inst}, slices.Clone(args))
+		results, err := fn.host.Func(&Context{Runtime: inst.rt, Instance: inst}, args)
 		if err != nil {
 			return nil, err
 		}
@@ -460,7 +460,7 @@ func popArgs(stack *[]Value, params []wasmir.ValueType) ([]Value, error) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
 	base := len(*stack) - len(params)
-	args := slices.Clone((*stack)[base:])
+	args := (*stack)[base:]
 	*stack = (*stack)[:base]
 	if err := checkArgs(params, args); err != nil {
 		return nil, err
@@ -474,7 +474,7 @@ func popResults(stack *[]Value, results []wasmir.ValueType) ([]Value, error) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
 	base := len(*stack) - len(results)
-	out := slices.Clone((*stack)[base:])
+	out := (*stack)[base:]
 	*stack = (*stack)[:base]
 	if err := checkResults(results, out); err != nil {
 		return nil, err

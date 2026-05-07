@@ -1,6 +1,5 @@
 vm:
 
-- sameValueTypes --> slices.Equal?! also cloneValues?!
 - popArgs is weird
 - make*Module funcs in test should parse wat?
 
