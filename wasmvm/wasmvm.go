@@ -1,15 +1,14 @@
 // Package wasmvm exposes a minimal WebAssembly interpreter runtime for wasmir
 // modules.
 //
-// The package can instantiate a validated wasmir.Module, look up exported
-// functions, call them with runtime values, and satisfy WebAssembly function
-// imports with Go callbacks.
+// The package can instantiate an already-validated wasmir.Module, look up
+// exported functions, call them with runtime values, and satisfy WebAssembly
+// function imports with Go callbacks.
 package wasmvm
 
 import (
 	"fmt"
 
-	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -134,23 +133,24 @@ func NewRuntime() *Runtime {
 	return &Runtime{}
 }
 
-// Instantiate validates and instantiates m with the supplied imports.
+// Instantiate instantiates m with the supplied imports.
 //
-// m is the wasmir module to execute. imports supplies host functions needed by
-// m's import section; pass nil when the module has no imports. On success,
-// Instantiate returns a ModuleInstance whose exported functions can be obtained
-// with ModuleInstance.ExportedFunc. It returns an error when validation fails,
-// an import is missing, an import has the wrong type, or the module uses an
-// import/export kind this minimal runtime does not support yet.
+// m must already be validated before it is passed to Instantiate. In
+// particular, modules produced from WAT should be validated using the hints
+// produced by WAT parsing before reaching this runtime API.
+//
+// imports supplies host functions needed by m's import section; pass nil when
+// the module has no imports. On success, Instantiate returns a ModuleInstance
+// whose exported functions can be obtained with ModuleInstance.ExportedFunc. It
+// returns an error when an import is missing, an import has the wrong type, or
+// the module uses an import/export kind this minimal runtime does not support
+// yet.
 func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstance, error) {
 	if rt == nil {
 		return nil, fmt.Errorf("runtime is nil")
 	}
 	if m == nil {
 		return nil, fmt.Errorf("module is nil")
-	}
-	if err := validate.ValidateModule(m, nil); err != nil {
-		return nil, err
 	}
 
 	inst := &ModuleInstance{
