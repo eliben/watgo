@@ -386,18 +386,47 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
 			}
 			stack = append(stack, locals[ins.LocalIndex])
+		case wasmir.InstrLocalSet:
+			if int(ins.LocalIndex) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
+			}
+			v, err := pop()
+			if err != nil {
+				return nil, err
+			}
+			if v.Type != locals[ins.LocalIndex].Type {
+				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.LocalIndex, v.Type, locals[ins.LocalIndex].Type)
+			}
+			locals[ins.LocalIndex] = v
+		case wasmir.InstrLocalTee:
+			if int(ins.LocalIndex) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
+			}
+			v, err := pop()
+			if err != nil {
+				return nil, err
+			}
+			if v.Type != locals[ins.LocalIndex].Type {
+				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.LocalIndex, v.Type, locals[ins.LocalIndex].Type)
+			}
+			locals[ins.LocalIndex] = v
+			stack = append(stack, v)
 		case wasmir.InstrI32Const:
 			stack = append(stack, I32(ins.I32Const))
-		case wasmir.InstrI32Add:
-			rhs, err := popI32(pop)
+		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
+			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
+			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
+			v, err := evalI32Binary(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			lhs, err := popI32(pop)
+			stack = append(stack, I32(v))
+		case wasmir.InstrI32Eqz:
+			v, err := popI32(pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(lhs+rhs))
+			stack = append(stack, I32(boolI32(v == 0)))
 		case wasmir.InstrCall:
 			if int(ins.FuncIndex) >= len(inst.funcs) {
 				return nil, fmt.Errorf("call function index %d out of range", ins.FuncIndex)
@@ -440,6 +469,49 @@ func zeroValue(vt wasmir.ValueType) (Value, error) {
 	default:
 		return Value{}, fmt.Errorf("unsupported local type %s", vt)
 	}
+}
+
+// evalI32Binary pops two i32 operands and applies a supported i32 binary op.
+func evalI32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
+	rhs, err := popI32(pop)
+	if err != nil {
+		return 0, err
+	}
+	lhs, err := popI32(pop)
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrI32Add:
+		return lhs + rhs, nil
+	case wasmir.InstrI32Sub:
+		return lhs - rhs, nil
+	case wasmir.InstrI32Mul:
+		return lhs * rhs, nil
+	case wasmir.InstrI32Eq:
+		return boolI32(lhs == rhs), nil
+	case wasmir.InstrI32Ne:
+		return boolI32(lhs != rhs), nil
+	case wasmir.InstrI32LtS:
+		return boolI32(lhs < rhs), nil
+	case wasmir.InstrI32LeS:
+		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrI32GtS:
+		return boolI32(lhs > rhs), nil
+	case wasmir.InstrI32GeS:
+		return boolI32(lhs >= rhs), nil
+	default:
+		return 0, fmt.Errorf("unsupported i32 binary instruction %s", instrName(kind))
+	}
+}
+
+// boolI32 converts a WebAssembly i32 condition result to 0 or 1.
+func boolI32(v bool) int32 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // popI32 pops and type-checks an i32 operand.
@@ -487,10 +559,32 @@ func instrName(kind wasmir.InstrKind) string {
 	switch kind {
 	case wasmir.InstrLocalGet:
 		return "local.get"
+	case wasmir.InstrLocalSet:
+		return "local.set"
+	case wasmir.InstrLocalTee:
+		return "local.tee"
 	case wasmir.InstrI32Const:
 		return "i32.const"
 	case wasmir.InstrI32Add:
 		return "i32.add"
+	case wasmir.InstrI32Sub:
+		return "i32.sub"
+	case wasmir.InstrI32Mul:
+		return "i32.mul"
+	case wasmir.InstrI32Eqz:
+		return "i32.eqz"
+	case wasmir.InstrI32Eq:
+		return "i32.eq"
+	case wasmir.InstrI32Ne:
+		return "i32.ne"
+	case wasmir.InstrI32LtS:
+		return "i32.lt_s"
+	case wasmir.InstrI32LeS:
+		return "i32.le_s"
+	case wasmir.InstrI32GtS:
+		return "i32.gt_s"
+	case wasmir.InstrI32GeS:
+		return "i32.ge_s"
 	case wasmir.InstrCall:
 		return "call"
 	case wasmir.InstrReturn:
