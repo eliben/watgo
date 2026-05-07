@@ -1,7 +1,6 @@
 vm:
 
-- popArgs is weird
-- make*Module funcs in test should parse wat?
+- 
 
 
 * Will need to figure out what to do about the "threads" proposal, it's at

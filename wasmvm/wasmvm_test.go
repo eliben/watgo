@@ -3,37 +3,30 @@ package wasmvm_test
 import (
 	"testing"
 
+	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/wasmir"
 	"github.com/eliben/watgo/wasmvm"
 )
 
-func makeAddModule() *wasmir.Module {
-	return &wasmir.Module{
-		Types: []wasmir.TypeDef{{
-			Kind:    wasmir.TypeDefKindFunc,
-			Params:  []wasmir.ValueType{wasmir.ValueTypeI32, wasmir.ValueTypeI32},
-			Results: []wasmir.ValueType{wasmir.ValueTypeI32},
-		}},
-		Funcs: []wasmir.Function{{
-			TypeIdx: 0,
-			Body: []wasmir.Instruction{
-				{Kind: wasmir.InstrLocalGet, LocalIndex: 0},
-				{Kind: wasmir.InstrLocalGet, LocalIndex: 1},
-				{Kind: wasmir.InstrI32Add},
-				{Kind: wasmir.InstrEnd},
-			},
-		}},
-		Exports: []wasmir.Export{{
-			Name:  "add",
-			Kind:  wasmir.ExternalKindFunction,
-			Index: 0,
-		}},
+func parseWAT(t *testing.T, src string) *wasmir.Module {
+	t.Helper()
+
+	m, err := watgo.ParseAndValidateWAT([]byte(src))
+	if err != nil {
+		t.Fatalf("ParseAndValidateWAT failed: %v", err)
 	}
+	return m
 }
 
 func TestExportedAdd(t *testing.T) {
 	rt := wasmvm.NewRuntime()
-	inst, err := rt.Instantiate(makeAddModule(), nil)
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "add") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				i32.add))
+	`), nil)
 	if err != nil {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
@@ -51,38 +44,15 @@ func TestExportedAdd(t *testing.T) {
 	}
 }
 
-func makeCallImportModule() *wasmir.Module {
-	return &wasmir.Module{
-		Types: []wasmir.TypeDef{{
-			Kind:    wasmir.TypeDefKindFunc,
-			Params:  []wasmir.ValueType{wasmir.ValueTypeI32},
-			Results: []wasmir.ValueType{wasmir.ValueTypeI32},
-		}},
-		Imports: []wasmir.Import{{
-			Module:  "env",
-			Name:    "inc",
-			Kind:    wasmir.ExternalKindFunction,
-			TypeIdx: 0,
-		}},
-		Funcs: []wasmir.Function{{
-			TypeIdx: 0,
-			Body: []wasmir.Instruction{
-				{Kind: wasmir.InstrLocalGet, LocalIndex: 0},
-				{Kind: wasmir.InstrCall, FuncIndex: 0},
-				{Kind: wasmir.InstrEnd},
-			},
-		}},
-		Exports: []wasmir.Export{{
-			Name:  "call_inc",
-			Kind:  wasmir.ExternalKindFunction,
-			Index: 1,
-		}},
-	}
-}
-
 func TestHostFunctionImport(t *testing.T) {
 	rt := wasmvm.NewRuntime()
-	inst, err := rt.Instantiate(makeCallImportModule(), wasmvm.Imports{
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(import "env" "inc" (func $inc (param i32) (result i32)))
+			(func (export "call_inc") (param i32) (result i32)
+				local.get 0
+				call $inc))
+	`), wasmvm.Imports{
 		"env": {
 			"inc": wasmvm.NewHostFunc(
 				[]wasmir.ValueType{wasmir.ValueTypeI32},
