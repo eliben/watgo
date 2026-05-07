@@ -1,6 +1,5 @@
 vm:
 
-- validation requires hints? have two apis, or w/o validation at first?
 - sameValueTypes --> slices.Equal?! also cloneValues?!
 - popArgs is weird
 - make*Module funcs in test should parse wat?

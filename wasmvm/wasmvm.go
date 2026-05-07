@@ -8,6 +8,7 @@ package wasmvm
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/eliben/watgo/wasmir"
 )
@@ -282,26 +283,13 @@ func (inst *ModuleInstance) checkHostFuncType(imp wasmir.Import, host HostFunc) 
 		return fmt.Errorf("import %q.%q has invalid function type", imp.Module, imp.Name)
 	}
 	ft := inst.m.Types[imp.TypeIdx]
-	if !sameValueTypes(host.Params, ft.Params) || !sameValueTypes(host.Results, ft.Results) {
+	if !slices.Equal(host.Params, ft.Params) || !slices.Equal(host.Results, ft.Results) {
 		return fmt.Errorf("import %q.%q type mismatch", imp.Module, imp.Name)
 	}
 	if host.Func == nil {
 		return fmt.Errorf("import %q.%q has nil function", imp.Module, imp.Name)
 	}
 	return nil
-}
-
-// sameValueTypes reports whether two value-type lists are exactly equal.
-func sameValueTypes(a, b []wasmir.ValueType) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // callFunc dispatches a function-index call to either a host function or a
@@ -319,7 +307,7 @@ func (inst *ModuleInstance) callFunc(index uint32, args []Value) ([]Value, error
 		return nil, fmt.Errorf("func[%d]: %w", index, err)
 	}
 	if fn.host != nil {
-		results, err := fn.host.Func(&Context{Runtime: inst.rt, Instance: inst}, cloneValues(args))
+		results, err := fn.host.Func(&Context{Runtime: inst.rt, Instance: inst}, slices.Clone(args))
 		if err != nil {
 			return nil, err
 		}
@@ -365,21 +353,13 @@ func checkResults(want []wasmir.ValueType, got []Value) error {
 	return nil
 }
 
-// cloneValues copies a value slice before handing it to host code or returning
-// stack slices to callers.
-func cloneValues(values []Value) []Value {
-	out := make([]Value, len(values))
-	copy(out, values)
-	return out
-}
-
 // callDefined interprets one module-defined function body.
 //
 // This is deliberately minimal for now: it initializes locals, maintains a
 // single operand stack, and executes only the small instruction subset needed
 // by the first wasmvm tests.
 func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []Value) ([]Value, error) {
-	locals := cloneValues(args)
+	locals := slices.Clone(args)
 	for _, vt := range fn.def.Locals {
 		v, err := zeroValue(vt)
 		if err != nil {
@@ -480,7 +460,7 @@ func popArgs(stack *[]Value, params []wasmir.ValueType) ([]Value, error) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
 	base := len(*stack) - len(params)
-	args := cloneValues((*stack)[base:])
+	args := slices.Clone((*stack)[base:])
 	*stack = (*stack)[:base]
 	if err := checkArgs(params, args); err != nil {
 		return nil, err
@@ -494,7 +474,7 @@ func popResults(stack *[]Value, results []wasmir.ValueType) ([]Value, error) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
 	base := len(*stack) - len(results)
-	out := cloneValues((*stack)[base:])
+	out := slices.Clone((*stack)[base:])
 	*stack = (*stack)[:base]
 	if err := checkResults(results, out); err != nil {
 		return nil, err
