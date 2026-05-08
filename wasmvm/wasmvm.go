@@ -352,6 +352,21 @@ func checkResults(want []wasmir.ValueType, got []Value) error {
 // single operand stack, and executes only the small instruction subset needed
 // by the first wasmvm tests.
 func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []Value) ([]Value, error) {
+	// WAT structured control is lowered into a flat instruction stream:
+	//
+	//   if ... else ... end
+	//   block ... end
+	//
+	// The interpreter executes this stream with a program counter, so it needs
+	// the matching else/end locations to skip untaken arms and resolve branch
+	// targets. Validation should already have checked the structure; this pass
+	// keeps the VM's PC movement simple and gives clearer errors for malformed
+	// hand-built modules.
+	ctrl, err := analyzeControl(fn.def.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	locals := slices.Clone(args)
 	for _, vt := range fn.def.Locals {
 		v, err := zeroValue(vt)
@@ -371,9 +386,56 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 		return v, nil
 	}
 
+	// activeLabels mirrors the control frames that execution has entered but
+	// not yet left. The top of this stack is branch depth 0, matching Wasm
+	// label depth rules. For this initial slice every supported label branches
+	// to its matching end instruction.
+	activeLabels := make([]controlLabel, 0)
 	for pc := 0; pc < len(fn.def.Body); pc++ {
 		ins := fn.def.Body[pc]
 		switch ins.Kind {
+		case wasmir.InstrBlock:
+			label, ok := ctrl.labels[pc]
+			if !ok {
+				return nil, fmt.Errorf("block at %d has no matching end", pc)
+			}
+			activeLabels = append(activeLabels, label)
+		case wasmir.InstrIf:
+			// The condition has already been validated as i32. A true condition
+			// enters the then arm. A false condition skips to the else marker if
+			// present, or to the matching end otherwise.
+			cond, err := popI32(pop)
+			if err != nil {
+				return nil, err
+			}
+			label, ok := ctrl.labels[pc]
+			if !ok {
+				return nil, fmt.Errorf("if at %d has no matching end", pc)
+			}
+			if cond == 0 {
+				if label.elseIndex >= 0 {
+					// Keep the if label active while executing the else arm, so
+					// branch depth inside else still targets the if's end.
+					activeLabels = append(activeLabels, label)
+					pc = label.elseIndex
+				} else {
+					pc = label.endIndex
+				}
+				continue
+			}
+			activeLabels = append(activeLabels, label)
+		case wasmir.InstrElse:
+			// Reaching else normally means the then arm completed without
+			// branching. Skip the else arm and leave the if label.
+			if len(activeLabels) == 0 {
+				return nil, fmt.Errorf("else without active label")
+			}
+			label := activeLabels[len(activeLabels)-1]
+			if label.elseIndex != pc {
+				return nil, fmt.Errorf("else at %d does not match active label", pc)
+			}
+			activeLabels = activeLabels[:len(activeLabels)-1]
+			pc = label.endIndex
 		case wasmir.InstrLocalGet:
 			if int(ins.LocalIndex) >= len(locals) {
 				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
@@ -471,6 +533,10 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, err
 			}
 			stack = append(stack, I32(v))
+		case wasmir.InstrDrop:
+			if _, err := pop(); err != nil {
+				return nil, err
+			}
 		case wasmir.InstrCall:
 			if int(ins.FuncIndex) >= len(inst.funcs) {
 				return nil, fmt.Errorf("call function index %d out of range", ins.FuncIndex)
@@ -488,15 +554,135 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, err
 			}
 			stack = append(stack, results...)
+		case wasmir.InstrBr:
+			nextPC, err := branchTo(ins.BranchDepth, &activeLabels)
+			if err != nil {
+				return nil, err
+			}
+			pc = nextPC
+		case wasmir.InstrBrIf:
+			// br_if consumes only the condition. Any branch result values are
+			// already below it on the operand stack and are left there for the
+			// target block's end to consume.
+			cond, err := popI32(pop)
+			if err != nil {
+				return nil, err
+			}
+			if cond != 0 {
+				nextPC, err := branchTo(ins.BranchDepth, &activeLabels)
+				if err != nil {
+					return nil, err
+				}
+				pc = nextPC
+			}
 		case wasmir.InstrReturn:
 			return popResults(&stack, ft.Results)
 		case wasmir.InstrEnd:
+			if pc != len(fn.def.Body)-1 {
+				// Non-final end closes the innermost active block/if. The final
+				// end is the function terminator and returns function results.
+				if len(activeLabels) == 0 {
+					return nil, fmt.Errorf("end without active label")
+				}
+				label := activeLabels[len(activeLabels)-1]
+				if label.endIndex != pc {
+					return nil, fmt.Errorf("end at %d does not match active label", pc)
+				}
+				activeLabels = activeLabels[:len(activeLabels)-1]
+				continue
+			}
 			return popResults(&stack, ft.Results)
 		default:
 			return nil, fmt.Errorf("unsupported instruction %s", instrName(ins.Kind))
 		}
 	}
 	return nil, fmt.Errorf("function ended without end")
+}
+
+// controlLabel describes one active structured-control label in the flattened
+// instruction stream.
+//
+// startIndex is the block/if instruction that opened the label. endIndex is
+// the matching end instruction and is currently the branch target for both
+// block and if labels. elseIndex is the matching else instruction for if
+// labels, or -1 when the label has no else arm.
+type controlLabel struct {
+	startIndex int
+	endIndex   int
+	elseIndex  int
+}
+
+// controlInfo stores precomputed control-boundary metadata by opening
+// instruction index. Only block and if instructions have entries.
+type controlInfo struct {
+	labels map[int]controlLabel
+}
+
+// analyzeControl records matching structured-control boundaries in body.
+//
+// The VM assumes modules were validated before instantiation, but it still
+// receives a plain wasmir.Module and should not rely on nested source syntax.
+// This pass treats block/if as openers, else as metadata on the current if, and
+// end as the closer for the innermost opener. End instructions with no opener
+// are accepted here because the final function end is represented the same way
+// as a structured-control end.
+func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
+	ctrl := controlInfo{labels: make(map[int]controlLabel)}
+	stack := make([]int, 0)
+	elseIndex := make(map[int]int)
+
+	for pc, ins := range body {
+		switch ins.Kind {
+		case wasmir.InstrBlock, wasmir.InstrIf:
+			stack = append(stack, pc)
+		case wasmir.InstrElse:
+			if len(stack) == 0 {
+				return controlInfo{}, fmt.Errorf("else at %d without matching if", pc)
+			}
+			start := stack[len(stack)-1]
+			if body[start].Kind != wasmir.InstrIf {
+				return controlInfo{}, fmt.Errorf("else at %d matched non-if instruction %s", pc, instrName(body[start].Kind))
+			}
+			elseIndex[start] = pc
+		case wasmir.InstrEnd:
+			if len(stack) == 0 {
+				continue
+			}
+			start := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			label := controlLabel{
+				startIndex: start,
+				endIndex:   pc,
+				elseIndex:  -1,
+			}
+			if elsePC, ok := elseIndex[start]; ok {
+				label.elseIndex = elsePC
+			}
+			ctrl.labels[start] = label
+		}
+	}
+	if len(stack) != 0 {
+		return controlInfo{}, fmt.Errorf("%s at %d without matching end", instrName(body[stack[len(stack)-1]].Kind), stack[len(stack)-1])
+	}
+	return ctrl, nil
+}
+
+// branchTo returns the end PC for a branch target and removes exited labels.
+//
+// Wasm branch depths count outward from the innermost active label: depth 0 is
+// the top of activeLabels, depth 1 is its parent, and so on. A branch exits the
+// target label and all labels nested inside it, so activeLabels is truncated to
+// the parent of the target. The main interpreter loop then increments pc after
+// executing the current instruction, so returning target.endIndex causes
+// execution to continue just after the target's end.
+func branchTo(depth uint32, activeLabels *[]controlLabel) (int, error) {
+	if int(depth) >= len(*activeLabels) {
+		return 0, fmt.Errorf("branch depth %d out of range", depth)
+	}
+	targetIndex := len(*activeLabels) - 1 - int(depth)
+	target := (*activeLabels)[targetIndex]
+	*activeLabels = (*activeLabels)[:targetIndex]
+	return target.endIndex, nil
 }
 
 // zeroValue constructs the default local value for a numeric value type.

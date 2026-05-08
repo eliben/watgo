@@ -378,3 +378,149 @@ func TestF64ArithmeticAndPredicates(t *testing.T) {
 		t.Fatalf("cmp got results %#v, want i32 1", results)
 	}
 }
+
+func TestDropAndReturn(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "early") (param i32) (result i32)
+				local.get 0
+				i32.eqz
+				if
+					i32.const 42
+					return
+				end
+				i32.const 100
+				drop
+				local.get 0))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	early, ok := inst.ExportedFunc("early")
+	if !ok {
+		t.Fatal("missing early export")
+	}
+	results, err := early.Call(wasmvm.I32(0))
+	if err != nil {
+		t.Fatalf("Call early(0) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("early(0) got results %#v, want i32 42", results)
+	}
+	results, err = early.Call(wasmvm.I32(9))
+	if err != nil {
+		t.Fatalf("Call early(9) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(9) {
+		t.Fatalf("early(9) got results %#v, want i32 9", results)
+	}
+}
+
+func TestIfElse(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "abs") (param i32) (result i32)
+				local.get 0
+				i32.const 0
+				i32.lt_s
+				if (result i32)
+					i32.const 0
+					local.get 0
+					i32.sub
+				else
+					local.get 0
+				end))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	abs, ok := inst.ExportedFunc("abs")
+	if !ok {
+		t.Fatal("missing abs export")
+	}
+	results, err := abs.Call(wasmvm.I32(-7))
+	if err != nil {
+		t.Fatalf("Call abs(-7) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(7) {
+		t.Fatalf("abs(-7) got results %#v, want i32 7", results)
+	}
+	results, err = abs.Call(wasmvm.I32(5))
+	if err != nil {
+		t.Fatalf("Call abs(5) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(5) {
+		t.Fatalf("abs(5) got results %#v, want i32 5", results)
+	}
+}
+
+func TestBlockBranch(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "skip") (result i32)
+				block (result i32)
+					i32.const 99
+					br 0
+					i32.const 10
+				end))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	skip, ok := inst.ExportedFunc("skip")
+	if !ok {
+		t.Fatal("missing skip export")
+	}
+	results, err := skip.Call()
+	if err != nil {
+		t.Fatalf("Call skip failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(99) {
+		t.Fatalf("skip got results %#v, want i32 99", results)
+	}
+}
+
+func TestBlockBranchIf(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "clamp_zero") (param i32) (result i32)
+				block (result i32)
+					local.get 0
+					local.get 0
+					i32.const 0
+					i32.ge_s
+					br_if 0
+					drop
+					i32.const 0
+				end))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	clampZero, ok := inst.ExportedFunc("clamp_zero")
+	if !ok {
+		t.Fatal("missing clamp_zero export")
+	}
+	results, err := clampZero.Call(wasmvm.I32(12))
+	if err != nil {
+		t.Fatalf("Call clamp_zero(12) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(12) {
+		t.Fatalf("clamp_zero(12) got results %#v, want i32 12", results)
+	}
+	results, err = clampZero.Call(wasmvm.I32(-3))
+	if err != nil {
+		t.Fatalf("Call clamp_zero(-3) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("clamp_zero(-3) got results %#v, want i32 0", results)
+	}
+}
