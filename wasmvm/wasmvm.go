@@ -149,9 +149,6 @@ func NewRuntime() *Runtime {
 // the module uses an import/export kind this minimal runtime does not support
 // yet.
 func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstance, error) {
-	if rt == nil {
-		return nil, fmt.Errorf("runtime is nil")
-	}
 	if m == nil {
 		return nil, fmt.Errorf("module is nil")
 	}
@@ -193,9 +190,6 @@ type ModuleInstance struct {
 // export kinds are ignored by this method. The returned Func is bound to this
 // ModuleInstance and can be invoked with Func.Call.
 func (inst *ModuleInstance) ExportedFunc(name string) (*Func, bool) {
-	if inst == nil {
-		return nil, false
-	}
 	f, ok := inst.exports[name]
 	return f, ok
 }
@@ -217,9 +211,6 @@ type Func struct {
 // callback returns an error, or when execution reaches an instruction this
 // minimal runtime does not support yet.
 func (f *Func) Call(args ...Value) ([]Value, error) {
-	if f == nil || f.inst == nil {
-		return nil, fmt.Errorf("function is nil")
-	}
 	return f.inst.callFunc(f.index, args)
 }
 
