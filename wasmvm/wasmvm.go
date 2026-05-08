@@ -11,6 +11,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/eliben/watgo/internal/instrdef"
 	"github.com/eliben/watgo/wasmir"
 )
 
@@ -804,108 +805,8 @@ func popResults(stack *[]Value, results []wasmir.ValueType) ([]Value, error) {
 
 // instrName formats instruction kinds for current interpreter errors.
 func instrName(kind wasmir.InstrKind) string {
-	switch kind {
-	case wasmir.InstrLocalGet:
-		return "local.get"
-	case wasmir.InstrLocalSet:
-		return "local.set"
-	case wasmir.InstrLocalTee:
-		return "local.tee"
-	case wasmir.InstrI32Const:
-		return "i32.const"
-	case wasmir.InstrI32Add:
-		return "i32.add"
-	case wasmir.InstrI32Sub:
-		return "i32.sub"
-	case wasmir.InstrI32Mul:
-		return "i32.mul"
-	case wasmir.InstrI32Eqz:
-		return "i32.eqz"
-	case wasmir.InstrI32Eq:
-		return "i32.eq"
-	case wasmir.InstrI32Ne:
-		return "i32.ne"
-	case wasmir.InstrI32LtS:
-		return "i32.lt_s"
-	case wasmir.InstrI32LeS:
-		return "i32.le_s"
-	case wasmir.InstrI32GtS:
-		return "i32.gt_s"
-	case wasmir.InstrI32GeS:
-		return "i32.ge_s"
-	case wasmir.InstrI64Const:
-		return "i64.const"
-	case wasmir.InstrI64Add:
-		return "i64.add"
-	case wasmir.InstrI64Sub:
-		return "i64.sub"
-	case wasmir.InstrI64Mul:
-		return "i64.mul"
-	case wasmir.InstrI64Eqz:
-		return "i64.eqz"
-	case wasmir.InstrI64Eq:
-		return "i64.eq"
-	case wasmir.InstrI64Ne:
-		return "i64.ne"
-	case wasmir.InstrI64LtS:
-		return "i64.lt_s"
-	case wasmir.InstrI64LeS:
-		return "i64.le_s"
-	case wasmir.InstrI64GtS:
-		return "i64.gt_s"
-	case wasmir.InstrI64GeS:
-		return "i64.ge_s"
-	case wasmir.InstrF32Const:
-		return "f32.const"
-	case wasmir.InstrF32Add:
-		return "f32.add"
-	case wasmir.InstrF32Sub:
-		return "f32.sub"
-	case wasmir.InstrF32Mul:
-		return "f32.mul"
-	case wasmir.InstrF32Div:
-		return "f32.div"
-	case wasmir.InstrF32Eq:
-		return "f32.eq"
-	case wasmir.InstrF32Ne:
-		return "f32.ne"
-	case wasmir.InstrF32Lt:
-		return "f32.lt"
-	case wasmir.InstrF32Le:
-		return "f32.le"
-	case wasmir.InstrF32Gt:
-		return "f32.gt"
-	case wasmir.InstrF32Ge:
-		return "f32.ge"
-	case wasmir.InstrF64Const:
-		return "f64.const"
-	case wasmir.InstrF64Add:
-		return "f64.add"
-	case wasmir.InstrF64Sub:
-		return "f64.sub"
-	case wasmir.InstrF64Mul:
-		return "f64.mul"
-	case wasmir.InstrF64Div:
-		return "f64.div"
-	case wasmir.InstrF64Eq:
-		return "f64.eq"
-	case wasmir.InstrF64Ne:
-		return "f64.ne"
-	case wasmir.InstrF64Lt:
-		return "f64.lt"
-	case wasmir.InstrF64Le:
-		return "f64.le"
-	case wasmir.InstrF64Gt:
-		return "f64.gt"
-	case wasmir.InstrF64Ge:
-		return "f64.ge"
-	case wasmir.InstrCall:
-		return "call"
-	case wasmir.InstrReturn:
-		return "return"
-	case wasmir.InstrEnd:
-		return "end"
-	default:
-		return fmt.Sprintf("instruction(%d)", kind)
+	if def, ok := instrdef.LookupInstructionByKind(kind); ok {
+		return def.TextName
 	}
+	return fmt.Sprintf("instruction(%d)", kind)
 }
