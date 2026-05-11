@@ -25,25 +25,25 @@ type Value = vm.Value
 // I32 returns a runtime Value whose type is wasmir.ValueTypeI32 and whose
 // payload is v.
 func I32(v int32) Value {
-	return vm.I32(v)
+	return Value{Type: wasmir.ValueTypeI32, I32: v}
 }
 
 // I64 returns a runtime Value whose type is wasmir.ValueTypeI64 and whose
 // payload is v.
 func I64(v int64) Value {
-	return vm.I64(v)
+	return Value{Type: wasmir.ValueTypeI64, I64: v}
 }
 
 // F32 returns a runtime Value whose type is wasmir.ValueTypeF32 and whose
 // payload is v.
 func F32(v float32) Value {
-	return vm.F32(v)
+	return Value{Type: wasmir.ValueTypeF32, F32: v}
 }
 
 // F64 returns a runtime Value whose type is wasmir.ValueTypeF64 and whose
 // payload is v.
 func F64(v float64) Value {
-	return vm.F64(v)
+	return Value{Type: wasmir.ValueTypeF64, F64: v}
 }
 
 // Imports maps WebAssembly import module names and field names to host externs.

@@ -2,7 +2,6 @@ vm:
 
 - test helper that checks a call did not fail
 - single int64 field for const in internal/vm.Instr should be enough?
-- no need for top-level Value ctors in both wasmvm and vm??
 
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it

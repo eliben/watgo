@@ -26,30 +26,6 @@ type Value struct {
 	F64 float64
 }
 
-// I32 returns a runtime Value whose type is wasmir.ValueTypeI32 and whose
-// payload is v.
-func I32(v int32) Value {
-	return Value{Type: wasmir.ValueTypeI32, I32: v}
-}
-
-// I64 returns a runtime Value whose type is wasmir.ValueTypeI64 and whose
-// payload is v.
-func I64(v int64) Value {
-	return Value{Type: wasmir.ValueTypeI64, I64: v}
-}
-
-// F32 returns a runtime Value whose type is wasmir.ValueTypeF32 and whose
-// payload is v.
-func F32(v float32) Value {
-	return Value{Type: wasmir.ValueTypeF32, F32: v}
-}
-
-// F64 returns a runtime Value whose type is wasmir.ValueTypeF64 and whose
-// payload is v.
-func F64(v float64) Value {
-	return Value{Type: wasmir.ValueTypeF64, F64: v}
-}
-
 // CallResolver resolves and invokes function-index calls made by ExecuteFunction.
 type CallResolver interface {
 	FuncType(index uint32) (wasmir.TypeDef, error)
@@ -162,7 +138,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			locals[ins.Index] = v
 			stack = append(stack, v)
 		case wasmir.InstrI32Const:
-			stack = append(stack, I32(ins.I32))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: ins.I32})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
@@ -170,64 +146,64 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI32Eqz:
 			v, err := popI32(pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(boolI32(v == 0)))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
-			stack = append(stack, I64(ins.I64))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.I64})
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
 			v, err := evalI64Binary(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I64(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
 			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
 			v, err := evalI64Compare(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI64Eqz:
 			v, err := popI64(pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(boolI32(v == 0)))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrF32Const:
-			stack = append(stack, F32(math.Float32frombits(ins.F32)))
+			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(ins.F32)})
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
 			v, err := evalF32Binary(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, F32(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: v})
 		case wasmir.InstrF32Eq, wasmir.InstrF32Ne,
 			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge:
 			v, err := evalF32Compare(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrF64Const:
-			stack = append(stack, F64(math.Float64frombits(ins.F64)))
+			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(ins.F64)})
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
 			v, err := evalF64Binary(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, F64(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: v})
 		case wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge:
 			v, err := evalF64Compare(ins.Kind, pop)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, I32(v))
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrDrop:
 			if _, err := pop(); err != nil {
 				return nil, err
@@ -280,13 +256,13 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 func zeroValue(vt wasmir.ValueType) (Value, error) {
 	switch vt {
 	case wasmir.ValueTypeI32:
-		return I32(0), nil
+		return Value{Type: wasmir.ValueTypeI32}, nil
 	case wasmir.ValueTypeI64:
-		return I64(0), nil
+		return Value{Type: wasmir.ValueTypeI64}, nil
 	case wasmir.ValueTypeF32:
-		return F32(0), nil
+		return Value{Type: wasmir.ValueTypeF32}, nil
 	case wasmir.ValueTypeF64:
-		return F64(0), nil
+		return Value{Type: wasmir.ValueTypeF64}, nil
 	default:
 		return Value{}, fmt.Errorf("unsupported local type %s", vt)
 	}
