@@ -92,7 +92,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 	}
 
 	locals := append([]Value{}, args...)
-	for _, vt := range fn.Locals {
+	for _, vt := range fn.locals {
 		v, err := zeroValue(vt)
 		if err != nil {
 			return nil, err
@@ -110,9 +110,9 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 		return v, nil
 	}
 
-	for pc := 0; pc < len(fn.Code); pc++ {
-		ins := fn.Code[pc]
-		switch ins.Kind {
+	for pc := 0; pc < len(fn.code); pc++ {
+		ins := fn.code[pc]
+		switch ins.kind {
 		case wasmir.InstrBlock:
 		case wasmir.InstrIf:
 			// The condition has already been validated as i32. A true condition
@@ -123,49 +123,49 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 				return nil, err
 			}
 			if cond == 0 {
-				pc = ins.Target
+				pc = ins.target
 				continue
 			}
 		case wasmir.InstrElse:
 			// Reaching else normally means the then arm completed without
 			// branching. Skip the else arm.
-			pc = ins.Target
+			pc = ins.target
 		case wasmir.InstrLocalGet:
-			if int(ins.Index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.Index)
+			if int(ins.index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.index)
 			}
-			stack = append(stack, locals[ins.Index])
+			stack = append(stack, locals[ins.index])
 		case wasmir.InstrLocalSet:
-			if int(ins.Index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.Index)
+			if int(ins.index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.index)
 			}
 			v, err := pop()
 			if err != nil {
 				return nil, err
 			}
-			if v.Type != locals[ins.Index].Type {
-				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.Index, v.Type, locals[ins.Index].Type)
+			if v.Type != locals[ins.index].Type {
+				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type)
 			}
-			locals[ins.Index] = v
+			locals[ins.index] = v
 		case wasmir.InstrLocalTee:
-			if int(ins.Index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.Index)
+			if int(ins.index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.index)
 			}
 			v, err := pop()
 			if err != nil {
 				return nil, err
 			}
-			if v.Type != locals[ins.Index].Type {
-				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.Index, v.Type, locals[ins.Index].Type)
+			if v.Type != locals[ins.index].Type {
+				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type)
 			}
-			locals[ins.Index] = v
+			locals[ins.index] = v
 			stack = append(stack, v)
 		case wasmir.InstrI32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: int32(ins.Bits)})
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
-			v, err := evalI32Binary(ins.Kind, pop)
+			v, err := evalI32Binary(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
@@ -177,16 +177,16 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.Bits})
+			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.bits})
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
-			v, err := evalI64Binary(ins.Kind, pop)
+			v, err := evalI64Binary(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
 			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
-			v, err := evalI64Compare(ins.Kind, pop)
+			v, err := evalI64Compare(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
@@ -198,31 +198,31 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrF32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.Bits))})
+			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.bits))})
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
-			v, err := evalF32Binary(ins.Kind, pop)
+			v, err := evalF32Binary(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: v})
 		case wasmir.InstrF32Eq, wasmir.InstrF32Ne,
 			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge:
-			v, err := evalF32Compare(ins.Kind, pop)
+			v, err := evalF32Compare(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrF64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(ins.Bits))})
+			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(ins.bits))})
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
-			v, err := evalF64Binary(ins.Kind, pop)
+			v, err := evalF64Binary(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: v})
 		case wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge:
-			v, err := evalF64Compare(ins.Kind, pop)
+			v, err := evalF64Compare(ins.kind, pop)
 			if err != nil {
 				return nil, err
 			}
@@ -236,7 +236,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			// package. Function indices include imports before module-defined
 			// functions, so only wasmvm.ModuleInstance can decide whether this
 			// is a host callback or another compiled wasm function.
-			calleeType, err := calls.FuncType(ins.Index)
+			calleeType, err := calls.FuncType(ins.index)
 			if err != nil {
 				return nil, err
 			}
@@ -244,13 +244,13 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			if err != nil {
 				return nil, err
 			}
-			results, err := calls.CallFunc(ins.Index, callArgs)
+			results, err := calls.CallFunc(ins.index, callArgs)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, results...)
 		case wasmir.InstrBr:
-			pc = ins.Target
+			pc = ins.target
 		case wasmir.InstrBrIf:
 			// br_if consumes only the condition. Any branch result values are
 			// already below it on the operand stack and are left there for the
@@ -260,12 +260,12 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 				return nil, err
 			}
 			if cond != 0 {
-				pc = ins.Target
+				pc = ins.target
 			}
 		case wasmir.InstrReturn:
 			return popResults(&stack, ft.Results)
 		case wasmir.InstrEnd:
-			if pc != len(fn.Code)-1 {
+			if pc != len(fn.code)-1 {
 				// Non-final end closes structured control. Branch targets skip over
 				// it, and ordinary fallthrough can treat it as a no-op because
 				// validation has already established the operand stack contract.
@@ -273,7 +273,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			return popResults(&stack, ft.Results)
 		default:
-			return nil, fmt.Errorf("unsupported instruction %s", InstrName(ins.Kind))
+			return nil, fmt.Errorf("unsupported instruction %s", InstrName(ins.kind))
 		}
 	}
 	return nil, fmt.Errorf("function ended without end")

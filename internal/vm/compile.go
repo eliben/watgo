@@ -21,40 +21,40 @@ import (
 // such as resolved branch targets. A Function is compiled once during
 // wasmvm.Instantiate and can then be executed repeatedly by ExecuteFunction.
 type Function struct {
-	// Locals contains the non-parameter locals declared by the function. At
+	// locals contains the non-parameter locals declared by the function. At
 	// call time ExecuteFunction builds its local array as args followed by
 	// these zero-initialized locals.
-	Locals []wasmir.ValueType
+	locals []wasmir.ValueType
 
-	// Code is the linear instruction stream consumed by ExecuteFunction. It has
+	// code is the linear instruction stream consumed by ExecuteFunction. It has
 	// the same instruction order as wasmir.Function.Body, but immediate fields
 	// have been normalized for execution.
-	Code []Instr
+	code []instr
 }
 
-// Instr is one instruction in the VM's execution form.
-type Instr struct {
-	// Kind is the semantic instruction kind executed by the interpreter.
-	Kind wasmir.InstrKind
+// instr is one instruction in the VM's execution form.
+type instr struct {
+	// kind is the semantic instruction kind executed by the interpreter.
+	kind wasmir.InstrKind
 
-	// Target is the resolved program counter for control-flow instructions. It
+	// target is the resolved program counter for control-flow instructions. It
 	// is used by if, else, br, and br_if; other instructions leave it at -1.
-	// The interpreter assigns pc = Target, then its loop increment moves
+	// The interpreter assigns pc = target, then its loop increment moves
 	// execution to the following instruction.
-	Target int
+	target int
 
-	// Index is the resolved index immediate for local and function
+	// index is the resolved index immediate for local and function
 	// instructions: local.get/set/tee use a local index, and call uses a
 	// function index in wasmvm.ModuleInstance's combined import-then-defined
 	// function space.
-	Index uint32
+	index uint32
 
-	// Bits is the raw immediate payload for constant instructions.
+	// bits is the raw immediate payload for constant instructions.
 	//
-	// Kind determines how to interpret it: i32.const uses int32(Bits),
-	// i64.const uses Bits, f32.const uses uint32(Bits), and f64.const uses
-	// uint64(Bits).
-	Bits int64
+	// kind determines how to interpret it: i32.const uses int32(bits),
+	// i64.const uses bits, f32.const uses uint32(bits), and f64.const uses
+	// uint64(bits).
+	bits int64
 }
 
 // CompileFunction compiles a semantic function body into the VM's execution
@@ -67,13 +67,13 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 	}
 
 	out := &Function{
-		Locals: slices.Clone(fn.Locals),
-		Code:   make([]Instr, len(fn.Body)),
+		locals: slices.Clone(fn.Locals),
+		code:   make([]instr, len(fn.Body)),
 	}
 	labelStack := make([]int, 0)
 
 	for pc, ins := range fn.Body {
-		op := Instr{Kind: ins.Kind, Target: -1}
+		op := instr{kind: ins.Kind, target: -1}
 		switch ins.Kind {
 		case wasmir.InstrBlock:
 			if _, ok := ctrl.labels[pc]; !ok {
@@ -86,9 +86,9 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 				return nil, fmt.Errorf("if at %d has no matching end", pc)
 			}
 			if label.elseIndex >= 0 {
-				op.Target = label.elseIndex
+				op.target = label.elseIndex
 			} else {
-				op.Target = label.endIndex
+				op.target = label.endIndex
 			}
 			labelStack = append(labelStack, pc)
 		case wasmir.InstrElse:
@@ -100,25 +100,25 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			if label.elseIndex != pc {
 				return nil, fmt.Errorf("else at %d does not match active label", pc)
 			}
-			op.Target = label.endIndex
+			op.target = label.endIndex
 		case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
-			op.Index = ins.LocalIndex
+			op.index = ins.LocalIndex
 		case wasmir.InstrCall:
-			op.Index = ins.FuncIndex
+			op.index = ins.FuncIndex
 		case wasmir.InstrBr, wasmir.InstrBrIf:
 			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
 			if err != nil {
 				return nil, fmt.Errorf("%s at %d: %w", InstrName(ins.Kind), pc, err)
 			}
-			op.Target = target
+			op.target = target
 		case wasmir.InstrI32Const:
-			op.Bits = int64(ins.I32Const)
+			op.bits = int64(ins.I32Const)
 		case wasmir.InstrI64Const:
-			op.Bits = ins.I64Const
+			op.bits = ins.I64Const
 		case wasmir.InstrF32Const:
-			op.Bits = int64(ins.F32Const)
+			op.bits = int64(ins.F32Const)
 		case wasmir.InstrF64Const:
-			op.Bits = int64(ins.F64Const)
+			op.bits = int64(ins.F64Const)
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS,
@@ -149,7 +149,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 		default:
 			return nil, fmt.Errorf("unsupported instruction %s", InstrName(ins.Kind))
 		}
-		out.Code[pc] = op
+		out.code[pc] = op
 	}
 
 	if len(labelStack) != 0 {
