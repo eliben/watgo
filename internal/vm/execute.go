@@ -7,6 +7,31 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+// instructionError adds interpreter location to low-level execution errors.
+//
+// The helpers below report compact errors such as stack underflow or operand
+// type mismatch. Wrapping them with pc and opcode here makes those errors
+// useful at the VM boundary, while keeping the no-error path free of formatting
+// or allocation work.
+type instructionError struct {
+	pc   int
+	kind wasmir.InstrKind
+	err  error
+}
+
+func (e instructionError) Error() string {
+	return fmt.Sprintf("pc %d %s: %v", e.pc, instrName(e.kind), e.err)
+}
+
+func (e instructionError) Unwrap() error {
+	return e.err
+}
+
+// instructionErrorAt is called only on instruction failure paths.
+func instructionErrorAt(pc int, kind wasmir.InstrKind, err error) error {
+	return instructionError{pc: pc, kind: kind, err: err}
+}
+
 // Value is one runtime WebAssembly value.
 type Value struct {
 	// Type is the WebAssembly value type carried by this value.
@@ -25,7 +50,8 @@ type Value struct {
 	F64 float64
 }
 
-// CallResolver resolves and invokes function-index calls made by ExecuteFunction.
+// CallResolver resolves and invokes function-index calls made by
+// ExecuteFunction.
 type CallResolver interface {
 	// FuncType returns the signature of the function at index.
 	FuncType(index uint32) (wasmir.TypeDef, error)
@@ -92,11 +118,11 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 		case wasmir.InstrBlock:
 		case wasmir.InstrIf:
 			// The condition has already been validated as i32. A true condition
-			// enters the then arm. A false condition skips to the else marker if
-			// present, or to the matching end otherwise.
+			// enters the then arm. A false condition skips to the else marker
+			// if present, or to the matching end otherwise.
 			cond, err := popI32(pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			if cond == 0 {
 				pc = ins.target
@@ -108,31 +134,31 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			pc = ins.target
 		case wasmir.InstrLocalGet:
 			if int(ins.index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.index)
+				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
 			}
 			stack = append(stack, locals[ins.index])
 		case wasmir.InstrLocalSet:
 			if int(ins.index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.index)
+				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
 			}
 			v, err := pop()
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			if v.Type != locals[ins.index].Type {
-				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type)
+				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type))
 			}
 			locals[ins.index] = v
 		case wasmir.InstrLocalTee:
 			if int(ins.index) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.index)
+				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
 			}
 			v, err := pop()
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			if v.Type != locals[ins.index].Type {
-				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type)
+				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type))
 			}
 			locals[ins.index] = v
 			stack = append(stack, v)
@@ -143,13 +169,13 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
 			v, err := evalI32Binary(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI32Eqz:
 			v, err := popI32(pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
@@ -157,20 +183,20 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
 			v, err := evalI64Binary(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
 			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
 			v, err := evalI64Compare(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI64Eqz:
 			v, err := popI64(pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrF32Const:
@@ -178,14 +204,14 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
 			v, err := evalF32Binary(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: v})
 		case wasmir.InstrF32Eq, wasmir.InstrF32Ne,
 			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge:
 			v, err := evalF32Compare(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrF64Const:
@@ -193,32 +219,32 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
 			v, err := evalF64Binary(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: v})
 		case wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge:
 			v, err := evalF64Compare(ins.kind, pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrDrop:
 			if _, err := pop(); err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 		case wasmir.InstrCall:
 			calleeType, err := calls.FuncType(ins.index)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			callArgs, err := popArgs(&stack, calleeType.Params)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			results, err := calls.CallFunc(ins.index, callArgs)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			stack = append(stack, results...)
 		case wasmir.InstrBr:
@@ -229,23 +255,32 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			// target block's end to consume.
 			cond, err := popI32(pop)
 			if err != nil {
-				return nil, err
+				return nil, instructionErrorAt(pc, ins.kind, err)
 			}
 			if cond != 0 {
 				pc = ins.target
 			}
 		case wasmir.InstrReturn:
-			return popResults(&stack, ft.Results)
+			results, err := popResults(&stack, ft.Results)
+			if err != nil {
+				return nil, instructionErrorAt(pc, ins.kind, err)
+			}
+			return results, nil
 		case wasmir.InstrEnd:
 			if pc != len(fn.code)-1 {
-				// Non-final end closes structured control. Branch targets skip over
-				// it, and ordinary fallthrough can treat it as a no-op because
-				// validation has already established the operand stack contract.
+				// Non-final end closes structured control. Branch targets skip
+				// over it, and ordinary fallthrough can treat it as a no-op
+				// because validation has already established the operand stack
+				// contract.
 				continue
 			}
-			return popResults(&stack, ft.Results)
+			results, err := popResults(&stack, ft.Results)
+			if err != nil {
+				return nil, instructionErrorAt(pc, ins.kind, err)
+			}
+			return results, nil
 		default:
-			return nil, fmt.Errorf("unsupported instruction %s", instrName(ins.kind))
+			return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("unsupported instruction"))
 		}
 	}
 	return nil, fmt.Errorf("function ended without end")

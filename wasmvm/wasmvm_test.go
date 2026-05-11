@@ -524,3 +524,83 @@ func TestBlockBranchIf(t *testing.T) {
 		t.Fatalf("clamp_zero(-3) got results %#v, want i32 0", results)
 	}
 }
+
+// The execution-error tests below use hand-built wasmir modules instead of WAT.
+// WAT parsing validates stack shape and function indices before the runtime
+// sees the code, but these tests specifically check the diagnostics produced
+// when the VM encounters invalid runtime state.
+
+func TestExecutionErrorInstructionContext(t *testing.T) {
+	// A binary instruction with no operands should report the instruction's pc
+	// and opcode in addition to the low-level stack underflow.
+	err := callInvalidRuntimeModule(t, []wasmir.Instruction{
+		{Kind: wasmir.InstrI32Add},
+		{Kind: wasmir.InstrEnd},
+	}, []wasmir.ValueType{wasmir.ValueTypeI32})
+
+	if got, want := err.Error(), "pc 0 i32.add: operand stack underflow"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionErrorCallContext(t *testing.T) {
+	// A call to an invalid function index should report the call instruction's
+	// pc and opcode along with the resolver error.
+	err := callInvalidRuntimeModule(t, []wasmir.Instruction{
+		{Kind: wasmir.InstrCall, FuncIndex: 3},
+		{Kind: wasmir.InstrEnd},
+	}, nil)
+
+	if got, want := err.Error(), "pc 0 call: call function index 3 out of range"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionErrorResultContext(t *testing.T) {
+	// A function that declares a result but leaves the stack empty should report
+	// the final end instruction as the failing execution point.
+	err := callInvalidRuntimeModule(t, []wasmir.Instruction{
+		{Kind: wasmir.InstrEnd},
+	}, []wasmir.ValueType{wasmir.ValueTypeI32})
+
+	if got, want := err.Error(), "pc 0 end: operand stack underflow"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func invalidRuntimeModule(body []wasmir.Instruction, results []wasmir.ValueType) *wasmir.Module {
+	return &wasmir.Module{
+		Types: []wasmir.TypeDef{{
+			Kind:    wasmir.TypeDefKindFunc,
+			Results: results,
+		}},
+		Funcs: []wasmir.Function{{
+			TypeIdx: 0,
+			Body:    body,
+		}},
+		Exports: []wasmir.Export{{
+			Name:  "run",
+			Kind:  wasmir.ExternalKindFunction,
+			Index: 0,
+		}},
+	}
+}
+
+func callInvalidRuntimeModule(t *testing.T, body []wasmir.Instruction, results []wasmir.ValueType) error {
+	t.Helper()
+
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(invalidRuntimeModule(body, results), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("run")
+	if !ok {
+		t.Fatal("missing run export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	return err
+}
