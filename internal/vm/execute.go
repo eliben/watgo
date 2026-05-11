@@ -138,7 +138,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			locals[ins.Index] = v
 			stack = append(stack, v)
 		case wasmir.InstrI32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: ins.I32})
+			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: int32(ins.Bits)})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
@@ -154,7 +154,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.I64})
+			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.Bits})
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
 			v, err := evalI64Binary(ins.Kind, pop)
 			if err != nil {
@@ -175,7 +175,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrF32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(ins.F32)})
+			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.Bits))})
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
 			v, err := evalF32Binary(ins.Kind, pop)
 			if err != nil {
@@ -190,7 +190,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrF64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(ins.F64)})
+			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(ins.Bits))})
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
 			v, err := evalF64Binary(ins.Kind, pop)
 			if err != nil {

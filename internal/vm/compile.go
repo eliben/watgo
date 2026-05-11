@@ -31,17 +31,12 @@ type Instr struct {
 	// Index is the resolved index immediate for local and function instructions.
 	Index uint32
 
-	// I32 is the immediate payload for i32.const.
-	I32 int32
-
-	// I64 is the immediate payload for i64.const.
-	I64 int64
-
-	// F32 is the raw IEEE-754 bit pattern immediate for f32.const.
-	F32 uint32
-
-	// F64 is the raw IEEE-754 bit pattern immediate for f64.const.
-	F64 uint64
+	// Bits is the raw immediate payload for constant instructions.
+	//
+	// Kind determines how to interpret it: i32.const uses int32(Bits),
+	// i64.const uses Bits, f32.const uses uint32(Bits), and f64.const uses
+	// uint64(Bits).
+	Bits int64
 }
 
 // CompileFunction compiles a semantic function body into the VM's execution
@@ -99,13 +94,13 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			}
 			op.Target = target
 		case wasmir.InstrI32Const:
-			op.I32 = ins.I32Const
+			op.Bits = int64(ins.I32Const)
 		case wasmir.InstrI64Const:
-			op.I64 = ins.I64Const
+			op.Bits = ins.I64Const
 		case wasmir.InstrF32Const:
-			op.F32 = ins.F32Const
+			op.Bits = int64(ins.F32Const)
 		case wasmir.InstrF64Const:
-			op.F64 = ins.F64Const
+			op.Bits = int64(ins.F64Const)
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS,
