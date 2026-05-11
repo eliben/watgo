@@ -35,7 +35,7 @@ type Value struct {
 // ExecuteFunction intentionally does not know about wasmvm.ModuleInstance,
 // host imports, or export tables. When it executes a call instruction, it uses
 // this interface to ask the owner of the function index space for the callee's
-// signature and then for the actual call. In wasmvm, callResolver implements
+// signature and then for the actual call. In wasmvm, a small adapter implements
 // this by re-entering ModuleInstance.callFunc.
 type CallResolver interface {
 	// FuncType returns the signature of the function at index.
@@ -273,7 +273,7 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 			}
 			return popResults(&stack, ft.Results)
 		default:
-			return nil, fmt.Errorf("unsupported instruction %s", InstrName(ins.kind))
+			return nil, fmt.Errorf("unsupported instruction %s", instrName(ins.kind))
 		}
 	}
 	return nil, fmt.Errorf("function ended without end")
@@ -313,7 +313,7 @@ func evalI64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int64, err
 	case wasmir.InstrI64Mul:
 		return lhs * rhs, nil
 	default:
-		return 0, fmt.Errorf("unsupported i64 binary instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported i64 binary instruction %s", instrName(kind))
 	}
 }
 
@@ -341,7 +341,7 @@ func evalI64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	case wasmir.InstrI64GeS:
 		return boolI32(lhs >= rhs), nil
 	default:
-		return 0, fmt.Errorf("unsupported i64 comparison instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported i64 comparison instruction %s", instrName(kind))
 	}
 }
 
@@ -365,7 +365,7 @@ func evalF32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float32, e
 	case wasmir.InstrF32Div:
 		return lhs / rhs, nil
 	default:
-		return 0, fmt.Errorf("unsupported f32 binary instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported f32 binary instruction %s", instrName(kind))
 	}
 }
 
@@ -393,7 +393,7 @@ func evalF32Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	case wasmir.InstrF32Ge:
 		return boolI32(lhs >= rhs), nil
 	default:
-		return 0, fmt.Errorf("unsupported f32 comparison instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported f32 comparison instruction %s", instrName(kind))
 	}
 }
 
@@ -417,7 +417,7 @@ func evalF64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float64, e
 	case wasmir.InstrF64Div:
 		return lhs / rhs, nil
 	default:
-		return 0, fmt.Errorf("unsupported f64 binary instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported f64 binary instruction %s", instrName(kind))
 	}
 }
 
@@ -445,7 +445,7 @@ func evalF64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	case wasmir.InstrF64Ge:
 		return boolI32(lhs >= rhs), nil
 	default:
-		return 0, fmt.Errorf("unsupported f64 comparison instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported f64 comparison instruction %s", instrName(kind))
 	}
 }
 
@@ -479,7 +479,7 @@ func evalI32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int32, err
 	case wasmir.InstrI32GeS:
 		return boolI32(lhs >= rhs), nil
 	default:
-		return 0, fmt.Errorf("unsupported i32 binary instruction %s", InstrName(kind))
+		return 0, fmt.Errorf("unsupported i32 binary instruction %s", instrName(kind))
 	}
 }
 

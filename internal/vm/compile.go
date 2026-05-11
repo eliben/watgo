@@ -108,7 +108,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 		case wasmir.InstrBr, wasmir.InstrBrIf:
 			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
 			if err != nil {
-				return nil, fmt.Errorf("%s at %d: %w", InstrName(ins.Kind), pc, err)
+				return nil, fmt.Errorf("%s at %d: %w", instrName(ins.Kind), pc, err)
 			}
 			op.target = target
 		case wasmir.InstrI32Const:
@@ -147,14 +147,14 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 				}
 			}
 		default:
-			return nil, fmt.Errorf("unsupported instruction %s", InstrName(ins.Kind))
+			return nil, fmt.Errorf("unsupported instruction %s", instrName(ins.Kind))
 		}
 		out.code[pc] = op
 	}
 
 	if len(labelStack) != 0 {
 		start := labelStack[len(labelStack)-1]
-		return nil, fmt.Errorf("%s at %d without matching end", InstrName(fn.Body[start].Kind), start)
+		return nil, fmt.Errorf("%s at %d without matching end", instrName(fn.Body[start].Kind), start)
 	}
 	return out, nil
 }
@@ -211,7 +211,7 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 			}
 			start := stack[len(stack)-1]
 			if body[start].Kind != wasmir.InstrIf {
-				return controlInfo{}, fmt.Errorf("else at %d matched non-if instruction %s", pc, InstrName(body[start].Kind))
+				return controlInfo{}, fmt.Errorf("else at %d matched non-if instruction %s", pc, instrName(body[start].Kind))
 			}
 			elseIndex[start] = pc
 		case wasmir.InstrEnd:
@@ -231,13 +231,13 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 		}
 	}
 	if len(stack) != 0 {
-		return controlInfo{}, fmt.Errorf("%s at %d without matching end", InstrName(body[stack[len(stack)-1]].Kind), stack[len(stack)-1])
+		return controlInfo{}, fmt.Errorf("%s at %d without matching end", instrName(body[stack[len(stack)-1]].Kind), stack[len(stack)-1])
 	}
 	return ctrl, nil
 }
 
-// InstrName formats instruction kinds for VM errors.
-func InstrName(kind wasmir.InstrKind) string {
+// instrName formats instruction kinds for VM errors.
+func instrName(kind wasmir.InstrKind) string {
 	if def, ok := instrdef.LookupInstructionByKind(kind); ok {
 		return def.TextName
 	}
