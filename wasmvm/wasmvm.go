@@ -4,6 +4,22 @@
 // The package can instantiate an already-validated wasmir.Module, look up
 // exported functions, call them with runtime values, and satisfy WebAssembly
 // function imports with Go callbacks.
+//
+// Execution is split across this package and internal/vm. This package owns the
+// public runtime API, module instantiation, imports, exports, and the function
+// index space. internal/vm owns the compiled instruction representation and the
+// interpreter loop for module-defined functions.
+//
+// A simple exported wasm call follows this path:
+//
+//   - Func.Call enters ModuleInstance.callFunc with a function index.
+//   - callFunc checks the signature and either invokes a HostFunc directly or
+//     delegates module-defined code to vm.ExecuteFunction.
+//   - vm.ExecuteFunction runs compiled instructions. If it sees a wasm call
+//     instruction, it asks callResolver to call back into
+//     ModuleInstance.callFunc.
+//   - That recursive dispatch repeats until it reaches another module-defined
+//     function or a host import.
 package wasmvm
 
 import (
@@ -199,9 +215,17 @@ func (f *Func) Call(args ...Value) ([]Value, error) {
 }
 
 type funcInst struct {
+	// typeIdx indexes inst.m.Types and describes both host and module-defined
+	// functions in the unified function index space.
 	typeIdx uint32
-	host    *HostFunc
-	code    *vm.Function
+
+	// host is non-nil for imported host functions. Such functions are executed
+	// directly by callFunc rather than through internal/vm.
+	host *HostFunc
+
+	// code is non-nil for module-defined functions. It is compiled once during
+	// instantiation from wasmir.Function into internal/vm's execution form.
+	code *vm.Function
 }
 
 // buildFuncs creates the instance function address space.
@@ -273,8 +297,13 @@ func (inst *ModuleInstance) checkHostFuncType(imp wasmir.Import, host HostFunc) 
 	return nil
 }
 
-// callFunc dispatches a function-index call to either a host function or a
-// module-defined function after checking the call arguments.
+// callFunc dispatches a function-index call.
+//
+// This is the central function-call boundary for the runtime. External callers
+// reach it through Func.Call, and wasm call instructions reach it through the
+// callResolver passed to vm.ExecuteFunction. Imported host functions stop here
+// and invoke their Go callback. Module-defined functions continue into
+// internal/vm's interpreter.
 func (inst *ModuleInstance) callFunc(index uint32, args []Value) ([]Value, error) {
 	if int(index) >= len(inst.funcs) {
 		return nil, fmt.Errorf("function index %d out of range", index)
@@ -312,6 +341,10 @@ type callResolver struct {
 	inst *ModuleInstance
 }
 
+// FuncType is the internal/vm callback for resolving a wasm call instruction's
+// callee signature. The instruction carries a function index, so this resolves
+// through ModuleInstance's function index space rather than directly through
+// wasmir.Module.Funcs.
 func (r callResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
 	inst := r.inst
 	if int(index) >= len(inst.funcs) {
@@ -320,6 +353,9 @@ func (r callResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
 	return inst.funcType(inst.funcs[index].typeIdx)
 }
 
+// CallFunc is the internal/vm callback for executing a wasm call instruction.
+// It deliberately re-enters callFunc so nested wasm calls and host imports use
+// exactly the same dispatch and type-checking path as an exported call.
 func (r callResolver) CallFunc(index uint32, args []Value) ([]Value, error) {
 	return r.inst.callFunc(index, args)
 }

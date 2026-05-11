@@ -1,6 +1,14 @@
+Immediate TODOs
+---------------
+
 vm:
 
+- vm Function fields exported?
 - test helper that checks a call did not fail
+
+
+Longer-term plans
+-----------------
 
 * Will need to figure out what to do about the "threads" proposal, it's at
   stage 4 now. spec tests have it in 'proposals' (not core). Can support it

@@ -1,4 +1,9 @@
 // Package vm contains the private execution representation used by wasmvm.
+//
+// The public wasmvm package owns instantiation, imports, exports, and host
+// callbacks. This package owns the runtime form of module-defined functions:
+// CompileFunction lowers wasmir.Function into Function, and ExecuteFunction
+// interprets Function values.
 package vm
 
 import (
@@ -13,10 +18,18 @@ import (
 //
 // It is intentionally separate from wasmir.Function: wasmir is the semantic
 // interchange representation, while Function stores runtime-oriented immediates
-// such as resolved branch targets.
+// such as resolved branch targets. A Function is compiled once during
+// wasmvm.Instantiate and can then be executed repeatedly by ExecuteFunction.
 type Function struct {
+	// Locals contains the non-parameter locals declared by the function. At
+	// call time ExecuteFunction builds its local array as args followed by
+	// these zero-initialized locals.
 	Locals []wasmir.ValueType
-	Code   []Instr
+
+	// Code is the linear instruction stream consumed by ExecuteFunction. It has
+	// the same instruction order as wasmir.Function.Body, but immediate fields
+	// have been normalized for execution.
+	Code []Instr
 }
 
 // Instr is one instruction in the VM's execution form.
@@ -24,11 +37,16 @@ type Instr struct {
 	// Kind is the semantic instruction kind executed by the interpreter.
 	Kind wasmir.InstrKind
 
-	// Target is the resolved program counter for control-flow instructions.
-	// It is used by if, else, br, and br_if; other instructions leave it at -1.
+	// Target is the resolved program counter for control-flow instructions. It
+	// is used by if, else, br, and br_if; other instructions leave it at -1.
+	// The interpreter assigns pc = Target, then its loop increment moves
+	// execution to the following instruction.
 	Target int
 
-	// Index is the resolved index immediate for local and function instructions.
+	// Index is the resolved index immediate for local and function
+	// instructions: local.get/set/tee use a local index, and call uses a
+	// function index in wasmvm.ModuleInstance's combined import-then-defined
+	// function space.
 	Index uint32
 
 	// Bits is the raw immediate payload for constant instructions.
