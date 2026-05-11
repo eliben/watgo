@@ -146,8 +146,8 @@ func NewRuntime() *Runtime {
 // the module has no imports. On success, Instantiate returns a ModuleInstance
 // whose exported functions can be obtained with ModuleInstance.ExportedFunc. It
 // returns an error when an import is missing, an import has the wrong type, or
-// the module uses an import/export kind this minimal runtime does not support
-// yet.
+// the module uses an import/export/instruction kind this minimal runtime does
+// not support yet.
 func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstance, error) {
 	if m == nil {
 		return nil, fmt.Errorf("module is nil")
@@ -208,8 +208,8 @@ type Func struct {
 // args must contain one Value per function parameter, in parameter order. On
 // success, Call returns one Value per function result, in result order. It
 // returns an error when the argument count or types are wrong, when a host
-// callback returns an error, or when execution reaches an instruction this
-// minimal runtime does not support yet.
+// callback returns an error, or when execution traps in the currently supported
+// instruction subset.
 func (f *Func) Call(args ...Value) ([]Value, error) {
 	return f.inst.callFunc(f.index, args)
 }
@@ -217,7 +217,7 @@ func (f *Func) Call(args ...Value) ([]Value, error) {
 type funcInst struct {
 	typeIdx uint32
 	host    *HostFunc
-	def     *wasmir.Function
+	code    *compiledFunc
 }
 
 // buildFuncs creates the instance function address space.
@@ -241,7 +241,11 @@ func (inst *ModuleInstance) buildFuncs(imports Imports) error {
 	}
 	for i := range inst.m.Funcs {
 		f := &inst.m.Funcs[i]
-		inst.funcs = append(inst.funcs, funcInst{typeIdx: f.TypeIdx, def: f})
+		code, err := compileFunc(f)
+		if err != nil {
+			return fmt.Errorf("func[%d]: %w", len(inst.funcs), err)
+		}
+		inst.funcs = append(inst.funcs, funcInst{typeIdx: f.TypeIdx, code: code})
 	}
 	return nil
 }
@@ -346,29 +350,163 @@ func checkResults(want []wasmir.ValueType, got []Value) error {
 	return nil
 }
 
-// callDefined interprets one module-defined function body.
+// compiledFunc is the VM's execution form for a module-defined function.
+//
+// It is intentionally separate from wasmir.Function: wasmir is the semantic
+// interchange representation, while compiledFunc stores runtime-oriented
+// immediates such as resolved branch targets.
+type compiledFunc struct {
+	locals []wasmir.ValueType
+	code   []vmInstr
+}
+
+type vmInstr struct {
+	// Kind is the semantic instruction kind executed by the interpreter.
+	Kind wasmir.InstrKind
+
+	// Target is the resolved program counter for control-flow instructions.
+	// It is used by if, else, br, and br_if; other instructions leave it at -1.
+	Target int
+
+	// Index is the resolved index immediate for local and function instructions.
+	Index uint32
+
+	// I32 is the immediate payload for i32.const.
+	I32 int32
+
+	// I64 is the immediate payload for i64.const.
+	I64 int64
+
+	// F32 is the raw IEEE-754 bit pattern immediate for f32.const.
+	F32 uint32
+
+	// F64 is the raw IEEE-754 bit pattern immediate for f64.const.
+	F64 uint64
+}
+
+func compileFunc(fn *wasmir.Function) (*compiledFunc, error) {
+	ctrl, err := analyzeControl(fn.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &compiledFunc{
+		locals: slices.Clone(fn.Locals),
+		code:   make([]vmInstr, len(fn.Body)),
+	}
+	labelStack := make([]int, 0)
+
+	for pc, ins := range fn.Body {
+		op := vmInstr{Kind: ins.Kind, Target: -1}
+		switch ins.Kind {
+		case wasmir.InstrBlock:
+			if _, ok := ctrl.labels[pc]; !ok {
+				return nil, fmt.Errorf("block at %d has no matching end", pc)
+			}
+			labelStack = append(labelStack, pc)
+		case wasmir.InstrIf:
+			label, ok := ctrl.labels[pc]
+			if !ok {
+				return nil, fmt.Errorf("if at %d has no matching end", pc)
+			}
+			if label.elseIndex >= 0 {
+				op.Target = label.elseIndex
+			} else {
+				op.Target = label.endIndex
+			}
+			labelStack = append(labelStack, pc)
+		case wasmir.InstrElse:
+			if len(labelStack) == 0 {
+				return nil, fmt.Errorf("else at %d without active label", pc)
+			}
+			start := labelStack[len(labelStack)-1]
+			label := ctrl.labels[start]
+			if label.elseIndex != pc {
+				return nil, fmt.Errorf("else at %d does not match active label", pc)
+			}
+			op.Target = label.endIndex
+		case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
+			op.Index = ins.LocalIndex
+		case wasmir.InstrCall:
+			op.Index = ins.FuncIndex
+		case wasmir.InstrBr, wasmir.InstrBrIf:
+			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
+			if err != nil {
+				return nil, fmt.Errorf("%s at %d: %w", instrName(ins.Kind), pc, err)
+			}
+			op.Target = target
+		case wasmir.InstrI32Const:
+			op.I32 = ins.I32Const
+		case wasmir.InstrI64Const:
+			op.I64 = ins.I64Const
+		case wasmir.InstrF32Const:
+			op.F32 = ins.F32Const
+		case wasmir.InstrF64Const:
+			op.F64 = ins.F64Const
+		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
+			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
+			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS,
+			wasmir.InstrI32Eqz,
+			wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul,
+			wasmir.InstrI64Eq, wasmir.InstrI64Ne,
+			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS,
+			wasmir.InstrI64Eqz,
+			wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div,
+			wasmir.InstrF32Eq, wasmir.InstrF32Ne,
+			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge,
+			wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div,
+			wasmir.InstrF64Eq, wasmir.InstrF64Ne,
+			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge,
+			wasmir.InstrDrop, wasmir.InstrReturn:
+		case wasmir.InstrEnd:
+			if len(labelStack) == 0 {
+				if pc != len(fn.Body)-1 {
+					return nil, fmt.Errorf("end without active label")
+				}
+			} else {
+				start := labelStack[len(labelStack)-1]
+				label := ctrl.labels[start]
+				if label.endIndex == pc {
+					labelStack = labelStack[:len(labelStack)-1]
+				}
+			}
+		default:
+			return nil, fmt.Errorf("unsupported instruction %s", instrName(ins.Kind))
+		}
+		out.code[pc] = op
+	}
+
+	if len(labelStack) != 0 {
+		start := labelStack[len(labelStack)-1]
+		return nil, fmt.Errorf("%s at %d without matching end", instrName(fn.Body[start].Kind), start)
+	}
+	return out, nil
+}
+
+func compileBranchTarget(depth uint32, labelStack []int, ctrl controlInfo) (int, error) {
+	if int(depth) >= len(labelStack) {
+		return 0, fmt.Errorf("branch depth %d out of range", depth)
+	}
+	start := labelStack[len(labelStack)-1-int(depth)]
+	label, ok := ctrl.labels[start]
+	if !ok {
+		return 0, fmt.Errorf("branch target at %d has no matching end", start)
+	}
+	return label.endIndex, nil
+}
+
+// callDefined interprets one compiled module-defined function body.
 //
 // This is deliberately minimal for now: it initializes locals, maintains a
 // single operand stack, and executes only the small instruction subset needed
 // by the first wasmvm tests.
 func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []Value) ([]Value, error) {
-	// WAT structured control is lowered into a flat instruction stream:
-	//
-	//   if ... else ... end
-	//   block ... end
-	//
-	// The interpreter executes this stream with a program counter, so it needs
-	// the matching else/end locations to skip untaken arms and resolve branch
-	// targets. Validation should already have checked the structure; this pass
-	// keeps the VM's PC movement simple and gives clearer errors for malformed
-	// hand-built modules.
-	ctrl, err := analyzeControl(fn.def.Body)
-	if err != nil {
-		return nil, err
+	if fn.code == nil {
+		return nil, fmt.Errorf("defined function has no compiled code")
 	}
 
 	locals := slices.Clone(args)
-	for _, vt := range fn.def.Locals {
+	for _, vt := range fn.code.locals {
 		v, err := zeroValue(vt)
 		if err != nil {
 			return nil, err
@@ -386,20 +524,10 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 		return v, nil
 	}
 
-	// activeLabels mirrors the control frames that execution has entered but
-	// not yet left. The top of this stack is branch depth 0, matching Wasm
-	// label depth rules. For this initial slice every supported label branches
-	// to its matching end instruction.
-	activeLabels := make([]controlLabel, 0)
-	for pc := 0; pc < len(fn.def.Body); pc++ {
-		ins := fn.def.Body[pc]
+	for pc := 0; pc < len(fn.code.code); pc++ {
+		ins := fn.code.code[pc]
 		switch ins.Kind {
 		case wasmir.InstrBlock:
-			label, ok := ctrl.labels[pc]
-			if !ok {
-				return nil, fmt.Errorf("block at %d has no matching end", pc)
-			}
-			activeLabels = append(activeLabels, label)
 		case wasmir.InstrIf:
 			// The condition has already been validated as i32. A true condition
 			// enters the then arm. A false condition skips to the else marker if
@@ -408,66 +536,46 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 			if err != nil {
 				return nil, err
 			}
-			label, ok := ctrl.labels[pc]
-			if !ok {
-				return nil, fmt.Errorf("if at %d has no matching end", pc)
-			}
 			if cond == 0 {
-				if label.elseIndex >= 0 {
-					// Keep the if label active while executing the else arm, so
-					// branch depth inside else still targets the if's end.
-					activeLabels = append(activeLabels, label)
-					pc = label.elseIndex
-				} else {
-					pc = label.endIndex
-				}
+				pc = ins.Target
 				continue
 			}
-			activeLabels = append(activeLabels, label)
 		case wasmir.InstrElse:
 			// Reaching else normally means the then arm completed without
-			// branching. Skip the else arm and leave the if label.
-			if len(activeLabels) == 0 {
-				return nil, fmt.Errorf("else without active label")
-			}
-			label := activeLabels[len(activeLabels)-1]
-			if label.elseIndex != pc {
-				return nil, fmt.Errorf("else at %d does not match active label", pc)
-			}
-			activeLabels = activeLabels[:len(activeLabels)-1]
-			pc = label.endIndex
+			// branching. Skip the else arm.
+			pc = ins.Target
 		case wasmir.InstrLocalGet:
-			if int(ins.LocalIndex) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
+			if int(ins.Index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.Index)
 			}
-			stack = append(stack, locals[ins.LocalIndex])
+			stack = append(stack, locals[ins.Index])
 		case wasmir.InstrLocalSet:
-			if int(ins.LocalIndex) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
+			if int(ins.Index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.Index)
 			}
 			v, err := pop()
 			if err != nil {
 				return nil, err
 			}
-			if v.Type != locals[ins.LocalIndex].Type {
-				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.LocalIndex, v.Type, locals[ins.LocalIndex].Type)
+			if v.Type != locals[ins.Index].Type {
+				return nil, fmt.Errorf("local.set %d got %s, want %s", ins.Index, v.Type, locals[ins.Index].Type)
 			}
-			locals[ins.LocalIndex] = v
+			locals[ins.Index] = v
 		case wasmir.InstrLocalTee:
-			if int(ins.LocalIndex) >= len(locals) {
-				return nil, fmt.Errorf("local index %d out of range", ins.LocalIndex)
+			if int(ins.Index) >= len(locals) {
+				return nil, fmt.Errorf("local index %d out of range", ins.Index)
 			}
 			v, err := pop()
 			if err != nil {
 				return nil, err
 			}
-			if v.Type != locals[ins.LocalIndex].Type {
-				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.LocalIndex, v.Type, locals[ins.LocalIndex].Type)
+			if v.Type != locals[ins.Index].Type {
+				return nil, fmt.Errorf("local.tee %d got %s, want %s", ins.Index, v.Type, locals[ins.Index].Type)
 			}
-			locals[ins.LocalIndex] = v
+			locals[ins.Index] = v
 			stack = append(stack, v)
 		case wasmir.InstrI32Const:
-			stack = append(stack, I32(ins.I32Const))
+			stack = append(stack, I32(ins.I32))
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
@@ -483,7 +591,7 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 			}
 			stack = append(stack, I32(boolI32(v == 0)))
 		case wasmir.InstrI64Const:
-			stack = append(stack, I64(ins.I64Const))
+			stack = append(stack, I64(ins.I64))
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
 			v, err := evalI64Binary(ins.Kind, pop)
 			if err != nil {
@@ -504,7 +612,7 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 			}
 			stack = append(stack, I32(boolI32(v == 0)))
 		case wasmir.InstrF32Const:
-			stack = append(stack, F32(math.Float32frombits(ins.F32Const)))
+			stack = append(stack, F32(math.Float32frombits(ins.F32)))
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
 			v, err := evalF32Binary(ins.Kind, pop)
 			if err != nil {
@@ -519,7 +627,7 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 			}
 			stack = append(stack, I32(v))
 		case wasmir.InstrF64Const:
-			stack = append(stack, F64(math.Float64frombits(ins.F64Const)))
+			stack = append(stack, F64(math.Float64frombits(ins.F64)))
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
 			v, err := evalF64Binary(ins.Kind, pop)
 			if err != nil {
@@ -538,10 +646,10 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, err
 			}
 		case wasmir.InstrCall:
-			if int(ins.FuncIndex) >= len(inst.funcs) {
-				return nil, fmt.Errorf("call function index %d out of range", ins.FuncIndex)
+			if int(ins.Index) >= len(inst.funcs) {
+				return nil, fmt.Errorf("call function index %d out of range", ins.Index)
 			}
-			calleeType, err := inst.funcType(inst.funcs[ins.FuncIndex].typeIdx)
+			calleeType, err := inst.funcType(inst.funcs[ins.Index].typeIdx)
 			if err != nil {
 				return nil, err
 			}
@@ -549,17 +657,13 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 			if err != nil {
 				return nil, err
 			}
-			results, err := inst.callFunc(ins.FuncIndex, callArgs)
+			results, err := inst.callFunc(ins.Index, callArgs)
 			if err != nil {
 				return nil, err
 			}
 			stack = append(stack, results...)
 		case wasmir.InstrBr:
-			nextPC, err := branchTo(ins.BranchDepth, &activeLabels)
-			if err != nil {
-				return nil, err
-			}
-			pc = nextPC
+			pc = ins.Target
 		case wasmir.InstrBrIf:
 			// br_if consumes only the condition. Any branch result values are
 			// already below it on the operand stack and are left there for the
@@ -569,26 +673,15 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 				return nil, err
 			}
 			if cond != 0 {
-				nextPC, err := branchTo(ins.BranchDepth, &activeLabels)
-				if err != nil {
-					return nil, err
-				}
-				pc = nextPC
+				pc = ins.Target
 			}
 		case wasmir.InstrReturn:
 			return popResults(&stack, ft.Results)
 		case wasmir.InstrEnd:
-			if pc != len(fn.def.Body)-1 {
-				// Non-final end closes the innermost active block/if. The final
-				// end is the function terminator and returns function results.
-				if len(activeLabels) == 0 {
-					return nil, fmt.Errorf("end without active label")
-				}
-				label := activeLabels[len(activeLabels)-1]
-				if label.endIndex != pc {
-					return nil, fmt.Errorf("end at %d does not match active label", pc)
-				}
-				activeLabels = activeLabels[:len(activeLabels)-1]
+			if pc != len(fn.code.code)-1 {
+				// Non-final end closes structured control. Branch targets skip over
+				// it, and ordinary fallthrough can treat it as a no-op because
+				// validation has already established the operand stack contract.
 				continue
 			}
 			return popResults(&stack, ft.Results)
@@ -599,17 +692,15 @@ func (inst *ModuleInstance) callDefined(fn funcInst, ft wasmir.TypeDef, args []V
 	return nil, fmt.Errorf("function ended without end")
 }
 
-// controlLabel describes one active structured-control label in the flattened
+// controlLabel describes one structured-control label in the flattened
 // instruction stream.
 //
-// startIndex is the block/if instruction that opened the label. endIndex is
-// the matching end instruction and is currently the branch target for both
-// block and if labels. elseIndex is the matching else instruction for if
-// labels, or -1 when the label has no else arm.
+// endIndex is the matching end instruction and is currently the branch target
+// for both block and if labels. elseIndex is the matching else instruction for
+// if labels, or -1 when the label has no else arm.
 type controlLabel struct {
-	startIndex int
-	endIndex   int
-	elseIndex  int
+	endIndex  int
+	elseIndex int
 }
 
 // controlInfo stores precomputed control-boundary metadata by opening
@@ -651,9 +742,8 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 			start := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			label := controlLabel{
-				startIndex: start,
-				endIndex:   pc,
-				elseIndex:  -1,
+				endIndex:  pc,
+				elseIndex: -1,
 			}
 			if elsePC, ok := elseIndex[start]; ok {
 				label.elseIndex = elsePC
@@ -665,24 +755,6 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 		return controlInfo{}, fmt.Errorf("%s at %d without matching end", instrName(body[stack[len(stack)-1]].Kind), stack[len(stack)-1])
 	}
 	return ctrl, nil
-}
-
-// branchTo returns the end PC for a branch target and removes exited labels.
-//
-// Wasm branch depths count outward from the innermost active label: depth 0 is
-// the top of activeLabels, depth 1 is its parent, and so on. A branch exits the
-// target label and all labels nested inside it, so activeLabels is truncated to
-// the parent of the target. The main interpreter loop then increments pc after
-// executing the current instruction, so returning target.endIndex causes
-// execution to continue just after the target's end.
-func branchTo(depth uint32, activeLabels *[]controlLabel) (int, error) {
-	if int(depth) >= len(*activeLabels) {
-		return 0, fmt.Errorf("branch depth %d out of range", depth)
-	}
-	targetIndex := len(*activeLabels) - 1 - int(depth)
-	target := (*activeLabels)[targetIndex]
-	*activeLabels = (*activeLabels)[:targetIndex]
-	return target.endIndex, nil
 }
 
 // zeroValue constructs the default local value for a numeric value type.

@@ -1,8 +1,7 @@
 vm:
 
 - test helper that checks a call did not fail
-- control flow analysis is bulky... should we have some separate IR/bytecode for
-  the interpreter?
+- single int64 field for const in vmInstr should be enough?
 
 
 * Will need to figure out what to do about the "threads" proposal, it's at
