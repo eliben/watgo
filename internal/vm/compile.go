@@ -1,9 +1,3 @@
-// Package vm contains the private execution representation used by wasmvm.
-//
-// The public wasmvm package owns instantiation, imports, exports, and host
-// callbacks. This package owns the runtime form of module-defined functions:
-// CompileFunction lowers wasmir.Function into Function, and ExecuteFunction
-// interprets Function values.
 package vm
 
 import (
@@ -15,11 +9,6 @@ import (
 )
 
 // Function is the VM's execution form for a module-defined function.
-//
-// It is intentionally separate from wasmir.Function: wasmir is the semantic
-// interchange representation, while Function stores runtime-oriented immediates
-// such as resolved branch targets. A Function is compiled once during
-// wasmvm.Instantiate and can then be executed repeatedly by ExecuteFunction.
 type Function struct {
 	// locals contains the non-parameter locals declared by the function. At
 	// call time ExecuteFunction builds its local array as args followed by
@@ -43,10 +32,7 @@ type instr struct {
 	// execution to the following instruction.
 	target int
 
-	// index is the resolved index immediate for local and function
-	// instructions: local.get/set/tee use a local index, and call uses a
-	// function index in wasmvm.ModuleInstance's combined import-then-defined
-	// function space.
+	// index is the resolved index immediate for local.get/set/tee and call.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -57,9 +43,7 @@ type instr struct {
 	bits int64
 }
 
-// CompileFunction compiles a semantic function body into the VM's execution
-// form. It supports exactly the instruction subset currently implemented by
-// wasmvm.
+// CompileFunction compiles a semantic function body into the VM's execution form.
 func CompileFunction(fn *wasmir.Function) (*Function, error) {
 	ctrl, err := analyzeControl(fn.Body)
 	if err != nil {

@@ -3,7 +3,6 @@ Immediate TODOs
 
 vm:
 
-- vm Function fields exported?
 - test helper that checks a call did not fail
 
 

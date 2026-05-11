@@ -8,10 +8,6 @@ import (
 )
 
 // Value is one runtime WebAssembly value.
-//
-// wasmvm re-exports this type as wasmvm.Value. internal/vm keeps the concrete
-// representation because the interpreter needs to push, pop, and type-check
-// values directly.
 type Value struct {
 	// Type is the WebAssembly value type carried by this value.
 	Type wasmir.ValueType
@@ -29,14 +25,7 @@ type Value struct {
 	F64 float64
 }
 
-// CallResolver resolves and invokes function-index calls made by
-// ExecuteFunction.
-//
-// ExecuteFunction intentionally does not know about wasmvm.ModuleInstance,
-// host imports, or export tables. When it executes a call instruction, it uses
-// this interface to ask the owner of the function index space for the callee's
-// signature and then for the actual call. In wasmvm, a small adapter implements
-// this by re-entering ModuleInstance.callFunc.
+// CallResolver resolves and invokes function-index calls made by ExecuteFunction.
 type CallResolver interface {
 	// FuncType returns the signature of the function at index.
 	FuncType(index uint32) (wasmir.TypeDef, error)
@@ -73,19 +62,6 @@ func CheckResults(want []wasmir.ValueType, got []Value) error {
 }
 
 // ExecuteFunction interprets one compiled module-defined function body.
-//
-// args are the function parameters in order, and ft is the function's validated
-// signature. calls is used only for wasm call instructions. For a function A
-// calling function B calling a host import, execution looks like this:
-//
-//   - wasmvm.callFunc(A) calls ExecuteFunction(A).
-//   - ExecuteFunction(A) reaches call B, pops B's arguments, and calls
-//     calls.CallFunc(B).
-//   - wasmvm.callFunc(B) calls ExecuteFunction(B).
-//   - ExecuteFunction(B) reaches call host, pops host arguments, and calls
-//     calls.CallFunc(host).
-//   - wasmvm.callFunc(host) invokes the HostFunc Go callback and returns its
-//     results back through the two ExecuteFunction frames.
 func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallResolver) ([]Value, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("defined function has no compiled code")
@@ -232,10 +208,6 @@ func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallRe
 				return nil, err
 			}
 		case wasmir.InstrCall:
-			// A call instruction is the one place where execution leaves this
-			// package. Function indices include imports before module-defined
-			// functions, so only wasmvm.ModuleInstance can decide whether this
-			// is a host callback or another compiled wasm function.
 			calleeType, err := calls.FuncType(ins.index)
 			if err != nil {
 				return nil, err
