@@ -720,6 +720,38 @@ func TestMemoryI32LoadStore(t *testing.T) {
 	}
 }
 
+func TestActiveDataSegments(t *testing.T) {
+	// Active data segments are copied into memory during instantiation, and
+	// offset expressions may read immutable globals.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(global $off i32 (i32.const 16))
+			(data (i32.const 4) "ABCD")
+			(data (global.get $off) "WXYZ")
+			(func (export "load0") (result i32)
+				i32.const 4
+				i32.load)
+			(func (export "load1") (result i32)
+				i32.const 16
+				i32.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "load0")
+	if len(results) != 1 || results[0] != wasmvm.I32(0x44434241) {
+		t.Fatalf("load0 got results %#v, want i32 0x44434241", results)
+	}
+
+	results = callExport(t, inst, "load1")
+	if len(results) != 1 || results[0] != wasmvm.I32(0x5a595857) {
+		t.Fatalf("load1 got results %#v, want i32 0x5a595857", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
@@ -845,6 +877,23 @@ func TestExecutionErrorMemoryOutOfBoundsContext(t *testing.T) {
 		t.Fatal("Call succeeded unexpectedly")
 	}
 	if got, want := err.Error(), "pc 2 i32.store: memory access out of bounds"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestInstantiateRejectsOutOfBoundsDataSegment(t *testing.T) {
+	// Active data segments are bounds-checked while the instance memory is
+	// initialized.
+	rt := wasmvm.NewRuntime()
+	_, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data (i32.const 65534) "ABCD"))
+	`), nil)
+	if err == nil {
+		t.Fatal("Instantiate succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "data[0]: memory access out of bounds"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

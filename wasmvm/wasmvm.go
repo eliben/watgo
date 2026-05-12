@@ -151,6 +151,9 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 	if err := inst.buildGlobals(); err != nil {
 		return nil, err
 	}
+	if err := inst.applyDataSegments(); err != nil {
+		return nil, err
+	}
 	if err := inst.buildFuncs(imports); err != nil {
 		return nil, err
 	}
@@ -259,9 +262,6 @@ type memoryInst struct {
 
 // buildMemories creates the instance memory address space.
 func (inst *ModuleInstance) buildMemories() error {
-	if len(inst.m.Data) != 0 {
-		return fmt.Errorf("data segments are not supported yet")
-	}
 	for i, m := range inst.m.Memories {
 		if m.ImportModule != "" || m.ImportName != "" {
 			return fmt.Errorf("unsupported memory import %q.%q", m.ImportModule, m.ImportName)
@@ -281,13 +281,56 @@ func (inst *ModuleInstance) buildMemories() error {
 	return nil
 }
 
+// applyDataSegments copies active data segments into instantiated memories.
+//
+// Passive segments are retained only in the source module for now. They become
+// observable when memory.init/data.drop are implemented; until then, ignoring
+// them matches their instantiation-time behavior.
+func (inst *ModuleInstance) applyDataSegments() error {
+	for i, seg := range inst.m.Data {
+		if seg.Mode == wasmir.DataSegmentModePassive {
+			continue
+		}
+		offset, err := inst.dataSegmentOffset(seg)
+		if err != nil {
+			return fmt.Errorf("data[%d]: %w", i, err)
+		}
+		if uint64(len(seg.Init)) > uint64(^uint32(0)) {
+			return fmt.Errorf("data[%d]: segment is too large", i)
+		}
+		dst, err := (vmResolver{inst: inst}).memory(seg.MemoryIndex, offset, uint32(len(seg.Init)))
+		if err != nil {
+			return fmt.Errorf("data[%d]: %w", i, err)
+		}
+		copy(dst, seg.Init)
+	}
+	return nil
+}
+
+func (inst *ModuleInstance) dataSegmentOffset(seg wasmir.DataSegment) (uint64, error) {
+	if len(seg.OffsetExpr) > 0 {
+		v, err := vm.EvalConstExpr(seg.OffsetExpr, vmResolver{inst: inst, constExpr: true})
+		if err != nil {
+			return 0, err
+		}
+		if v.Type != wasmir.ValueTypeI32 {
+			return 0, fmt.Errorf("offset expression has type %s, want i32", v.Type)
+		}
+		return uint64(uint32(v.I32)), nil
+	}
+	if seg.OffsetType != wasmir.ValueTypeI32 {
+		return 0, fmt.Errorf("offset has type %s, want i32", seg.OffsetType)
+	}
+	return uint64(uint32(int32(seg.OffsetI64))), nil
+}
+
 // buildGlobals creates the instance global address space.
 func (inst *ModuleInstance) buildGlobals() error {
 	for i, g := range inst.m.Globals {
 		if g.ImportModule != "" || g.ImportName != "" {
 			return fmt.Errorf("unsupported global import %q.%q", g.ImportModule, g.ImportName)
 		}
-		value, err := vm.EvalConstExpr(g.Init, vmResolver{inst: inst, globalInit: true})
+		value, err := vm.EvalConstExpr(g.Init, vmResolver{inst: inst, constExpr: true})
 		if err != nil {
 			return fmt.Errorf("global[%d]: %w", i, err)
 		}
@@ -405,9 +448,10 @@ func (inst *ModuleInstance) funcType(typeIdx uint32) (wasmir.TypeDef, error) {
 type vmResolver struct {
 	inst *ModuleInstance
 
-	// globalInit applies the stricter global.get rules used while evaluating
-	// module-defined global initializer expressions.
-	globalInit bool
+	// constExpr applies the stricter global.get rules used while evaluating
+	// module-level constant expressions such as global initializers and active
+	// data offsets.
+	constExpr bool
 }
 
 func (r vmResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
@@ -427,7 +471,7 @@ func (r vmResolver) GlobalGet(index uint32) (Value, error) {
 		return Value{}, fmt.Errorf("global index %d out of range", index)
 	}
 	g := r.inst.globals[index]
-	if r.globalInit && g.mutable {
+	if r.constExpr && g.mutable {
 		return Value{}, fmt.Errorf("global %d is mutable", index)
 	}
 	return g.value, nil
