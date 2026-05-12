@@ -3,7 +3,7 @@ Immediate TODOs
 
 vm:
 
-* 
+* Resolver interface becoming very big; any recourse?
 
 Longer-term plans
 -----------------

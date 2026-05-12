@@ -43,7 +43,8 @@ type instr struct {
 	// kind determines how to interpret it: i32.const uses int32(bits),
 	// i64.const uses bits, f32.const uses uint32(bits), and f64.const uses
 	// uint64(bits). For currently supported memory instructions, bits stores
-	// the static offset immediate.
+	// the static offset immediate. For memory.copy, bits stores the source
+	// memory index.
 	bits int64
 }
 
@@ -95,8 +96,11 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.FuncIndex
 		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 			op.index = ins.GlobalIndex
-		case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow:
+		case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 			op.index = ins.MemoryIndex
+		case wasmir.InstrMemoryCopy:
+			op.index = ins.MemoryIndex
+			op.bits = int64(ins.SourceMemoryIndex)
 		case wasmir.InstrI32Load, wasmir.InstrI32Store,
 			wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,

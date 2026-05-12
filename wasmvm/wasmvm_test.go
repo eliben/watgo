@@ -994,6 +994,44 @@ func TestMemorySizeAndGrow(t *testing.T) {
 	}
 }
 
+// TestMemoryCopyAndFill checks the bulk memory instructions that move or
+// initialize byte ranges inside an instantiated memory.
+func TestMemoryCopyAndFill(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data (i32.const 0) "abcdef")
+			(func (export "copy_overlap") (result i32)
+				i32.const 2
+				i32.const 0
+				i32.const 4
+				memory.copy
+				i32.const 0
+				i32.load)
+			(func (export "fill") (result i32)
+				i32.const 8
+				i32.const 127
+				i32.const 4
+				memory.fill
+				i32.const 8
+				i32.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "copy_overlap")
+	if len(results) != 1 || results[0] != wasmvm.I32(0x62616261) {
+		t.Fatalf("copy_overlap got results %#v, want i32 0x62616261", results)
+	}
+
+	results = callExport(t, inst, "fill")
+	if len(results) != 1 || results[0] != wasmvm.I32(0x7f7f7f7f) {
+		t.Fatalf("fill got results %#v, want i32 0x7f7f7f7f", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
@@ -1136,6 +1174,35 @@ func TestInstantiateRejectsOutOfBoundsDataSegment(t *testing.T) {
 		t.Fatal("Instantiate succeeded unexpectedly")
 	}
 	if got, want := err.Error(), "data[0]: memory access out of bounds"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestExecutionErrorMemoryFillOutOfBoundsContext checks that memory.fill traps
+// include the failing instruction location.
+func TestExecutionErrorMemoryFillOutOfBoundsContext(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(func (export "fill_oob")
+				i32.const 65535
+				i32.const 1
+				i32.const 2
+				memory.fill))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("fill_oob")
+	if !ok {
+		t.Fatal("missing fill_oob export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 memory.fill: memory access out of bounds"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

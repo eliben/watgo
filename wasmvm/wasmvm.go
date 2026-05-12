@@ -302,7 +302,7 @@ func (inst *ModuleInstance) applyDataSegments() error {
 		if uint64(len(seg.Init)) > uint64(^uint32(0)) {
 			return fmt.Errorf("data[%d]: segment is too large", i)
 		}
-		dst, err := (vmResolver{inst: inst}).memory(seg.MemoryIndex, offset, uint32(len(seg.Init)))
+		dst, err := (vmResolver{inst: inst}).memory(seg.MemoryIndex, offset, uint64(len(seg.Init)))
 		if err != nil {
 			return fmt.Errorf("data[%d]: %w", i, err)
 		}
@@ -500,7 +500,7 @@ func (r vmResolver) GlobalSet(index uint32, value Value) error {
 
 // MemoryLoad reads a little-endian integer from an instantiated memory.
 func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint64, error) {
-	mem, err := r.memory(index, address, size)
+	mem, err := r.memory(index, address, uint64(size))
 	if err != nil {
 		return 0, err
 	}
@@ -521,7 +521,7 @@ func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint6
 // MemoryStore writes the low-order bytes of value to an instantiated memory in
 // little-endian order.
 func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value uint64) error {
-	mem, err := r.memory(index, address, size)
+	mem, err := r.memory(index, address, uint64(size))
 	if err != nil {
 		return err
 	}
@@ -575,6 +575,32 @@ func (r vmResolver) MemoryGrow(index uint32, delta uint64) (uint64, bool, error)
 	return oldPages, true, nil
 }
 
+// MemoryCopy copies bytes between instantiated memories.
+func (r vmResolver) MemoryCopy(dstIndex uint32, dstAddress uint64, srcIndex uint32, srcAddress uint64, size uint64) error {
+	dst, err := r.memory(dstIndex, dstAddress, size)
+	if err != nil {
+		return err
+	}
+	src, err := r.memory(srcIndex, srcAddress, size)
+	if err != nil {
+		return err
+	}
+	copy(dst, src)
+	return nil
+}
+
+// MemoryFill writes value to a contiguous byte range in an instantiated memory.
+func (r vmResolver) MemoryFill(index uint32, address uint64, size uint64, value byte) error {
+	dst, err := r.memory(index, address, size)
+	if err != nil {
+		return err
+	}
+	for i := range dst {
+		dst[i] = value
+	}
+	return nil
+}
+
 // memoryInst resolves a memory index to the mutable instantiated memory state.
 func (r vmResolver) memoryInst(index uint32) (*memoryInst, error) {
 	if int(index) >= len(r.inst.memories) {
@@ -589,7 +615,7 @@ func (r vmResolver) memoryInst(index uint32) (*memoryInst, error) {
 // operand and the static offset immediate. This helper owns the instance-side
 // checks: memory index resolution, overflow-safe bounds validation, and
 // conversion from uint64 addresses to Go slice indices.
-func (r vmResolver) memory(index uint32, address uint64, size uint32) ([]byte, error) {
+func (r vmResolver) memory(index uint32, address uint64, size uint64) ([]byte, error) {
 	memInst, err := r.memoryInst(index)
 	if err != nil {
 		return nil, err

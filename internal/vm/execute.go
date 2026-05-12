@@ -90,6 +90,13 @@ type Resolver interface {
 	// MemoryGrow grows memory by delta pages. It returns the old memory size in
 	// pages when growth succeeds, and ok=false when growth is rejected.
 	MemoryGrow(index uint32, delta uint64) (oldPages uint64, ok bool, err error)
+
+	// MemoryCopy copies size bytes between instantiated memories. The copy must
+	// have memmove semantics when the source and destination overlap.
+	MemoryCopy(dstIndex uint32, dstAddress uint64, srcIndex uint32, srcAddress uint64, size uint64) error
+
+	// MemoryFill writes value to size bytes of an instantiated memory.
+	MemoryFill(index uint32, address uint64, size uint64, value byte) error
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -426,6 +433,44 @@ func (e *executor) run() ([]Value, error) {
 				continue
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(oldPages))})
+		case wasmir.InstrMemoryCopy:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			src, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrMemoryFill:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			value, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), byte(value)); err != nil {
+				return nil, e.instructionError(err)
+			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32DivS, wasmir.InstrI32DivU, wasmir.InstrI32RemS, wasmir.InstrI32RemU,
 			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor,
