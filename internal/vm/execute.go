@@ -284,6 +284,27 @@ func (e *executor) run() ([]Value, error) {
 			if _, err := e.pop(); err != nil {
 				return nil, e.instructionError(err)
 			}
+		case wasmir.InstrSelect:
+			cond, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			v2, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			v1, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if v1.Type != v2.Type {
+				return nil, e.instructionError(fmt.Errorf("select got %s and %s operands", v1.Type, v2.Type))
+			}
+			if cond != 0 {
+				e.push(v1)
+			} else {
+				e.push(v2)
+			}
 		case wasmir.InstrCall:
 			calleeType, err := e.calls.FuncType(ins.index)
 			if err != nil {

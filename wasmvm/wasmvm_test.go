@@ -140,6 +140,74 @@ func TestLocalSetAndTee(t *testing.T) {
 	}
 }
 
+func TestSelect(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "pick_i32") (param i32) (result i32)
+				i32.const 10
+				i32.const 20
+				local.get 0
+				select)
+			(func (export "pick_f64") (param i32) (result f64)
+				f64.const 1.5
+				f64.const 2.5
+				local.get 0
+				select)
+			(func (export "pick_typed_i64") (param i32) (result i64)
+				i64.const 30
+				i64.const 40
+				local.get 0
+				select (result i64)))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	pickI32, ok := inst.ExportedFunc("pick_i32")
+	if !ok {
+		t.Fatal("missing pick_i32 export")
+	}
+	results, err := pickI32.Call(wasmvm.I32(1))
+	if err != nil {
+		t.Fatalf("Call pick_i32(1) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(10) {
+		t.Fatalf("pick_i32(1) got results %#v, want i32 10", results)
+	}
+	results, err = pickI32.Call(wasmvm.I32(0))
+	if err != nil {
+		t.Fatalf("Call pick_i32(0) failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I32(20) {
+		t.Fatalf("pick_i32(0) got results %#v, want i32 20", results)
+	}
+
+	pickF64, ok := inst.ExportedFunc("pick_f64")
+	if !ok {
+		t.Fatal("missing pick_f64 export")
+	}
+	results, err = pickF64.Call(wasmvm.I32(-1))
+	if err != nil {
+		t.Fatalf("Call pick_f64 failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.F64(1.5) {
+		t.Fatalf("pick_f64 got results %#v, want f64 1.5", results)
+	}
+
+	pickTypedI64, ok := inst.ExportedFunc("pick_typed_i64")
+	if !ok {
+		t.Fatal("missing pick_typed_i64 export")
+	}
+	results, err = pickTypedI64.Call(wasmvm.I32(0))
+	if err != nil {
+		t.Fatalf("Call pick_typed_i64 failed: %v", err)
+	}
+	if len(results) != 1 || results[0] != wasmvm.I64(40) {
+		t.Fatalf("pick_typed_i64 got results %#v, want i64 40", results)
+	}
+}
+
 func TestI32Predicates(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -756,6 +824,22 @@ func TestExecutionErrorResultContext(t *testing.T) {
 	}, []wasmir.ValueType{wasmir.ValueTypeI32})
 
 	if got, want := err.Error(), "pc 0 end: operand stack underflow"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionErrorSelectTypeContext(t *testing.T) {
+	// A select with mismatched candidate value types should report the select
+	// instruction as the failing execution point.
+	err := callInvalidRuntimeModule(t, []wasmir.Instruction{
+		{Kind: wasmir.InstrI32Const, I32Const: 10},
+		{Kind: wasmir.InstrI64Const, I64Const: 20},
+		{Kind: wasmir.InstrI32Const, I32Const: 1},
+		{Kind: wasmir.InstrSelect},
+		{Kind: wasmir.InstrEnd},
+	}, []wasmir.ValueType{wasmir.ValueTypeI32})
+
+	if got, want := err.Error(), "pc 3 select: select got i32 and i64 operands"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

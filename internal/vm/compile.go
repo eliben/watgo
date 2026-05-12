@@ -127,7 +127,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div,
 			wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge,
-			wasmir.InstrDrop, wasmir.InstrReturn:
+			wasmir.InstrDrop, wasmir.InstrSelect, wasmir.InstrReturn:
 		case wasmir.InstrEnd:
 			if len(labelStack) == 0 {
 				if pc != len(fn.Body)-1 {
