@@ -507,6 +507,8 @@ func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint6
 		return uint64(binary.LittleEndian.Uint16(mem)), nil
 	case 4:
 		return uint64(binary.LittleEndian.Uint32(mem)), nil
+	case 8:
+		return binary.LittleEndian.Uint64(mem), nil
 	default:
 		return 0, fmt.Errorf("unsupported memory load size %d", size)
 	}
@@ -528,6 +530,9 @@ func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value
 		return nil
 	case 4:
 		binary.LittleEndian.PutUint32(mem, uint32(value))
+		return nil
+	case 8:
+		binary.LittleEndian.PutUint64(mem, value)
 		return nil
 	default:
 		return fmt.Errorf("unsupported memory store size %d", size)

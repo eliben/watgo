@@ -98,7 +98,10 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 		case wasmir.InstrI32Load, wasmir.InstrI32Store,
 			wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
-			wasmir.InstrI32Store8, wasmir.InstrI32Store16:
+			wasmir.InstrI32Store8, wasmir.InstrI32Store16,
+			wasmir.InstrI64Load, wasmir.InstrI64Store,
+			wasmir.InstrF32Load, wasmir.InstrF32Store,
+			wasmir.InstrF64Load, wasmir.InstrF64Store:
 			if ins.MemoryOffset > maxInt64Uint {
 				return nil, fmt.Errorf("%s at %d: memory offset %d is too large", instrName(ins.Kind), pc, ins.MemoryOffset)
 			}

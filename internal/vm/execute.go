@@ -282,6 +282,114 @@ func (e *executor) run() ([]Value, error) {
 			if err := e.resolver.MemoryStore(ins.index, effective, i32StoreSize(ins.kind), uint64(uint32(value))); err != nil {
 				return nil, e.instructionError(err)
 			}
+		case wasmir.InstrI64Load:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, 8)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI64, I64: int64(raw)})
+		case wasmir.InstrI64Store:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			value, err := e.popI64()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryStore(ins.index, effective, 8, uint64(value)); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrF32Load:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, 4)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(raw))})
+		case wasmir.InstrF32Store:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			value, err := e.popF32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryStore(ins.index, effective, 4, uint64(math.Float32bits(value))); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrF64Load:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, 8)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(raw)})
+		case wasmir.InstrF64Store:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			value, err := e.popF64()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryStore(ins.index, effective, 8, math.Float64bits(value)); err != nil {
+				return nil, e.instructionError(err)
+			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32DivS, wasmir.InstrI32DivU, wasmir.InstrI32RemS, wasmir.InstrI32RemU,
 			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor,

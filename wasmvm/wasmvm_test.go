@@ -807,6 +807,61 @@ func TestI32NarrowMemoryOps(t *testing.T) {
 	}
 }
 
+func TestScalarMemoryOps(t *testing.T) {
+	// The remaining scalar numeric load/store instructions share the same
+	// memory resolver path with their own value encodings.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data (i32.const 0) "\01\02\03\04\05\06\07\08")
+			(func (export "load_i64") (result i64)
+				i32.const 0
+				i64.load)
+			(func (export "roundtrip_i64") (param i64) (result i64)
+				i32.const 16
+				local.get 0
+				i64.store
+				i32.const 16
+				i64.load)
+			(func (export "roundtrip_f32") (param f32) (result f32)
+				i32.const 32
+				local.get 0
+				f32.store
+				i32.const 32
+				f32.load)
+			(func (export "roundtrip_f64") (param f64) (result f64)
+				i32.const 48
+				local.get 0
+				f64.store
+				i32.const 48
+				f64.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "load_i64")
+	if len(results) != 1 || results[0] != wasmvm.I64(0x0807060504030201) {
+		t.Fatalf("load_i64 got results %#v, want i64 0x0807060504030201", results)
+	}
+
+	results = callExport(t, inst, "roundtrip_i64", wasmvm.I64(-1234567890123))
+	if len(results) != 1 || results[0] != wasmvm.I64(-1234567890123) {
+		t.Fatalf("roundtrip_i64 got results %#v, want i64 -1234567890123", results)
+	}
+
+	results = callExport(t, inst, "roundtrip_f32", wasmvm.F32(12.5))
+	if len(results) != 1 || results[0] != wasmvm.F32(12.5) {
+		t.Fatalf("roundtrip_f32 got results %#v, want f32 12.5", results)
+	}
+
+	results = callExport(t, inst, "roundtrip_f64", wasmvm.F64(-9.25))
+	if len(results) != 1 || results[0] != wasmvm.F64(-9.25) {
+		t.Fatalf("roundtrip_f64 got results %#v, want f64 -9.25", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
