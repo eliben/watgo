@@ -16,6 +16,8 @@
 //     time.
 //   - ExecuteFunction runs a Function when wasmvm dispatches to module-defined
 //     code.
+//   - EvalConstExpr evaluates lowered module-level constant expressions into
+//     runtime Values during instantiation.
 //   - CallResolver is implemented by the package that owns the function index
 //     space. Functions can come from the host or from compiled WASM modules.
 //     ExecuteFunction uses it to resolve and invoke wasm call

@@ -8,7 +8,6 @@ package wasmvm
 
 import (
 	"fmt"
-	"math"
 	"slices"
 
 	"github.com/eliben/watgo/internal/vm"
@@ -229,7 +228,7 @@ func (inst *ModuleInstance) buildGlobals() error {
 		if g.ImportModule != "" || g.ImportName != "" {
 			return fmt.Errorf("unsupported global import %q.%q", g.ImportModule, g.ImportName)
 		}
-		value, err := inst.evalGlobalInit(g.Init)
+		value, err := vm.EvalConstExpr(g.Init, inst.globalInitGet)
 		if err != nil {
 			return fmt.Errorf("global[%d]: %w", i, err)
 		}
@@ -241,100 +240,18 @@ func (inst *ModuleInstance) buildGlobals() error {
 	return nil
 }
 
-// evalGlobalInit evaluates a module-defined global initializer against the
-// globals that have already been instantiated.
-func (inst *ModuleInstance) evalGlobalInit(init []wasmir.Instruction) (Value, error) {
-	stack := make([]Value, 0, 1)
-	for pc, ins := range init {
-		switch ins.Kind {
-		case wasmir.InstrI32Const:
-			stack = append(stack, I32(ins.I32Const))
-		case wasmir.InstrI64Const:
-			stack = append(stack, I64(ins.I64Const))
-		case wasmir.InstrF32Const:
-			stack = append(stack, F32(math.Float32frombits(ins.F32Const)))
-		case wasmir.InstrF64Const:
-			stack = append(stack, F64(math.Float64frombits(ins.F64Const)))
-		case wasmir.InstrGlobalGet:
-			if int(ins.GlobalIndex) >= len(inst.globals) {
-				return Value{}, fmt.Errorf("initializer instruction %d: global index %d out of range", pc, ins.GlobalIndex)
-			}
-			g := inst.globals[ins.GlobalIndex]
-			if g.mutable {
-				return Value{}, fmt.Errorf("initializer instruction %d: global %d is mutable", pc, ins.GlobalIndex)
-			}
-			stack = append(stack, g.value)
-		case wasmir.InstrI32Add:
-			if err := evalI32InitBinOp(&stack, func(a, b int32) int32 { return a + b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrI32Sub:
-			if err := evalI32InitBinOp(&stack, func(a, b int32) int32 { return a - b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrI32Mul:
-			if err := evalI32InitBinOp(&stack, func(a, b int32) int32 { return a * b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrI64Add:
-			if err := evalI64InitBinOp(&stack, func(a, b int64) int64 { return a + b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrI64Sub:
-			if err := evalI64InitBinOp(&stack, func(a, b int64) int64 { return a - b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrI64Mul:
-			if err := evalI64InitBinOp(&stack, func(a, b int64) int64 { return a * b }); err != nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
-			}
-		case wasmir.InstrEnd:
-		default:
-			return Value{}, fmt.Errorf("initializer instruction %d: unsupported instruction kind %d", pc, ins.Kind)
-		}
+// globalInitGet resolves global.get while a module-defined global initializer
+// is being evaluated. Only earlier globals have been appended to inst.globals,
+// and WebAssembly initializer expressions may read only immutable globals.
+func (inst *ModuleInstance) globalInitGet(index uint32) (Value, error) {
+	if int(index) >= len(inst.globals) {
+		return Value{}, fmt.Errorf("global index %d out of range", index)
 	}
-	if len(stack) != 1 {
-		return Value{}, fmt.Errorf("initializer left %d values on stack, want 1", len(stack))
+	g := inst.globals[index]
+	if g.mutable {
+		return Value{}, fmt.Errorf("global %d is mutable", index)
 	}
-	return stack[0], nil
-}
-
-func evalI32InitBinOp(stack *[]Value, op func(int32, int32) int32) error {
-	rhs, err := popInitValue(stack, wasmir.ValueTypeI32)
-	if err != nil {
-		return err
-	}
-	lhs, err := popInitValue(stack, wasmir.ValueTypeI32)
-	if err != nil {
-		return err
-	}
-	*stack = append(*stack, I32(op(lhs.I32, rhs.I32)))
-	return nil
-}
-
-func evalI64InitBinOp(stack *[]Value, op func(int64, int64) int64) error {
-	rhs, err := popInitValue(stack, wasmir.ValueTypeI64)
-	if err != nil {
-		return err
-	}
-	lhs, err := popInitValue(stack, wasmir.ValueTypeI64)
-	if err != nil {
-		return err
-	}
-	*stack = append(*stack, I64(op(lhs.I64, rhs.I64)))
-	return nil
-}
-
-func popInitValue(stack *[]Value, want wasmir.ValueType) (Value, error) {
-	if len(*stack) == 0 {
-		return Value{}, fmt.Errorf("initializer stack underflow")
-	}
-	v := (*stack)[len(*stack)-1]
-	*stack = (*stack)[:len(*stack)-1]
-	if v.Type != want {
-		return Value{}, fmt.Errorf("initializer got %s, want %s", v.Type, want)
-	}
-	return v, nil
+	return g.value, nil
 }
 
 // buildFuncs creates the instance function address space.
