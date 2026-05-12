@@ -232,6 +232,68 @@ func TestI32Predicates(t *testing.T) {
 	}
 }
 
+func TestI32ExtendedIntegerOps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "div_s") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s)
+			(func (export "div_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_u)
+			(func (export "rem_s") (param i32 i32) (result i32) local.get 0 local.get 1 i32.rem_s)
+			(func (export "rem_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.rem_u)
+			(func (export "and") (param i32 i32) (result i32) local.get 0 local.get 1 i32.and)
+			(func (export "or") (param i32 i32) (result i32) local.get 0 local.get 1 i32.or)
+			(func (export "xor") (param i32 i32) (result i32) local.get 0 local.get 1 i32.xor)
+			(func (export "shl") (param i32 i32) (result i32) local.get 0 local.get 1 i32.shl)
+			(func (export "shr_s") (param i32 i32) (result i32) local.get 0 local.get 1 i32.shr_s)
+			(func (export "shr_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.shr_u)
+			(func (export "rotl") (param i32 i32) (result i32) local.get 0 local.get 1 i32.rotl)
+			(func (export "rotr") (param i32 i32) (result i32) local.get 0 local.get 1 i32.rotr)
+			(func (export "lt_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.lt_u)
+			(func (export "le_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.le_u)
+			(func (export "gt_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.gt_u)
+			(func (export "ge_u") (param i32 i32) (result i32) local.get 0 local.get 1 i32.ge_u))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		lhs  int32
+		rhs  int32
+		want int32
+	}{
+		{name: "div_s", lhs: -7, rhs: 2, want: -3},
+		{name: "div_u", lhs: -1, rhs: 2, want: 2147483647},
+		{name: "rem_s", lhs: -7, rhs: 2, want: -1},
+		{name: "rem_u", lhs: -1, rhs: 10, want: 5},
+		{name: "and", lhs: 0x0f0f, rhs: 0x00ff, want: 0x000f},
+		{name: "or", lhs: 0x0f0f, rhs: 0x00ff, want: 0x0fff},
+		{name: "xor", lhs: 0x0f0f, rhs: 0x00ff, want: 0x0ff0},
+		{name: "shl", lhs: 1, rhs: 33, want: 2},
+		{name: "shr_s", lhs: -4, rhs: 1, want: -2},
+		{name: "shr_u", lhs: -4, rhs: 1, want: 2147483646},
+		{name: "rotl", lhs: 1, rhs: 33, want: 2},
+		{name: "rotr", lhs: 2, rhs: 33, want: 1},
+		{name: "lt_u", lhs: -1, rhs: 1, want: 0},
+		{name: "le_u", lhs: -1, rhs: -1, want: 1},
+		{name: "gt_u", lhs: -1, rhs: 1, want: 1},
+		{name: "ge_u", lhs: 0, rhs: -1, want: 0},
+	} {
+		f, ok := inst.ExportedFunc(tt.name)
+		if !ok {
+			t.Fatalf("missing %s export", tt.name)
+		}
+		results, err := f.Call(wasmvm.I32(tt.lhs), wasmvm.I32(tt.rhs))
+		if err != nil {
+			t.Fatalf("Call %s failed: %v", tt.name, err)
+		}
+		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
+			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
+		}
+	}
+}
+
 func TestI64ArithmeticAndPredicates(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -288,6 +350,136 @@ func TestI64ArithmeticAndPredicates(t *testing.T) {
 	}
 	if len(results) != 1 || results[0] != wasmvm.I32(0) {
 		t.Fatalf("cmp got results %#v, want i32 0", results)
+	}
+}
+
+func TestI64ExtendedIntegerOps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "div_s") (param i64 i64) (result i64) local.get 0 local.get 1 i64.div_s)
+			(func (export "div_u") (param i64 i64) (result i64) local.get 0 local.get 1 i64.div_u)
+			(func (export "rem_s") (param i64 i64) (result i64) local.get 0 local.get 1 i64.rem_s)
+			(func (export "rem_u") (param i64 i64) (result i64) local.get 0 local.get 1 i64.rem_u)
+			(func (export "and") (param i64 i64) (result i64) local.get 0 local.get 1 i64.and)
+			(func (export "or") (param i64 i64) (result i64) local.get 0 local.get 1 i64.or)
+			(func (export "xor") (param i64 i64) (result i64) local.get 0 local.get 1 i64.xor)
+			(func (export "shl") (param i64 i64) (result i64) local.get 0 local.get 1 i64.shl)
+			(func (export "shr_s") (param i64 i64) (result i64) local.get 0 local.get 1 i64.shr_s)
+			(func (export "shr_u") (param i64 i64) (result i64) local.get 0 local.get 1 i64.shr_u)
+			(func (export "rotl") (param i64 i64) (result i64) local.get 0 local.get 1 i64.rotl)
+			(func (export "rotr") (param i64 i64) (result i64) local.get 0 local.get 1 i64.rotr)
+			(func (export "lt_u") (param i64 i64) (result i32) local.get 0 local.get 1 i64.lt_u)
+			(func (export "le_u") (param i64 i64) (result i32) local.get 0 local.get 1 i64.le_u)
+			(func (export "gt_u") (param i64 i64) (result i32) local.get 0 local.get 1 i64.gt_u)
+			(func (export "ge_u") (param i64 i64) (result i32) local.get 0 local.get 1 i64.ge_u))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		lhs  int64
+		rhs  int64
+		want int64
+	}{
+		{name: "div_s", lhs: -9, rhs: 2, want: -4},
+		{name: "div_u", lhs: -1, rhs: 3, want: 6148914691236517205},
+		{name: "rem_s", lhs: -9, rhs: 2, want: -1},
+		{name: "rem_u", lhs: -1, rhs: 10, want: 5},
+		{name: "and", lhs: 0x0f0f, rhs: 0x00ff, want: 0x000f},
+		{name: "or", lhs: 0x0f0f, rhs: 0x00ff, want: 0x0fff},
+		{name: "xor", lhs: 0x0f0f, rhs: 0x00ff, want: 0x0ff0},
+		{name: "shl", lhs: 1, rhs: 65, want: 2},
+		{name: "shr_s", lhs: -8, rhs: 1, want: -4},
+		{name: "shr_u", lhs: -8, rhs: 1, want: 9223372036854775804},
+		{name: "rotl", lhs: 1, rhs: 65, want: 2},
+		{name: "rotr", lhs: 2, rhs: 65, want: 1},
+	} {
+		f, ok := inst.ExportedFunc(tt.name)
+		if !ok {
+			t.Fatalf("missing %s export", tt.name)
+		}
+		results, err := f.Call(wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
+		if err != nil {
+			t.Fatalf("Call %s failed: %v", tt.name, err)
+		}
+		if len(results) != 1 || results[0] != wasmvm.I64(tt.want) {
+			t.Fatalf("%s got results %#v, want i64 %d", tt.name, results, tt.want)
+		}
+	}
+
+	for _, tt := range []struct {
+		name string
+		lhs  int64
+		rhs  int64
+		want int32
+	}{
+		{name: "lt_u", lhs: -1, rhs: 1, want: 0},
+		{name: "le_u", lhs: -1, rhs: -1, want: 1},
+		{name: "gt_u", lhs: -1, rhs: 1, want: 1},
+		{name: "ge_u", lhs: 0, rhs: -1, want: 0},
+	} {
+		f, ok := inst.ExportedFunc(tt.name)
+		if !ok {
+			t.Fatalf("missing %s export", tt.name)
+		}
+		results, err := f.Call(wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
+		if err != nil {
+			t.Fatalf("Call %s failed: %v", tt.name, err)
+		}
+		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
+			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
+		}
+	}
+}
+
+func TestIntegerTrapErrors(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "i32_div_zero") (result i32)
+				i32.const 1
+				i32.const 0
+				i32.div_s)
+			(func (export "i32_div_overflow") (result i32)
+				i32.const -2147483648
+				i32.const -1
+				i32.div_s)
+			(func (export "i64_div_zero") (result i64)
+				i64.const 1
+				i64.const 0
+				i64.div_s)
+			(func (export "i64_div_overflow") (result i64)
+				i64.const -9223372036854775808
+				i64.const -1
+				i64.div_s))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		want string
+	}{
+		{name: "i32_div_zero", want: "pc 2 i32.div_s: integer divide by zero"},
+		{name: "i32_div_overflow", want: "pc 2 i32.div_s: integer overflow"},
+		{name: "i64_div_zero", want: "pc 2 i64.div_s: integer divide by zero"},
+		{name: "i64_div_overflow", want: "pc 2 i64.div_s: integer overflow"},
+	} {
+		f, ok := inst.ExportedFunc(tt.name)
+		if !ok {
+			t.Fatalf("missing %s export", tt.name)
+		}
+		_, err := f.Call()
+		if err == nil {
+			t.Fatalf("Call %s succeeded unexpectedly", tt.name)
+		}
+		if got := err.Error(); got != tt.want {
+			t.Fatalf("%s error = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

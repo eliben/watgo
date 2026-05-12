@@ -3,8 +3,14 @@ package vm
 import (
 	"fmt"
 	"math"
+	"math/bits"
 
 	"github.com/eliben/watgo/wasmir"
+)
+
+const (
+	minInt32 = -1 << 31
+	minInt64 = -1 << 63
 )
 
 // instructionError adds interpreter location to low-level execution errors.
@@ -200,8 +206,13 @@ func (e *executor) run() ([]Value, error) {
 		case wasmir.InstrI32Const:
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
+			wasmir.InstrI32DivS, wasmir.InstrI32DivU, wasmir.InstrI32RemS, wasmir.InstrI32RemU,
+			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor,
+			wasmir.InstrI32Shl, wasmir.InstrI32ShrS, wasmir.InstrI32ShrU,
+			wasmir.InstrI32Rotl, wasmir.InstrI32Rotr,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
-			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
+			wasmir.InstrI32LtS, wasmir.InstrI32LtU, wasmir.InstrI32LeS, wasmir.InstrI32LeU,
+			wasmir.InstrI32GtS, wasmir.InstrI32GtU, wasmir.InstrI32GeS, wasmir.InstrI32GeU:
 			v, err := e.evalI32Binary(ins.kind)
 			if err != nil {
 				return nil, e.instructionError(err)
@@ -215,14 +226,19 @@ func (e *executor) run() ([]Value, error) {
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
 			e.push(Value{Type: wasmir.ValueTypeI64, I64: ins.bits})
-		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
+		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul,
+			wasmir.InstrI64DivS, wasmir.InstrI64DivU, wasmir.InstrI64RemS, wasmir.InstrI64RemU,
+			wasmir.InstrI64And, wasmir.InstrI64Or, wasmir.InstrI64Xor,
+			wasmir.InstrI64Shl, wasmir.InstrI64ShrS, wasmir.InstrI64ShrU,
+			wasmir.InstrI64Rotl, wasmir.InstrI64Rotr:
 			v, err := e.evalI64Binary(ins.kind)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
-			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
+			wasmir.InstrI64LtS, wasmir.InstrI64LtU, wasmir.InstrI64LeS, wasmir.InstrI64LeU,
+			wasmir.InstrI64GtS, wasmir.InstrI64GtU, wasmir.InstrI64GeS, wasmir.InstrI64GeU:
 			v, err := e.evalI64Compare(ins.kind)
 			if err != nil {
 				return nil, e.instructionError(err)
@@ -357,8 +373,7 @@ func (e *executor) pop() (Value, error) {
 	return v, nil
 }
 
-// evalI64Binary pops two i64 operands and evaluates an i64 arithmetic
-// instruction.
+// evalI64Binary pops two i64 operands and evaluates an i64 binary instruction.
 func (e *executor) evalI64Binary(kind wasmir.InstrKind) (int64, error) {
 	rhs, err := e.popI64()
 	if err != nil {
@@ -376,6 +391,45 @@ func (e *executor) evalI64Binary(kind wasmir.InstrKind) (int64, error) {
 		return lhs - rhs, nil
 	case wasmir.InstrI64Mul:
 		return lhs * rhs, nil
+	case wasmir.InstrI64DivS:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		if lhs == minInt64 && rhs == -1 {
+			return 0, fmt.Errorf("integer overflow")
+		}
+		return lhs / rhs, nil
+	case wasmir.InstrI64DivU:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return int64(uint64(lhs) / uint64(rhs)), nil
+	case wasmir.InstrI64RemS:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return lhs % rhs, nil
+	case wasmir.InstrI64RemU:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return int64(uint64(lhs) % uint64(rhs)), nil
+	case wasmir.InstrI64And:
+		return lhs & rhs, nil
+	case wasmir.InstrI64Or:
+		return lhs | rhs, nil
+	case wasmir.InstrI64Xor:
+		return lhs ^ rhs, nil
+	case wasmir.InstrI64Shl:
+		return int64(uint64(lhs) << (uint64(rhs) & 63)), nil
+	case wasmir.InstrI64ShrS:
+		return lhs >> (uint64(rhs) & 63), nil
+	case wasmir.InstrI64ShrU:
+		return int64(uint64(lhs) >> (uint64(rhs) & 63)), nil
+	case wasmir.InstrI64Rotl:
+		return int64(bits.RotateLeft64(uint64(lhs), int(uint64(rhs)&63))), nil
+	case wasmir.InstrI64Rotr:
+		return int64(bits.RotateLeft64(uint64(lhs), -int(uint64(rhs)&63))), nil
 	default:
 		return 0, fmt.Errorf("unsupported i64 binary instruction %s", instrName(kind))
 	}
@@ -400,12 +454,20 @@ func (e *executor) evalI64Compare(kind wasmir.InstrKind) (int32, error) {
 		return boolI32(lhs != rhs), nil
 	case wasmir.InstrI64LtS:
 		return boolI32(lhs < rhs), nil
+	case wasmir.InstrI64LtU:
+		return boolI32(uint64(lhs) < uint64(rhs)), nil
 	case wasmir.InstrI64LeS:
 		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrI64LeU:
+		return boolI32(uint64(lhs) <= uint64(rhs)), nil
 	case wasmir.InstrI64GtS:
 		return boolI32(lhs > rhs), nil
+	case wasmir.InstrI64GtU:
+		return boolI32(uint64(lhs) > uint64(rhs)), nil
 	case wasmir.InstrI64GeS:
 		return boolI32(lhs >= rhs), nil
+	case wasmir.InstrI64GeU:
+		return boolI32(uint64(lhs) >= uint64(rhs)), nil
 	default:
 		return 0, fmt.Errorf("unsupported i64 comparison instruction %s", instrName(kind))
 	}
@@ -523,8 +585,7 @@ func (e *executor) evalF64Compare(kind wasmir.InstrKind) (int32, error) {
 	}
 }
 
-// evalI32Binary pops two i32 operands and evaluates an i32 arithmetic or
-// comparison instruction.
+// evalI32Binary pops two i32 operands and evaluates an i32 binary instruction.
 func (e *executor) evalI32Binary(kind wasmir.InstrKind) (int32, error) {
 	rhs, err := e.popI32()
 	if err != nil {
@@ -542,18 +603,65 @@ func (e *executor) evalI32Binary(kind wasmir.InstrKind) (int32, error) {
 		return lhs - rhs, nil
 	case wasmir.InstrI32Mul:
 		return lhs * rhs, nil
+	case wasmir.InstrI32DivS:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		if lhs == minInt32 && rhs == -1 {
+			return 0, fmt.Errorf("integer overflow")
+		}
+		return lhs / rhs, nil
+	case wasmir.InstrI32DivU:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return int32(uint32(lhs) / uint32(rhs)), nil
+	case wasmir.InstrI32RemS:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return lhs % rhs, nil
+	case wasmir.InstrI32RemU:
+		if rhs == 0 {
+			return 0, fmt.Errorf("integer divide by zero")
+		}
+		return int32(uint32(lhs) % uint32(rhs)), nil
+	case wasmir.InstrI32And:
+		return lhs & rhs, nil
+	case wasmir.InstrI32Or:
+		return lhs | rhs, nil
+	case wasmir.InstrI32Xor:
+		return lhs ^ rhs, nil
+	case wasmir.InstrI32Shl:
+		return int32(uint32(lhs) << (uint32(rhs) & 31)), nil
+	case wasmir.InstrI32ShrS:
+		return lhs >> (uint32(rhs) & 31), nil
+	case wasmir.InstrI32ShrU:
+		return int32(uint32(lhs) >> (uint32(rhs) & 31)), nil
+	case wasmir.InstrI32Rotl:
+		return int32(bits.RotateLeft32(uint32(lhs), int(uint32(rhs)&31))), nil
+	case wasmir.InstrI32Rotr:
+		return int32(bits.RotateLeft32(uint32(lhs), -int(uint32(rhs)&31))), nil
 	case wasmir.InstrI32Eq:
 		return boolI32(lhs == rhs), nil
 	case wasmir.InstrI32Ne:
 		return boolI32(lhs != rhs), nil
 	case wasmir.InstrI32LtS:
 		return boolI32(lhs < rhs), nil
+	case wasmir.InstrI32LtU:
+		return boolI32(uint32(lhs) < uint32(rhs)), nil
 	case wasmir.InstrI32LeS:
 		return boolI32(lhs <= rhs), nil
+	case wasmir.InstrI32LeU:
+		return boolI32(uint32(lhs) <= uint32(rhs)), nil
 	case wasmir.InstrI32GtS:
 		return boolI32(lhs > rhs), nil
+	case wasmir.InstrI32GtU:
+		return boolI32(uint32(lhs) > uint32(rhs)), nil
 	case wasmir.InstrI32GeS:
 		return boolI32(lhs >= rhs), nil
+	case wasmir.InstrI32GeU:
+		return boolI32(uint32(lhs) >= uint32(rhs)), nil
 	default:
 		return 0, fmt.Errorf("unsupported i32 binary instruction %s", instrName(kind))
 	}
