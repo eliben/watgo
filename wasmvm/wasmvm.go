@@ -307,6 +307,8 @@ func (inst *ModuleInstance) applyDataSegments() error {
 	return nil
 }
 
+// dataSegmentOffset evaluates the active data segment offset as an i32 memory
+// address.
 func (inst *ModuleInstance) dataSegmentOffset(seg wasmir.DataSegment) (uint64, error) {
 	if len(seg.OffsetExpr) > 0 {
 		v, err := vm.EvalConstExpr(seg.OffsetExpr, vmResolver{inst: inst, constExpr: true})
@@ -492,12 +494,17 @@ func (r vmResolver) GlobalSet(index uint32, value Value) error {
 	return nil
 }
 
+// MemoryLoad reads a little-endian integer from an instantiated memory.
 func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint64, error) {
 	mem, err := r.memory(index, address, size)
 	if err != nil {
 		return 0, err
 	}
 	switch size {
+	case 1:
+		return uint64(mem[0]), nil
+	case 2:
+		return uint64(binary.LittleEndian.Uint16(mem)), nil
 	case 4:
 		return uint64(binary.LittleEndian.Uint32(mem)), nil
 	default:
@@ -505,12 +512,20 @@ func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint6
 	}
 }
 
+// MemoryStore writes the low-order bytes of value to an instantiated memory in
+// little-endian order.
 func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value uint64) error {
 	mem, err := r.memory(index, address, size)
 	if err != nil {
 		return err
 	}
 	switch size {
+	case 1:
+		mem[0] = byte(value)
+		return nil
+	case 2:
+		binary.LittleEndian.PutUint16(mem, uint16(value))
+		return nil
 	case 4:
 		binary.LittleEndian.PutUint32(mem, uint32(value))
 		return nil

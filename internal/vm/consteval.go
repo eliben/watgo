@@ -70,6 +70,8 @@ func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) 
 	return stack[0], nil
 }
 
+// evalI32ConstBinOp pops two i32 const-expression operands and pushes the i32
+// result of op.
 func evalI32ConstBinOp(stack *[]Value, op func(int32, int32) int32) error {
 	rhs, err := popConstValue(stack, wasmir.ValueTypeI32)
 	if err != nil {
@@ -83,6 +85,8 @@ func evalI32ConstBinOp(stack *[]Value, op func(int32, int32) int32) error {
 	return nil
 }
 
+// evalI64ConstBinOp pops two i64 const-expression operands and pushes the i64
+// result of op.
 func evalI64ConstBinOp(stack *[]Value, op func(int64, int64) int64) error {
 	rhs, err := popConstValue(stack, wasmir.ValueTypeI64)
 	if err != nil {
@@ -96,6 +100,8 @@ func evalI64ConstBinOp(stack *[]Value, op func(int64, int64) int64) error {
 	return nil
 }
 
+// popConstValue pops the top const-expression stack value and verifies its
+// value type.
 func popConstValue(stack *[]Value, want wasmir.ValueType) (Value, error) {
 	if len(*stack) == 0 {
 		return Value{}, fmt.Errorf("initializer stack underflow")

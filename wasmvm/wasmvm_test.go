@@ -752,6 +752,61 @@ func TestActiveDataSegments(t *testing.T) {
 	}
 }
 
+func TestI32NarrowMemoryOps(t *testing.T) {
+	// Narrow i32 loads extend to i32, and narrow stores truncate the low-order
+	// bytes of the stored value.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data (i32.const 0) "\ff\80\34\12")
+			(func (export "load8_s") (result i32)
+				i32.const 0
+				i32.load8_s)
+			(func (export "load8_u") (result i32)
+				i32.const 0
+				i32.load8_u)
+			(func (export "load16_s") (result i32)
+				i32.const 0
+				i32.load16_s)
+			(func (export "load16_u") (result i32)
+				i32.const 2
+				i32.load16_u)
+			(func (export "store8") (result i32)
+				i32.const 8
+				i32.const 0x12345678
+				i32.store8
+				i32.const 8
+				i32.load8_u)
+			(func (export "store16") (result i32)
+				i32.const 10
+				i32.const 0x12345678
+				i32.store16
+				i32.const 10
+				i32.load16_u))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		want int32
+	}{
+		{name: "load8_s", want: -1},
+		{name: "load8_u", want: 255},
+		{name: "load16_s", want: -32513},
+		{name: "load16_u", want: 0x1234},
+		{name: "store8", want: 0x78},
+		{name: "store16", want: 0x5678},
+	} {
+		results := callExport(t, inst, tt.name)
+		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
+			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
+		}
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced

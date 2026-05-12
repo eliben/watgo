@@ -244,7 +244,8 @@ func (e *executor) run() ([]Value, error) {
 			}
 		case wasmir.InstrI32Const:
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
-		case wasmir.InstrI32Load:
+		case wasmir.InstrI32Load, wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
+			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U:
 			if e.resolver == nil {
 				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
@@ -256,12 +257,13 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, 4)
+			size := i32LoadSize(ins.kind)
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, size)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(raw))})
-		case wasmir.InstrI32Store:
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: extendI32Load(ins.kind, raw)})
+		case wasmir.InstrI32Store, wasmir.InstrI32Store8, wasmir.InstrI32Store16:
 			if e.resolver == nil {
 				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
@@ -277,7 +279,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, 4, uint64(uint32(value))); err != nil {
+			if err := e.resolver.MemoryStore(ins.index, effective, i32StoreSize(ins.kind), uint64(uint32(value))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
@@ -774,12 +776,55 @@ func boolI32(v bool) int32 {
 	return 0
 }
 
+// memoryAddress computes an i32-memory effective address from the dynamic base
+// operand and the static memory offset immediate.
 func memoryAddress(base int32, offset uint64) (uint64, error) {
 	addr := uint64(uint32(base))
 	if addr > ^uint64(0)-offset {
 		return 0, fmt.Errorf("memory address overflow")
 	}
 	return addr + offset, nil
+}
+
+// i32LoadSize returns the byte width used by a supported i32 load instruction.
+func i32LoadSize(kind wasmir.InstrKind) uint32 {
+	switch kind {
+	case wasmir.InstrI32Load8S, wasmir.InstrI32Load8U:
+		return 1
+	case wasmir.InstrI32Load16S, wasmir.InstrI32Load16U:
+		return 2
+	default:
+		return 4
+	}
+}
+
+// i32StoreSize returns the byte width used by a supported i32 store instruction.
+func i32StoreSize(kind wasmir.InstrKind) uint32 {
+	switch kind {
+	case wasmir.InstrI32Store8:
+		return 1
+	case wasmir.InstrI32Store16:
+		return 2
+	default:
+		return 4
+	}
+}
+
+// extendI32Load applies the sign-extension or zero-extension behavior required
+// by kind to the raw little-endian memory value.
+func extendI32Load(kind wasmir.InstrKind, raw uint64) int32 {
+	switch kind {
+	case wasmir.InstrI32Load8S:
+		return int32(int8(raw))
+	case wasmir.InstrI32Load8U:
+		return int32(uint8(raw))
+	case wasmir.InstrI32Load16S:
+		return int32(int16(raw))
+	case wasmir.InstrI32Load16U:
+		return int32(uint16(raw))
+	default:
+		return int32(uint32(raw))
+	}
 }
 
 // popWant pops the top operand and verifies it has the expected value type.
