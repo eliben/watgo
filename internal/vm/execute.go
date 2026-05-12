@@ -567,52 +567,40 @@ func boolI32(v bool) int32 {
 	return 0
 }
 
-// popI32 pops the top operand and verifies it is an i32.
+// popWant pops the top operand and verifies it has the expected value type.
+func (e *executor) popWant(want wasmir.ValueType) (Value, error) {
+	v, err := e.pop()
+	if err != nil {
+		return Value{}, err
+	}
+	if v.Type != want {
+		return Value{}, fmt.Errorf("got %s operand, want %s", v.Type, want)
+	}
+	return v, nil
+}
+
+// popI32 pops the top operand and returns its i32 payload.
 func (e *executor) popI32() (int32, error) {
-	v, err := e.pop()
-	if err != nil {
-		return 0, err
-	}
-	if v.Type != wasmir.ValueTypeI32 {
-		return 0, fmt.Errorf("got %s operand, want i32", v.Type)
-	}
-	return v.I32, nil
+	v, err := e.popWant(wasmir.ValueTypeI32)
+	return v.I32, err
 }
 
-// popI64 pops the top operand and verifies it is an i64.
+// popI64 pops the top operand and returns its i64 payload.
 func (e *executor) popI64() (int64, error) {
-	v, err := e.pop()
-	if err != nil {
-		return 0, err
-	}
-	if v.Type != wasmir.ValueTypeI64 {
-		return 0, fmt.Errorf("got %s operand, want i64", v.Type)
-	}
-	return v.I64, nil
+	v, err := e.popWant(wasmir.ValueTypeI64)
+	return v.I64, err
 }
 
-// popF32 pops the top operand and verifies it is an f32.
+// popF32 pops the top operand and returns its f32 payload.
 func (e *executor) popF32() (float32, error) {
-	v, err := e.pop()
-	if err != nil {
-		return 0, err
-	}
-	if v.Type != wasmir.ValueTypeF32 {
-		return 0, fmt.Errorf("got %s operand, want f32", v.Type)
-	}
-	return v.F32, nil
+	v, err := e.popWant(wasmir.ValueTypeF32)
+	return v.F32, err
 }
 
-// popF64 pops the top operand and verifies it is an f64.
+// popF64 pops the top operand and returns its f64 payload.
 func (e *executor) popF64() (float64, error) {
-	v, err := e.pop()
-	if err != nil {
-		return 0, err
-	}
-	if v.Type != wasmir.ValueTypeF64 {
-		return 0, fmt.Errorf("got %s operand, want f64", v.Type)
-	}
-	return v.F64, nil
+	v, err := e.popWant(wasmir.ValueTypeF64)
+	return v.F64, err
 }
 
 // popArgs removes a call's arguments from the operand stack and returns them in
