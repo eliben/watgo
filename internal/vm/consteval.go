@@ -10,11 +10,11 @@ import (
 // EvalConstExpr evaluates a lowered WebAssembly constant expression.
 //
 // The input is the flat wasmir instruction sequence used by module-level
-// initializers. globalGet is called for global.get instructions; callers own
-// the policy for which globals are visible in a specific const-expression
-// context. For example, wasmvm uses this to allow only earlier immutable
-// globals while instantiating module-defined globals.
-func EvalConstExpr(init []wasmir.Instruction, globalGet func(index uint32) (Value, error)) (Value, error) {
+// initializers. resolver is used for global.get instructions; callers own the
+// policy for which globals are visible in a specific const-expression context.
+// For example, wasmvm uses this to allow only earlier immutable globals while
+// instantiating module-defined globals.
+func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) {
 	stack := make([]Value, 0, 1)
 	for pc, ins := range init {
 		switch ins.Kind {
@@ -27,10 +27,10 @@ func EvalConstExpr(init []wasmir.Instruction, globalGet func(index uint32) (Valu
 		case wasmir.InstrF64Const:
 			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(ins.F64Const)})
 		case wasmir.InstrGlobalGet:
-			if globalGet == nil {
-				return Value{}, fmt.Errorf("initializer instruction %d: global resolver is nil", pc)
+			if resolver == nil {
+				return Value{}, fmt.Errorf("initializer instruction %d: resolver is nil", pc)
 			}
-			v, err := globalGet(ins.GlobalIndex)
+			v, err := resolver.GlobalGet(ins.GlobalIndex)
 			if err != nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
 			}

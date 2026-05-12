@@ -56,20 +56,19 @@ type Value struct {
 	F64 float64
 }
 
-// CallResolver resolves and invokes function-index calls made by
-// ExecuteFunction.
-type CallResolver interface {
+// Resolver is the VM's view of the instantiated module environment.
+//
+// The VM owns execution mechanics for compiled module-defined functions, but
+// it does not own host-visible instance state. Any instruction that may cross
+// that boundary, such as calls or global access, goes through Resolver.
+type Resolver interface {
 	// FuncType returns the signature of the function at index.
 	FuncType(index uint32) (wasmir.TypeDef, error)
 
 	// CallFunc invokes the function at index with already popped arguments in
 	// parameter order.
 	CallFunc(index uint32, args []Value) ([]Value, error)
-}
 
-// GlobalResolver resolves and updates global-index instructions made by
-// ExecuteFunction.
-type GlobalResolver interface {
 	// GlobalGet returns the current value of the global at index.
 	GlobalGet(index uint32) (Value, error)
 
@@ -111,12 +110,10 @@ type executor struct {
 	// ft is fn's validated WebAssembly signature.
 	ft wasmir.TypeDef
 
-	// calls resolves and dispatches wasm call instructions back to the owner of
-	// the module function index space.
-	calls CallResolver
-
-	// globals resolves and updates module instance globals.
-	globals GlobalResolver
+	// resolver connects this VM frame to the instantiated module environment:
+	// function index space, globals, and eventually other host-visible state
+	// such as memories and tables.
+	resolver Resolver
 
 	// pc is the current instruction index in fn.code. It is stored on the frame
 	// so error wrapping and control-flow instructions can share the same
@@ -132,17 +129,16 @@ type executor struct {
 }
 
 // ExecuteFunction interprets one compiled module-defined function body.
-func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallResolver, globals GlobalResolver) ([]Value, error) {
+func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, resolver Resolver) ([]Value, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("defined function has no compiled code")
 	}
 
 	e := executor{
-		fn:      fn,
-		ft:      ft,
-		calls:   calls,
-		globals: globals,
-		stack:   make([]Value, 0),
+		fn:       fn,
+		ft:       ft,
+		resolver: resolver,
+		stack:    make([]Value, 0),
 	}
 	if err := e.initLocals(args); err != nil {
 		return nil, err
@@ -218,23 +214,23 @@ func (e *executor) run() ([]Value, error) {
 			e.locals[ins.index] = v
 			e.push(v)
 		case wasmir.InstrGlobalGet:
-			if e.globals == nil {
-				return nil, e.instructionError(fmt.Errorf("global resolver is nil"))
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
-			v, err := e.globals.GlobalGet(ins.index)
+			v, err := e.resolver.GlobalGet(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(v)
 		case wasmir.InstrGlobalSet:
-			if e.globals == nil {
-				return nil, e.instructionError(fmt.Errorf("global resolver is nil"))
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
 			v, err := e.pop()
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.globals.GlobalSet(ins.index, v); err != nil {
+			if err := e.resolver.GlobalSet(ins.index, v); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Const:
@@ -340,7 +336,10 @@ func (e *executor) run() ([]Value, error) {
 				e.push(v2)
 			}
 		case wasmir.InstrCall:
-			calleeType, err := e.calls.FuncType(ins.index)
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			calleeType, err := e.resolver.FuncType(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
@@ -348,7 +347,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			results, err := e.calls.CallFunc(ins.index, callArgs)
+			results, err := e.resolver.CallFunc(ins.index, callArgs)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}

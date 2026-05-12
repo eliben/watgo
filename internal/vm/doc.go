@@ -18,13 +18,11 @@
 //     code.
 //   - EvalConstExpr evaluates lowered module-level constant expressions into
 //     runtime Values during instantiation.
-//   - CallResolver is implemented by the package that owns the function index
-//     space. Functions can come from the host or from compiled WASM modules.
-//     ExecuteFunction uses it to resolve and invoke wasm call
-//     instructions without knowing about module instances or host imports.
-//   - GlobalResolver is implemented by the package that owns instantiated
-//     globals. ExecuteFunction uses it for global.get/global.set without
-//     knowing how globals were imported or initialized.
+//   - Resolver is implemented by the package that owns the instantiated
+//     module environment. ExecuteFunction and EvalConstExpr use it for
+//     operations that may cross into host-visible state, such as function
+//     calls and global access, without knowing about module instances or host
+//     imports.
 //   - CheckArgs and CheckResults are shared signature checks used at call
 //     boundaries.
 //
@@ -43,13 +41,13 @@
 //     invoked directly through their Go callback; module-defined functions are
 //     passed to ExecuteFunction.
 //   - ExecuteFunction runs the compiled instruction stream with its own operand
-//     stack and locals, using GlobalResolver when the instruction stream reads
-//     or writes instance globals.
+//     stack and locals, using Resolver when the instruction stream calls a
+//     function or reads/writes an instance global.
 //   - When ExecuteFunction reaches a wasm call instruction, it pops the
-//     callee's arguments, asks CallResolver for the callee's signature, and
-//     invokes CallResolver.CallFunc.
-//   - wasmvm's CallResolver implementation re-enters the same function
-//     dispatcher, so a wasm function calling another wasm function creates a
+//     callee's arguments, asks Resolver for the callee's signature, and invokes
+//     Resolver.CallFunc.
+//   - wasmvm's Resolver implementation re-enters the same function dispatcher,
+//     so a wasm function calling another wasm function creates a
 //     new ExecuteFunction frame, while a wasm function calling an import
 //     reaches the host callback.
 //   - Results return back through the same chain of dispatcher and
@@ -61,10 +59,10 @@
 //	Func.Call(A)
 //	  -> wasmvm dispatcher(A)
 //	  -> ExecuteFunction(A)
-//	  -> CallResolver.CallFunc(B)
+//	  -> Resolver.CallFunc(B)
 //	  -> wasmvm dispatcher(B)
 //	  -> ExecuteFunction(B)
-//	  -> CallResolver.CallFunc(host)
+//	  -> Resolver.CallFunc(host)
 //	  -> wasmvm dispatcher(host)
 //	  -> HostFunc callback
 package vm

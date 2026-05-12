@@ -228,7 +228,7 @@ func (inst *ModuleInstance) buildGlobals() error {
 		if g.ImportModule != "" || g.ImportName != "" {
 			return fmt.Errorf("unsupported global import %q.%q", g.ImportModule, g.ImportName)
 		}
-		value, err := vm.EvalConstExpr(g.Init, inst.globalInitGet)
+		value, err := vm.EvalConstExpr(g.Init, vmResolver{inst: inst, globalInit: true})
 		if err != nil {
 			return fmt.Errorf("global[%d]: %w", i, err)
 		}
@@ -238,20 +238,6 @@ func (inst *ModuleInstance) buildGlobals() error {
 		inst.globals = append(inst.globals, globalInst{typ: g.Type, mutable: g.Mutable, value: value})
 	}
 	return nil
-}
-
-// globalInitGet resolves global.get while a module-defined global initializer
-// is being evaluated. Only earlier globals have been appended to inst.globals,
-// and WebAssembly initializer expressions may read only immutable globals.
-func (inst *ModuleInstance) globalInitGet(index uint32) (Value, error) {
-	if int(index) >= len(inst.globals) {
-		return Value{}, fmt.Errorf("global index %d out of range", index)
-	}
-	g := inst.globals[index]
-	if g.mutable {
-		return Value{}, fmt.Errorf("global %d is mutable", index)
-	}
-	return g.value, nil
 }
 
 // buildFuncs creates the instance function address space.
@@ -346,8 +332,7 @@ func (inst *ModuleInstance) callFunc(index uint32, args []Value) ([]Value, error
 		}
 		return results, nil
 	}
-	resolver := callResolver{inst: inst}
-	return vm.ExecuteFunction(fn.code, ft, args, resolver, resolver)
+	return vm.ExecuteFunction(fn.code, ft, args, vmResolver{inst: inst})
 }
 
 // funcType returns the function type referenced by typeIdx.
@@ -358,11 +343,15 @@ func (inst *ModuleInstance) funcType(typeIdx uint32) (wasmir.TypeDef, error) {
 	return inst.m.Types[typeIdx], nil
 }
 
-type callResolver struct {
+type vmResolver struct {
 	inst *ModuleInstance
+
+	// globalInit applies the stricter global.get rules used while evaluating
+	// module-defined global initializer expressions.
+	globalInit bool
 }
 
-func (r callResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
+func (r vmResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
 	inst := r.inst
 	if int(index) >= len(inst.funcs) {
 		return wasmir.TypeDef{}, fmt.Errorf("call function index %d out of range", index)
@@ -370,18 +359,22 @@ func (r callResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
 	return inst.funcType(inst.funcs[index].typeIdx)
 }
 
-func (r callResolver) CallFunc(index uint32, args []Value) ([]Value, error) {
+func (r vmResolver) CallFunc(index uint32, args []Value) ([]Value, error) {
 	return r.inst.callFunc(index, args)
 }
 
-func (r callResolver) GlobalGet(index uint32) (Value, error) {
+func (r vmResolver) GlobalGet(index uint32) (Value, error) {
 	if int(index) >= len(r.inst.globals) {
 		return Value{}, fmt.Errorf("global index %d out of range", index)
 	}
-	return r.inst.globals[index].value, nil
+	g := r.inst.globals[index]
+	if r.globalInit && g.mutable {
+		return Value{}, fmt.Errorf("global %d is mutable", index)
+	}
+	return g.value, nil
 }
 
-func (r callResolver) GlobalSet(index uint32, value Value) error {
+func (r vmResolver) GlobalSet(index uint32, value Value) error {
 	if int(index) >= len(r.inst.globals) {
 		return fmt.Errorf("global index %d out of range", index)
 	}

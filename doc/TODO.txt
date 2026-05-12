@@ -3,7 +3,7 @@ Immediate TODOs
 
 vm:
 
-* two resolvers or one resolver?
+* 
 
 Longer-term plans
 -----------------
