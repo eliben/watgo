@@ -862,6 +862,76 @@ func TestScalarMemoryOps(t *testing.T) {
 	}
 }
 
+func TestI64NarrowMemoryOps(t *testing.T) {
+	// Narrow i64 loads extend to i64, and narrow i64 stores truncate the
+	// low-order bytes of the stored value.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data (i32.const 0) "\ff\80\34\12\ff\ff\ff\80")
+			(func (export "load8_s") (result i64)
+				i32.const 0
+				i64.load8_s)
+			(func (export "load8_u") (result i64)
+				i32.const 0
+				i64.load8_u)
+			(func (export "load16_s") (result i64)
+				i32.const 0
+				i64.load16_s)
+			(func (export "load16_u") (result i64)
+				i32.const 2
+				i64.load16_u)
+			(func (export "load32_s") (result i64)
+				i32.const 4
+				i64.load32_s)
+			(func (export "load32_u") (result i64)
+				i32.const 4
+				i64.load32_u)
+			(func (export "store8") (result i64)
+				i32.const 16
+				i64.const 0x123456789abcdef0
+				i64.store8
+				i32.const 16
+				i64.load8_u)
+			(func (export "store16") (result i64)
+				i32.const 18
+				i64.const 0x123456789abcdef0
+				i64.store16
+				i32.const 18
+				i64.load16_u)
+			(func (export "store32") (result i64)
+				i32.const 20
+				i64.const 0x123456789abcdef0
+				i64.store32
+				i32.const 20
+				i64.load32_u))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		want int64
+	}{
+		{name: "load8_s", want: -1},
+		{name: "load8_u", want: 255},
+		{name: "load16_s", want: -32513},
+		{name: "load16_u", want: 0x1234},
+		{name: "load32_s", want: -2130706433},
+		{name: "load32_u", want: 0x80ffffff},
+		{name: "store8", want: 0xf0},
+		{name: "store16", want: 0xdef0},
+		{name: "store32", want: 0x9abcdef0},
+	} {
+		results := callExport(t, inst, tt.name)
+		if len(results) != 1 || results[0] != wasmvm.I64(tt.want) {
+			t.Fatalf("%s got results %#v, want i64 %d", tt.name, results, tt.want)
+		}
+	}
+}
+
 func TestMemorySizeAndGrow(t *testing.T) {
 	// memory.grow returns the old size on success, -1 on failure, and newly
 	// allocated pages are zero-initialized.

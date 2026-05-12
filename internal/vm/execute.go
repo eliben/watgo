@@ -289,7 +289,9 @@ func (e *executor) run() ([]Value, error) {
 			if err := e.resolver.MemoryStore(ins.index, effective, i32StoreSize(ins.kind), uint64(uint32(value))); err != nil {
 				return nil, e.instructionError(err)
 			}
-		case wasmir.InstrI64Load:
+		case wasmir.InstrI64Load, wasmir.InstrI64Load8S, wasmir.InstrI64Load8U,
+			wasmir.InstrI64Load16S, wasmir.InstrI64Load16U,
+			wasmir.InstrI64Load32S, wasmir.InstrI64Load32U:
 			if e.resolver == nil {
 				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
@@ -301,12 +303,13 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, 8)
+			size := i64LoadSize(ins.kind)
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, size)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			e.push(Value{Type: wasmir.ValueTypeI64, I64: int64(raw)})
-		case wasmir.InstrI64Store:
+			e.push(Value{Type: wasmir.ValueTypeI64, I64: extendI64Load(ins.kind, raw)})
+		case wasmir.InstrI64Store, wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32:
 			if e.resolver == nil {
 				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
@@ -322,7 +325,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, 8, uint64(value)); err != nil {
+			if err := e.resolver.MemoryStore(ins.index, effective, i64StoreSize(ins.kind), uint64(value)); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrF32Load:
@@ -965,6 +968,55 @@ func extendI32Load(kind wasmir.InstrKind, raw uint64) int32 {
 		return int32(uint16(raw))
 	default:
 		return int32(uint32(raw))
+	}
+}
+
+// i64LoadSize returns the byte width used by a supported i64 load instruction.
+func i64LoadSize(kind wasmir.InstrKind) uint32 {
+	switch kind {
+	case wasmir.InstrI64Load8S, wasmir.InstrI64Load8U:
+		return 1
+	case wasmir.InstrI64Load16S, wasmir.InstrI64Load16U:
+		return 2
+	case wasmir.InstrI64Load32S, wasmir.InstrI64Load32U:
+		return 4
+	default:
+		return 8
+	}
+}
+
+// i64StoreSize returns the byte width used by a supported i64 store instruction.
+func i64StoreSize(kind wasmir.InstrKind) uint32 {
+	switch kind {
+	case wasmir.InstrI64Store8:
+		return 1
+	case wasmir.InstrI64Store16:
+		return 2
+	case wasmir.InstrI64Store32:
+		return 4
+	default:
+		return 8
+	}
+}
+
+// extendI64Load applies the sign-extension or zero-extension behavior required
+// by kind to the raw little-endian memory value.
+func extendI64Load(kind wasmir.InstrKind, raw uint64) int64 {
+	switch kind {
+	case wasmir.InstrI64Load8S:
+		return int64(int8(raw))
+	case wasmir.InstrI64Load8U:
+		return int64(uint8(raw))
+	case wasmir.InstrI64Load16S:
+		return int64(int16(raw))
+	case wasmir.InstrI64Load16U:
+		return int64(uint16(raw))
+	case wasmir.InstrI64Load32S:
+		return int64(int32(raw))
+	case wasmir.InstrI64Load32U:
+		return int64(uint32(raw))
+	default:
+		return int64(raw)
 	}
 }
 

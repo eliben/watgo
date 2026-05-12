@@ -102,6 +102,10 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
 			wasmir.InstrI32Store8, wasmir.InstrI32Store16,
 			wasmir.InstrI64Load, wasmir.InstrI64Store,
+			wasmir.InstrI64Load8S, wasmir.InstrI64Load8U,
+			wasmir.InstrI64Load16S, wasmir.InstrI64Load16U,
+			wasmir.InstrI64Load32S, wasmir.InstrI64Load32U,
+			wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32,
 			wasmir.InstrF32Load, wasmir.InstrF32Store,
 			wasmir.InstrF64Load, wasmir.InstrF64Store:
 			if ins.MemoryOffset > maxInt64Uint {
