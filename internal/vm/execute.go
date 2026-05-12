@@ -87,200 +87,235 @@ func CheckResults(want []wasmir.ValueType, got []Value) error {
 	return nil
 }
 
+// executor is one active module-defined function frame.
+type executor struct {
+	// fn is the compiled function being interpreted by this frame.
+	fn *Function
+
+	// ft is fn's validated WebAssembly signature.
+	ft wasmir.TypeDef
+
+	// calls resolves and dispatches wasm call instructions back to the owner of
+	// the module function index space.
+	calls CallResolver
+
+	// pc is the current instruction index in fn.code. It is stored on the frame
+	// so error wrapping and control-flow instructions can share the same
+	// location state.
+	pc int
+
+	// locals is the function's local array: parameters first, followed by
+	// zero-initialized non-parameter locals.
+	locals []Value
+
+	// stack is the operand stack for this frame.
+	stack []Value
+}
+
 // ExecuteFunction interprets one compiled module-defined function body.
 func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallResolver) ([]Value, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("defined function has no compiled code")
 	}
 
-	locals := append([]Value{}, args...)
-	for _, vt := range fn.locals {
+	e := executor{
+		fn:    fn,
+		ft:    ft,
+		calls: calls,
+		stack: make([]Value, 0),
+	}
+	if err := e.initLocals(args); err != nil {
+		return nil, err
+	}
+	return e.run()
+}
+
+// initLocals builds the frame's local array from call arguments and declared
+// non-parameter locals.
+func (e *executor) initLocals(args []Value) error {
+	e.locals = append([]Value{}, args...)
+	for _, vt := range e.fn.locals {
 		v, err := zeroValue(vt)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		locals = append(locals, v)
+		e.locals = append(e.locals, v)
 	}
+	return nil
+}
 
-	stack := make([]Value, 0)
-	pop := func() (Value, error) {
-		if len(stack) == 0 {
-			return Value{}, fmt.Errorf("operand stack underflow")
-		}
-		v := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		return v, nil
-	}
-
-	for pc := 0; pc < len(fn.code); pc++ {
-		ins := fn.code[pc]
+// run interprets fn.code until it reaches return, the final end instruction, or
+// an execution error.
+func (e *executor) run() ([]Value, error) {
+	for e.pc = 0; e.pc < len(e.fn.code); e.pc++ {
+		ins := e.fn.code[e.pc]
 		switch ins.kind {
 		case wasmir.InstrBlock:
 		case wasmir.InstrIf:
 			// The condition has already been validated as i32. A true condition
 			// enters the then arm. A false condition skips to the else marker
 			// if present, or to the matching end otherwise.
-			cond, err := popI32(pop)
+			cond, err := e.popI32()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
 			if cond == 0 {
-				pc = ins.target
+				e.pc = ins.target
 				continue
 			}
 		case wasmir.InstrElse:
 			// Reaching else normally means the then arm completed without
 			// branching. Skip the else arm.
-			pc = ins.target
+			e.pc = ins.target
 		case wasmir.InstrLocalGet:
-			if int(ins.index) >= len(locals) {
-				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
+			if int(ins.index) >= len(e.locals) {
+				return nil, e.instructionError(fmt.Errorf("local index %d out of range", ins.index))
 			}
-			stack = append(stack, locals[ins.index])
+			e.push(e.locals[ins.index])
 		case wasmir.InstrLocalSet:
-			if int(ins.index) >= len(locals) {
-				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
+			if int(ins.index) >= len(e.locals) {
+				return nil, e.instructionError(fmt.Errorf("local index %d out of range", ins.index))
 			}
-			v, err := pop()
+			v, err := e.pop()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			if v.Type != locals[ins.index].Type {
-				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type))
+			if v.Type != e.locals[ins.index].Type {
+				return nil, e.instructionError(fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, e.locals[ins.index].Type))
 			}
-			locals[ins.index] = v
+			e.locals[ins.index] = v
 		case wasmir.InstrLocalTee:
-			if int(ins.index) >= len(locals) {
-				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local index %d out of range", ins.index))
+			if int(ins.index) >= len(e.locals) {
+				return nil, e.instructionError(fmt.Errorf("local index %d out of range", ins.index))
 			}
-			v, err := pop()
+			v, err := e.pop()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			if v.Type != locals[ins.index].Type {
-				return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, locals[ins.index].Type))
+			if v.Type != e.locals[ins.index].Type {
+				return nil, e.instructionError(fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, e.locals[ins.index].Type))
 			}
-			locals[ins.index] = v
-			stack = append(stack, v)
+			e.locals[ins.index] = v
+			e.push(v)
 		case wasmir.InstrI32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32Eq, wasmir.InstrI32Ne,
 			wasmir.InstrI32LtS, wasmir.InstrI32LeS, wasmir.InstrI32GtS, wasmir.InstrI32GeS:
-			v, err := evalI32Binary(ins.kind, pop)
+			v, err := e.evalI32Binary(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI32Eqz:
-			v, err := popI32(pop)
+			v, err := e.popI32()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrI64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: ins.bits})
+			e.push(Value{Type: wasmir.ValueTypeI64, I64: ins.bits})
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul:
-			v, err := evalI64Binary(ins.kind, pop)
+			v, err := e.evalI64Binary(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI64, I64: v})
+			e.push(Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrI64Eq, wasmir.InstrI64Ne,
 			wasmir.InstrI64LtS, wasmir.InstrI64LeS, wasmir.InstrI64GtS, wasmir.InstrI64GeS:
-			v, err := evalI64Compare(ins.kind, pop)
+			v, err := e.evalI64Compare(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI64Eqz:
-			v, err := popI64(pop)
+			v, err := e.popI64()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
 		case wasmir.InstrF32Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.bits))})
+			e.push(Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.bits))})
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
-			v, err := evalF32Binary(ins.kind, pop)
+			v, err := e.evalF32Binary(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: v})
+			e.push(Value{Type: wasmir.ValueTypeF32, F32: v})
 		case wasmir.InstrF32Eq, wasmir.InstrF32Ne,
 			wasmir.InstrF32Lt, wasmir.InstrF32Le, wasmir.InstrF32Gt, wasmir.InstrF32Ge:
-			v, err := evalF32Compare(ins.kind, pop)
+			v, err := e.evalF32Compare(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrF64Const:
-			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(ins.bits))})
+			e.push(Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(ins.bits))})
 		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
-			v, err := evalF64Binary(ins.kind, pop)
+			v, err := e.evalF64Binary(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: v})
+			e.push(Value{Type: wasmir.ValueTypeF64, F64: v})
 		case wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge:
-			v, err := evalF64Compare(ins.kind, pop)
+			v, err := e.evalF64Compare(ins.kind)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, Value{Type: wasmir.ValueTypeI32, I32: v})
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrDrop:
-			if _, err := pop(); err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+			if _, err := e.pop(); err != nil {
+				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrCall:
-			calleeType, err := calls.FuncType(ins.index)
+			calleeType, err := e.calls.FuncType(ins.index)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			callArgs, err := popArgs(&stack, calleeType.Params)
+			callArgs, err := e.popArgs(calleeType.Params)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			results, err := calls.CallFunc(ins.index, callArgs)
+			results, err := e.calls.CallFunc(ins.index, callArgs)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
-			stack = append(stack, results...)
+			e.stack = append(e.stack, results...)
 		case wasmir.InstrBr:
-			pc = ins.target
+			e.pc = ins.target
 		case wasmir.InstrBrIf:
 			// br_if consumes only the condition. Any branch result values are
 			// already below it on the operand stack and are left there for the
 			// target block's end to consume.
-			cond, err := popI32(pop)
+			cond, err := e.popI32()
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
 			if cond != 0 {
-				pc = ins.target
+				e.pc = ins.target
 			}
 		case wasmir.InstrReturn:
-			results, err := popResults(&stack, ft.Results)
+			results, err := e.popResults(e.ft.Results)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
 			return results, nil
 		case wasmir.InstrEnd:
-			if pc != len(fn.code)-1 {
+			if e.pc != len(e.fn.code)-1 {
 				// Non-final end closes structured control. Branch targets skip
 				// over it, and ordinary fallthrough can treat it as a no-op
 				// because validation has already established the operand stack
 				// contract.
 				continue
 			}
-			results, err := popResults(&stack, ft.Results)
+			results, err := e.popResults(e.ft.Results)
 			if err != nil {
-				return nil, instructionErrorAt(pc, ins.kind, err)
+				return nil, e.instructionError(err)
 			}
 			return results, nil
 		default:
-			return nil, instructionErrorAt(pc, ins.kind, fmt.Errorf("unsupported instruction"))
+			return nil, e.instructionError(fmt.Errorf("unsupported instruction"))
 		}
 	}
 	return nil, fmt.Errorf("function ended without end")
@@ -302,12 +337,34 @@ func zeroValue(vt wasmir.ValueType) (Value, error) {
 	}
 }
 
-func evalI64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int64, error) {
-	rhs, err := popI64(pop)
+// instructionError wraps err with the current program counter and opcode.
+func (e *executor) instructionError(err error) error {
+	return instructionErrorAt(e.pc, e.fn.code[e.pc].kind, err)
+}
+
+// push appends v to the operand stack.
+func (e *executor) push(v Value) {
+	e.stack = append(e.stack, v)
+}
+
+// pop removes and returns the top operand stack value.
+func (e *executor) pop() (Value, error) {
+	if len(e.stack) == 0 {
+		return Value{}, fmt.Errorf("operand stack underflow")
+	}
+	v := e.stack[len(e.stack)-1]
+	e.stack = e.stack[:len(e.stack)-1]
+	return v, nil
+}
+
+// evalI64Binary pops two i64 operands and evaluates an i64 arithmetic
+// instruction.
+func (e *executor) evalI64Binary(kind wasmir.InstrKind) (int64, error) {
+	rhs, err := e.popI64()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popI64(pop)
+	lhs, err := e.popI64()
 	if err != nil {
 		return 0, err
 	}
@@ -324,12 +381,14 @@ func evalI64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int64, err
 	}
 }
 
-func evalI64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
-	rhs, err := popI64(pop)
+// evalI64Compare pops two i64 operands and evaluates an i64 comparison,
+// returning the WebAssembly i32 boolean result.
+func (e *executor) evalI64Compare(kind wasmir.InstrKind) (int32, error) {
+	rhs, err := e.popI64()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popI64(pop)
+	lhs, err := e.popI64()
 	if err != nil {
 		return 0, err
 	}
@@ -352,12 +411,14 @@ func evalI64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	}
 }
 
-func evalF32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float32, error) {
-	rhs, err := popF32(pop)
+// evalF32Binary pops two f32 operands and evaluates an f32 arithmetic
+// instruction.
+func (e *executor) evalF32Binary(kind wasmir.InstrKind) (float32, error) {
+	rhs, err := e.popF32()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popF32(pop)
+	lhs, err := e.popF32()
 	if err != nil {
 		return 0, err
 	}
@@ -376,12 +437,14 @@ func evalF32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float32, e
 	}
 }
 
-func evalF32Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
-	rhs, err := popF32(pop)
+// evalF32Compare pops two f32 operands and evaluates an f32 comparison,
+// returning the WebAssembly i32 boolean result.
+func (e *executor) evalF32Compare(kind wasmir.InstrKind) (int32, error) {
+	rhs, err := e.popF32()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popF32(pop)
+	lhs, err := e.popF32()
 	if err != nil {
 		return 0, err
 	}
@@ -404,12 +467,14 @@ func evalF32Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	}
 }
 
-func evalF64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float64, error) {
-	rhs, err := popF64(pop)
+// evalF64Binary pops two f64 operands and evaluates an f64 arithmetic
+// instruction.
+func (e *executor) evalF64Binary(kind wasmir.InstrKind) (float64, error) {
+	rhs, err := e.popF64()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popF64(pop)
+	lhs, err := e.popF64()
 	if err != nil {
 		return 0, err
 	}
@@ -428,12 +493,14 @@ func evalF64Binary(kind wasmir.InstrKind, pop func() (Value, error)) (float64, e
 	}
 }
 
-func evalF64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
-	rhs, err := popF64(pop)
+// evalF64Compare pops two f64 operands and evaluates an f64 comparison,
+// returning the WebAssembly i32 boolean result.
+func (e *executor) evalF64Compare(kind wasmir.InstrKind) (int32, error) {
+	rhs, err := e.popF64()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popF64(pop)
+	lhs, err := e.popF64()
 	if err != nil {
 		return 0, err
 	}
@@ -456,12 +523,14 @@ func evalF64Compare(kind wasmir.InstrKind, pop func() (Value, error)) (int32, er
 	}
 }
 
-func evalI32Binary(kind wasmir.InstrKind, pop func() (Value, error)) (int32, error) {
-	rhs, err := popI32(pop)
+// evalI32Binary pops two i32 operands and evaluates an i32 arithmetic or
+// comparison instruction.
+func (e *executor) evalI32Binary(kind wasmir.InstrKind) (int32, error) {
+	rhs, err := e.popI32()
 	if err != nil {
 		return 0, err
 	}
-	lhs, err := popI32(pop)
+	lhs, err := e.popI32()
 	if err != nil {
 		return 0, err
 	}
@@ -498,8 +567,9 @@ func boolI32(v bool) int32 {
 	return 0
 }
 
-func popI32(pop func() (Value, error)) (int32, error) {
-	v, err := pop()
+// popI32 pops the top operand and verifies it is an i32.
+func (e *executor) popI32() (int32, error) {
+	v, err := e.pop()
 	if err != nil {
 		return 0, err
 	}
@@ -509,8 +579,9 @@ func popI32(pop func() (Value, error)) (int32, error) {
 	return v.I32, nil
 }
 
-func popI64(pop func() (Value, error)) (int64, error) {
-	v, err := pop()
+// popI64 pops the top operand and verifies it is an i64.
+func (e *executor) popI64() (int64, error) {
+	v, err := e.pop()
 	if err != nil {
 		return 0, err
 	}
@@ -520,8 +591,9 @@ func popI64(pop func() (Value, error)) (int64, error) {
 	return v.I64, nil
 }
 
-func popF32(pop func() (Value, error)) (float32, error) {
-	v, err := pop()
+// popF32 pops the top operand and verifies it is an f32.
+func (e *executor) popF32() (float32, error) {
+	v, err := e.pop()
 	if err != nil {
 		return 0, err
 	}
@@ -531,8 +603,9 @@ func popF32(pop func() (Value, error)) (float32, error) {
 	return v.F32, nil
 }
 
-func popF64(pop func() (Value, error)) (float64, error) {
-	v, err := pop()
+// popF64 pops the top operand and verifies it is an f64.
+func (e *executor) popF64() (float64, error) {
+	v, err := e.pop()
 	if err != nil {
 		return 0, err
 	}
@@ -542,29 +615,33 @@ func popF64(pop func() (Value, error)) (float64, error) {
 	return v.F64, nil
 }
 
-func popArgs(stack *[]Value, params []wasmir.ValueType) ([]Value, error) {
+// popArgs removes a call's arguments from the operand stack and returns them in
+// parameter order.
+func (e *executor) popArgs(params []wasmir.ValueType) ([]Value, error) {
 	// Wasm evaluates arguments left-to-right and leaves them on the operand
 	// stack in parameter order, so the call argument list is the top
 	// len(params) values without reversing.
-	if len(*stack) < len(params) {
+	if len(e.stack) < len(params) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
-	base := len(*stack) - len(params)
-	args := (*stack)[base:]
-	*stack = (*stack)[:base]
+	base := len(e.stack) - len(params)
+	args := e.stack[base:]
+	e.stack = e.stack[:base]
 	if err := CheckArgs(params, args); err != nil {
 		return nil, err
 	}
 	return args, nil
 }
 
-func popResults(stack *[]Value, results []wasmir.ValueType) ([]Value, error) {
-	if len(*stack) < len(results) {
+// popResults removes function result values from the operand stack and returns
+// them in result order.
+func (e *executor) popResults(results []wasmir.ValueType) ([]Value, error) {
+	if len(e.stack) < len(results) {
 		return nil, fmt.Errorf("operand stack underflow")
 	}
-	base := len(*stack) - len(results)
-	out := (*stack)[base:]
-	*stack = (*stack)[:base]
+	base := len(e.stack) - len(results)
+	out := e.stack[base:]
+	e.stack = e.stack[:base]
 	if err := CheckResults(results, out); err != nil {
 		return nil, err
 	}
