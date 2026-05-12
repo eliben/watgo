@@ -7,12 +7,15 @@
 package wasmvm
 
 import (
+	"encoding/binary"
 	"fmt"
 	"slices"
 
 	"github.com/eliben/watgo/internal/vm"
 	"github.com/eliben/watgo/wasmir"
 )
+
+const wasmPageSize = 64 * 1024
 
 // Value is one runtime WebAssembly value passed into or returned from a Func.
 //
@@ -142,6 +145,9 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 		m:       m,
 		exports: make(map[string]*Func),
 	}
+	if err := inst.buildMemories(); err != nil {
+		return nil, err
+	}
 	if err := inst.buildGlobals(); err != nil {
 		return nil, err
 	}
@@ -165,11 +171,12 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 // A ModuleInstance owns the module's function index space and exported
 // functions. Values returned by ExportedFunc are bound to this instance.
 type ModuleInstance struct {
-	rt      *Runtime
-	m       *wasmir.Module
-	funcs   []funcInst
-	globals []globalInst
-	exports map[string]*Func
+	rt       *Runtime
+	m        *wasmir.Module
+	funcs    []funcInst
+	globals  []globalInst
+	memories []memoryInst
+	exports  map[string]*Func
 }
 
 // ExportedFunc returns the exported function with the given name.
@@ -216,10 +223,62 @@ type funcInst struct {
 	code *vm.Function
 }
 
+// globalInst is one instantiated global in the module's global index space.
+//
+// It stores runtime state: mutable globals update value through global.set,
+// while immutable globals keep the value computed from their initializer for
+// the lifetime of the instance.
 type globalInst struct {
-	typ     wasmir.ValueType
+	// typ is the validated value type of value. It is kept here so global.set
+	// can check writes without looking back into the source module.
+	typ wasmir.ValueType
+
+	// mutable records whether global.set is allowed to update value.
 	mutable bool
-	value   Value
+
+	// value is the current runtime value stored in this global.
+	value Value
+}
+
+// memoryInst is one instantiated linear memory in the module's memory index
+// space.
+//
+// wasmvm owns the backing bytes; internal/vm reaches them only through
+// vm.Resolver memory methods so execution stays independent of instance
+// layout.
+type memoryInst struct {
+	// addressType is the validated address type for this memory. wasmvm
+	// currently supports only i32-addressed memories, but this preserves the
+	// declaration needed for future memory64 support.
+	addressType wasmir.ValueType
+
+	// data is the mutable linear-memory byte buffer. Its length is always a
+	// whole number of WebAssembly pages.
+	data []byte
+}
+
+// buildMemories creates the instance memory address space.
+func (inst *ModuleInstance) buildMemories() error {
+	if len(inst.m.Data) != 0 {
+		return fmt.Errorf("data segments are not supported yet")
+	}
+	for i, m := range inst.m.Memories {
+		if m.ImportModule != "" || m.ImportName != "" {
+			return fmt.Errorf("unsupported memory import %q.%q", m.ImportModule, m.ImportName)
+		}
+		if m.AddressType != wasmir.ValueTypeI32 {
+			return fmt.Errorf("memory[%d]: unsupported address type %s", i, m.AddressType)
+		}
+		if m.Min > uint64(int(^uint(0)>>1))/wasmPageSize {
+			return fmt.Errorf("memory[%d]: minimum size is too large", i)
+		}
+		size := int(m.Min * wasmPageSize)
+		inst.memories = append(inst.memories, memoryInst{
+			addressType: m.AddressType,
+			data:        make([]byte, size),
+		})
+	}
+	return nil
 }
 
 // buildGlobals creates the instance global address space.
@@ -387,4 +446,49 @@ func (r vmResolver) GlobalSet(index uint32, value Value) error {
 	}
 	g.value = value
 	return nil
+}
+
+func (r vmResolver) MemoryLoad(index uint32, address uint64, size uint32) (uint64, error) {
+	mem, err := r.memory(index, address, size)
+	if err != nil {
+		return 0, err
+	}
+	switch size {
+	case 4:
+		return uint64(binary.LittleEndian.Uint32(mem)), nil
+	default:
+		return 0, fmt.Errorf("unsupported memory load size %d", size)
+	}
+}
+
+func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value uint64) error {
+	mem, err := r.memory(index, address, size)
+	if err != nil {
+		return err
+	}
+	switch size {
+	case 4:
+		binary.LittleEndian.PutUint32(mem, uint32(value))
+		return nil
+	default:
+		return fmt.Errorf("unsupported memory store size %d", size)
+	}
+}
+
+// memory returns the in-bounds byte window addressed by a VM memory operation.
+//
+// The VM has already computed the effective address from the dynamic address
+// operand and the static offset immediate. This helper owns the instance-side
+// checks: memory index resolution, overflow-safe bounds validation, and
+// conversion from uint64 addresses to Go slice indices.
+func (r vmResolver) memory(index uint32, address uint64, size uint32) ([]byte, error) {
+	if int(index) >= len(r.inst.memories) {
+		return nil, fmt.Errorf("memory index %d out of range", index)
+	}
+	mem := r.inst.memories[index].data
+	if address > uint64(len(mem)) || uint64(size) > uint64(len(mem))-address {
+		return nil, fmt.Errorf("memory access out of bounds")
+	}
+	start := int(address)
+	return mem[start : start+int(size)], nil
 }

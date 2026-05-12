@@ -8,6 +8,8 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+const maxInt64Uint = uint64(1<<63 - 1)
+
 // Function is the VM's execution form for a module-defined function.
 type Function struct {
 	// locals contains the non-parameter locals declared by the function. At
@@ -33,14 +35,15 @@ type instr struct {
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
-	// global.get/set, and call.
+	// global.get/set, call, and memory load/store instructions.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
 	//
 	// kind determines how to interpret it: i32.const uses int32(bits),
 	// i64.const uses bits, f32.const uses uint32(bits), and f64.const uses
-	// uint64(bits).
+	// uint64(bits). For currently supported memory instructions, bits stores
+	// the static offset immediate.
 	bits int64
 }
 
@@ -92,6 +95,12 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.FuncIndex
 		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 			op.index = ins.GlobalIndex
+		case wasmir.InstrI32Load, wasmir.InstrI32Store:
+			if ins.MemoryOffset > maxInt64Uint {
+				return nil, fmt.Errorf("%s at %d: memory offset %d is too large", instrName(ins.Kind), pc, ins.MemoryOffset)
+			}
+			op.index = ins.MemoryIndex
+			op.bits = int64(ins.MemoryOffset)
 		case wasmir.InstrBr, wasmir.InstrBrIf:
 			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
 			if err != nil {

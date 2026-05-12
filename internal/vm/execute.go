@@ -60,7 +60,8 @@ type Value struct {
 //
 // The VM owns execution mechanics for compiled module-defined functions, but
 // it does not own host-visible instance state. Any instruction that may cross
-// that boundary, such as calls or global access, goes through Resolver.
+// that boundary, such as calls, global access, or memory access, goes through
+// Resolver.
 type Resolver interface {
 	// FuncType returns the signature of the function at index.
 	FuncType(index uint32) (wasmir.TypeDef, error)
@@ -74,6 +75,14 @@ type Resolver interface {
 
 	// GlobalSet updates the global at index with value.
 	GlobalSet(index uint32, value Value) error
+
+	// MemoryLoad reads size bytes from memory at address and returns them as a
+	// little-endian integer in the low bits.
+	MemoryLoad(index uint32, address uint64, size uint32) (uint64, error)
+
+	// MemoryStore writes size low-order bytes of value to memory at address in
+	// little-endian order.
+	MemoryStore(index uint32, address uint64, size uint32, value uint64) error
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -111,8 +120,8 @@ type executor struct {
 	ft wasmir.TypeDef
 
 	// resolver connects this VM frame to the instantiated module environment:
-	// function index space, globals, and eventually other host-visible state
-	// such as memories and tables.
+	// function index space, globals, memories, and eventually other
+	// host-visible state such as tables.
 	resolver Resolver
 
 	// pc is the current instruction index in fn.code. It is stored on the frame
@@ -235,6 +244,42 @@ func (e *executor) run() ([]Value, error) {
 			}
 		case wasmir.InstrI32Const:
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
+		case wasmir.InstrI32Load:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			raw, err := e.resolver.MemoryLoad(ins.index, effective, 4)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(raw))})
+		case wasmir.InstrI32Store:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			value, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			addr, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			effective, err := memoryAddress(addr, uint64(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryStore(ins.index, effective, 4, uint64(uint32(value))); err != nil {
+				return nil, e.instructionError(err)
+			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32DivS, wasmir.InstrI32DivU, wasmir.InstrI32RemS, wasmir.InstrI32RemU,
 			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor,
@@ -727,6 +772,14 @@ func boolI32(v bool) int32 {
 		return 1
 	}
 	return 0
+}
+
+func memoryAddress(base int32, offset uint64) (uint64, error) {
+	addr := uint64(uint32(base))
+	if addr > ^uint64(0)-offset {
+		return 0, fmt.Errorf("memory address overflow")
+	}
+	return addr + offset, nil
 }
 
 // popWant pops the top operand and verifies it has the expected value type.

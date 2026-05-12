@@ -688,6 +688,38 @@ func TestGlobalInitializerReadsEarlierImmutableGlobal(t *testing.T) {
 	}
 }
 
+func TestMemoryI32LoadStore(t *testing.T) {
+	// Module-defined memories are instantiated as zeroed bytes and accessed
+	// through i32.load/i32.store with the static offset immediate applied.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(func (export "roundtrip") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				i32.store offset=4
+				local.get 0
+				i32.load offset=4)
+			(func (export "zero") (result i32)
+				i32.const 32
+				i32.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "zero")
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("zero got results %#v, want i32 0", results)
+	}
+
+	results = callExport(t, inst, "roundtrip", wasmvm.I32(12), wasmvm.I32(0x12345678))
+	if len(results) != 1 || results[0] != wasmvm.I32(0x12345678) {
+		t.Fatalf("roundtrip got results %#v, want i32 0x12345678", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
@@ -785,6 +817,34 @@ func TestExecutionErrorGlobalSetImmutableContext(t *testing.T) {
 		t.Fatal("Call succeeded unexpectedly")
 	}
 	if got, want := err.Error(), "pc 1 global.set: global 0 is immutable"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionErrorMemoryOutOfBoundsContext(t *testing.T) {
+	// An out-of-bounds memory store should report the store instruction as the
+	// failing execution point.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(func (export "store_oob")
+				i32.const 65533
+				i32.const 1
+				i32.store))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("store_oob")
+	if !ok {
+		t.Fatal("missing store_oob export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 2 i32.store: memory access out of bounds"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
