@@ -3,7 +3,8 @@ Immediate TODOs
 
 vm:
 
-- 
+- const eval to separate file
+* two resolvers or one resolver?
 
 Longer-term plans
 -----------------

@@ -20,6 +20,9 @@
 //     space. Functions can come from the host or from compiled WASM modules.
 //     ExecuteFunction uses it to resolve and invoke wasm call
 //     instructions without knowing about module instances or host imports.
+//   - GlobalResolver is implemented by the package that owns instantiated
+//     globals. ExecuteFunction uses it for global.get/global.set without
+//     knowing how globals were imported or initialized.
 //   - CheckArgs and CheckResults are shared signature checks used at call
 //     boundaries.
 //
@@ -38,7 +41,8 @@
 //     invoked directly through their Go callback; module-defined functions are
 //     passed to ExecuteFunction.
 //   - ExecuteFunction runs the compiled instruction stream with its own operand
-//     stack and locals.
+//     stack and locals, using GlobalResolver when the instruction stream reads
+//     or writes instance globals.
 //   - When ExecuteFunction reaches a wasm call instruction, it pops the
 //     callee's arguments, asks CallResolver for the callee's signature, and
 //     invokes CallResolver.CallFunc.

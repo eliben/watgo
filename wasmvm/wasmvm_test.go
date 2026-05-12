@@ -616,6 +616,78 @@ func TestBlockBranchIf(t *testing.T) {
 	}
 }
 
+func TestModuleGlobals(t *testing.T) {
+	// Module-defined globals are instantiated once and then accessed through
+	// global.get/global.set while functions execute.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(global $g (mut i32) (i32.const 7))
+			(global $h i64 (i64.const 11))
+			(func (export "get_g") (result i32)
+				global.get $g)
+			(func (export "set_g") (param i32)
+				local.get 0
+				global.set $g)
+			(func (export "get_h") (result i64)
+				global.get $h))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "get_g")
+	if len(results) != 1 || results[0] != wasmvm.I32(7) {
+		t.Fatalf("get_g got results %#v, want i32 7", results)
+	}
+
+	callExport(t, inst, "set_g", wasmvm.I32(42))
+	results = callExport(t, inst, "get_g")
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("get_g after set got results %#v, want i32 42", results)
+	}
+
+	results = callExport(t, inst, "get_h")
+	if len(results) != 1 || results[0] != wasmvm.I64(11) {
+		t.Fatalf("get_h got results %#v, want i64 11", results)
+	}
+}
+
+func TestGlobalInitializerReadsEarlierImmutableGlobal(t *testing.T) {
+	// Global initializer expressions can read earlier immutable globals and use
+	// the numeric constant-expression operators currently supported by wasmvm.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(global $base i32 (i32.const 5))
+			(global $sum i32
+				global.get $base
+				i32.const 6
+				i32.add)
+			(global $scale i64
+				i64.const 3
+				i64.const 4
+				i64.mul)
+			(func (export "sum") (result i32)
+				global.get $sum)
+			(func (export "scale") (result i64)
+				global.get $scale))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "sum")
+	if len(results) != 1 || results[0] != wasmvm.I32(11) {
+		t.Fatalf("sum got results %#v, want i32 11", results)
+	}
+
+	results = callExport(t, inst, "scale")
+	if len(results) != 1 || results[0] != wasmvm.I64(12) {
+		t.Fatalf("scale got results %#v, want i64 12", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
@@ -671,6 +743,48 @@ func TestExecutionErrorSelectTypeContext(t *testing.T) {
 	}, []wasmir.ValueType{wasmir.ValueTypeI32})
 
 	if got, want := err.Error(), "pc 3 select: select got i32 and i64 operands"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestExecutionErrorGlobalSetImmutableContext(t *testing.T) {
+	// Setting an immutable global should report the global.set instruction as
+	// the failing execution point.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(&wasmir.Module{
+		Types: []wasmir.TypeDef{{
+			Kind: wasmir.TypeDefKindFunc,
+		}},
+		Globals: []wasmir.Global{{
+			Type: wasmir.ValueTypeI32,
+			Init: []wasmir.Instruction{{Kind: wasmir.InstrI32Const, I32Const: 0}},
+		}},
+		Funcs: []wasmir.Function{{
+			TypeIdx: 0,
+			Body: []wasmir.Instruction{
+				{Kind: wasmir.InstrI32Const, I32Const: 1},
+				{Kind: wasmir.InstrGlobalSet, GlobalIndex: 0},
+				{Kind: wasmir.InstrEnd},
+			},
+		}},
+		Exports: []wasmir.Export{{
+			Name:  "run",
+			Kind:  wasmir.ExternalKindFunction,
+			Index: 0,
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("run")
+	if !ok {
+		t.Fatal("missing run export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 1 global.set: global 0 is immutable"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

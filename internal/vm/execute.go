@@ -67,6 +67,16 @@ type CallResolver interface {
 	CallFunc(index uint32, args []Value) ([]Value, error)
 }
 
+// GlobalResolver resolves and updates global-index instructions made by
+// ExecuteFunction.
+type GlobalResolver interface {
+	// GlobalGet returns the current value of the global at index.
+	GlobalGet(index uint32) (Value, error)
+
+	// GlobalSet updates the global at index with value.
+	GlobalSet(index uint32, value Value) error
+}
+
 // CheckArgs verifies call argument count and value types.
 func CheckArgs(params []wasmir.ValueType, args []Value) error {
 	if len(args) != len(params) {
@@ -105,6 +115,9 @@ type executor struct {
 	// the module function index space.
 	calls CallResolver
 
+	// globals resolves and updates module instance globals.
+	globals GlobalResolver
+
 	// pc is the current instruction index in fn.code. It is stored on the frame
 	// so error wrapping and control-flow instructions can share the same
 	// location state.
@@ -119,16 +132,17 @@ type executor struct {
 }
 
 // ExecuteFunction interprets one compiled module-defined function body.
-func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallResolver) ([]Value, error) {
+func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, calls CallResolver, globals GlobalResolver) ([]Value, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("defined function has no compiled code")
 	}
 
 	e := executor{
-		fn:    fn,
-		ft:    ft,
-		calls: calls,
-		stack: make([]Value, 0),
+		fn:      fn,
+		ft:      ft,
+		calls:   calls,
+		globals: globals,
+		stack:   make([]Value, 0),
 	}
 	if err := e.initLocals(args); err != nil {
 		return nil, err
@@ -203,6 +217,26 @@ func (e *executor) run() ([]Value, error) {
 			}
 			e.locals[ins.index] = v
 			e.push(v)
+		case wasmir.InstrGlobalGet:
+			if e.globals == nil {
+				return nil, e.instructionError(fmt.Errorf("global resolver is nil"))
+			}
+			v, err := e.globals.GlobalGet(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(v)
+		case wasmir.InstrGlobalSet:
+			if e.globals == nil {
+				return nil, e.instructionError(fmt.Errorf("global resolver is nil"))
+			}
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.globals.GlobalSet(ins.index, v); err != nil {
+				return nil, e.instructionError(err)
+			}
 		case wasmir.InstrI32Const:
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,

@@ -32,7 +32,8 @@ type instr struct {
 	// execution to the following instruction.
 	target int
 
-	// index is the resolved index immediate for local.get/set/tee and call.
+	// index is the resolved index immediate for local.get/set/tee,
+	// global.get/set, and call.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -89,6 +90,8 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.LocalIndex
 		case wasmir.InstrCall:
 			op.index = ins.FuncIndex
+		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
+			op.index = ins.GlobalIndex
 		case wasmir.InstrBr, wasmir.InstrBrIf:
 			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
 			if err != nil {
@@ -127,7 +130,8 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div,
 			wasmir.InstrF64Eq, wasmir.InstrF64Ne,
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge,
-			wasmir.InstrDrop, wasmir.InstrSelect, wasmir.InstrReturn:
+			wasmir.InstrDrop, wasmir.InstrSelect,
+			wasmir.InstrReturn:
 		case wasmir.InstrEnd:
 			if len(labelStack) == 0 {
 				if pc != len(fn.Body)-1 {
