@@ -3,8 +3,7 @@ Immediate TODOs
 
 vm:
 
-- test helper that checks a call did not fail
-
+- 
 
 Longer-term plans
 -----------------

@@ -18,6 +18,20 @@ func parseWAT(t *testing.T, src string) *wasmir.Module {
 	return m
 }
 
+func callExport(t *testing.T, inst *wasmvm.ModuleInstance, name string, args ...wasmvm.Value) []wasmvm.Value {
+	t.Helper()
+
+	f, ok := inst.ExportedFunc(name)
+	if !ok {
+		t.Fatalf("missing %s export", name)
+	}
+	results, err := f.Call(args...)
+	if err != nil {
+		t.Fatalf("Call %s failed: %v", name, err)
+	}
+	return results
+}
+
 func TestExportedAdd(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -31,14 +45,7 @@ func TestExportedAdd(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	add, ok := inst.ExportedFunc("add")
-	if !ok {
-		t.Fatal("missing add export")
-	}
-	results, err := add.Call(wasmvm.I32(3), wasmvm.I32(4))
-	if err != nil {
-		t.Fatalf("Call failed: %v", err)
-	}
+	results := callExport(t, inst, "add", wasmvm.I32(3), wasmvm.I32(4))
 	if len(results) != 1 || results[0] != wasmvm.I32(7) {
 		t.Fatalf("got results %#v, want i32 7", results)
 	}
@@ -67,14 +74,7 @@ func TestHostFunctionImport(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	callInc, ok := inst.ExportedFunc("call_inc")
-	if !ok {
-		t.Fatal("missing call_inc export")
-	}
-	results, err := callInc.Call(wasmvm.I32(41))
-	if err != nil {
-		t.Fatalf("Call failed: %v", err)
-	}
+	results := callExport(t, inst, "call_inc", wasmvm.I32(41))
 	if len(results) != 1 || results[0] != wasmvm.I32(42) {
 		t.Fatalf("got results %#v, want i32 42", results)
 	}
@@ -95,14 +95,7 @@ func TestI32Arithmetic(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	calc, ok := inst.ExportedFunc("calc")
-	if !ok {
-		t.Fatal("missing calc export")
-	}
-	results, err := calc.Call(wasmvm.I32(6), wasmvm.I32(5))
-	if err != nil {
-		t.Fatalf("Call failed: %v", err)
-	}
+	results := callExport(t, inst, "calc", wasmvm.I32(6), wasmvm.I32(5))
 	if len(results) != 1 || results[0] != wasmvm.I32(23) {
 		t.Fatalf("got results %#v, want i32 23", results)
 	}
@@ -127,14 +120,7 @@ func TestLocalSetAndTee(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	locals, ok := inst.ExportedFunc("locals")
-	if !ok {
-		t.Fatal("missing locals export")
-	}
-	results, err := locals.Call(wasmvm.I32(4))
-	if err != nil {
-		t.Fatalf("Call failed: %v", err)
-	}
+	results := callExport(t, inst, "locals", wasmvm.I32(4))
 	if len(results) != 1 || results[0] != wasmvm.I32(14) {
 		t.Fatalf("got results %#v, want i32 14", results)
 	}
@@ -164,45 +150,21 @@ func TestSelect(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	pickI32, ok := inst.ExportedFunc("pick_i32")
-	if !ok {
-		t.Fatal("missing pick_i32 export")
-	}
-	results, err := pickI32.Call(wasmvm.I32(1))
-	if err != nil {
-		t.Fatalf("Call pick_i32(1) failed: %v", err)
-	}
+	results := callExport(t, inst, "pick_i32", wasmvm.I32(1))
 	if len(results) != 1 || results[0] != wasmvm.I32(10) {
 		t.Fatalf("pick_i32(1) got results %#v, want i32 10", results)
 	}
-	results, err = pickI32.Call(wasmvm.I32(0))
-	if err != nil {
-		t.Fatalf("Call pick_i32(0) failed: %v", err)
-	}
+	results = callExport(t, inst, "pick_i32", wasmvm.I32(0))
 	if len(results) != 1 || results[0] != wasmvm.I32(20) {
 		t.Fatalf("pick_i32(0) got results %#v, want i32 20", results)
 	}
 
-	pickF64, ok := inst.ExportedFunc("pick_f64")
-	if !ok {
-		t.Fatal("missing pick_f64 export")
-	}
-	results, err = pickF64.Call(wasmvm.I32(-1))
-	if err != nil {
-		t.Fatalf("Call pick_f64 failed: %v", err)
-	}
+	results = callExport(t, inst, "pick_f64", wasmvm.I32(-1))
 	if len(results) != 1 || results[0] != wasmvm.F64(1.5) {
 		t.Fatalf("pick_f64 got results %#v, want f64 1.5", results)
 	}
 
-	pickTypedI64, ok := inst.ExportedFunc("pick_typed_i64")
-	if !ok {
-		t.Fatal("missing pick_typed_i64 export")
-	}
-	results, err = pickTypedI64.Call(wasmvm.I32(0))
-	if err != nil {
-		t.Fatalf("Call pick_typed_i64 failed: %v", err)
-	}
+	results = callExport(t, inst, "pick_typed_i64", wasmvm.I32(0))
 	if len(results) != 1 || results[0] != wasmvm.I64(40) {
 		t.Fatalf("pick_typed_i64 got results %#v, want i64 40", results)
 	}
@@ -244,33 +206,16 @@ func TestI32Predicates(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	eqz, ok := inst.ExportedFunc("eqz")
-	if !ok {
-		t.Fatal("missing eqz export")
-	}
-	results, err := eqz.Call(wasmvm.I32(0))
-	if err != nil {
-		t.Fatalf("Call eqz(0) failed: %v", err)
-	}
+	results := callExport(t, inst, "eqz", wasmvm.I32(0))
 	if len(results) != 1 || results[0] != wasmvm.I32(1) {
 		t.Fatalf("eqz(0) got results %#v, want i32 1", results)
 	}
-	results, err = eqz.Call(wasmvm.I32(9))
-	if err != nil {
-		t.Fatalf("Call eqz(9) failed: %v", err)
-	}
+	results = callExport(t, inst, "eqz", wasmvm.I32(9))
 	if len(results) != 1 || results[0] != wasmvm.I32(0) {
 		t.Fatalf("eqz(9) got results %#v, want i32 0", results)
 	}
 
-	cmp, ok := inst.ExportedFunc("cmp")
-	if !ok {
-		t.Fatal("missing cmp export")
-	}
-	results, err = cmp.Call(wasmvm.I32(-2), wasmvm.I32(5))
-	if err != nil {
-		t.Fatalf("Call cmp failed: %v", err)
-	}
+	results = callExport(t, inst, "cmp", wasmvm.I32(-2), wasmvm.I32(5))
 	if len(results) != 1 || results[0] != wasmvm.I32(2) {
 		t.Fatalf("cmp got results %#v, want i32 2", results)
 	}
@@ -286,14 +231,7 @@ func TestI32Predicates(t *testing.T) {
 		{name: "gt", lhs: 10, rhs: 4, want: 1},
 		{name: "ge", lhs: 5, rhs: 5, want: 1},
 	} {
-		f, ok := inst.ExportedFunc(tt.name)
-		if !ok {
-			t.Fatalf("missing %s export", tt.name)
-		}
-		results, err = f.Call(wasmvm.I32(tt.lhs), wasmvm.I32(tt.rhs))
-		if err != nil {
-			t.Fatalf("Call %s failed: %v", tt.name, err)
-		}
+		results = callExport(t, inst, tt.name, wasmvm.I32(tt.lhs), wasmvm.I32(tt.rhs))
 		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
 			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
 		}
@@ -348,14 +286,7 @@ func TestI32ExtendedIntegerOps(t *testing.T) {
 		{name: "gt_u", lhs: -1, rhs: 1, want: 1},
 		{name: "ge_u", lhs: 0, rhs: -1, want: 0},
 	} {
-		f, ok := inst.ExportedFunc(tt.name)
-		if !ok {
-			t.Fatalf("missing %s export", tt.name)
-		}
-		results, err := f.Call(wasmvm.I32(tt.lhs), wasmvm.I32(tt.rhs))
-		if err != nil {
-			t.Fatalf("Call %s failed: %v", tt.name, err)
-		}
+		results := callExport(t, inst, tt.name, wasmvm.I32(tt.lhs), wasmvm.I32(tt.rhs))
 		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
 			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
 		}
@@ -384,38 +315,17 @@ func TestI64ArithmeticAndPredicates(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	calc, ok := inst.ExportedFunc("calc")
-	if !ok {
-		t.Fatal("missing calc export")
-	}
-	results, err := calc.Call(wasmvm.I64(8), wasmvm.I64(7))
-	if err != nil {
-		t.Fatalf("Call calc failed: %v", err)
-	}
+	results := callExport(t, inst, "calc", wasmvm.I64(8), wasmvm.I64(7))
 	if len(results) != 1 || results[0] != wasmvm.I64(47) {
 		t.Fatalf("calc got results %#v, want i64 47", results)
 	}
 
-	eqz, ok := inst.ExportedFunc("eqz")
-	if !ok {
-		t.Fatal("missing eqz export")
-	}
-	results, err = eqz.Call(wasmvm.I64(0))
-	if err != nil {
-		t.Fatalf("Call eqz failed: %v", err)
-	}
+	results = callExport(t, inst, "eqz", wasmvm.I64(0))
 	if len(results) != 1 || results[0] != wasmvm.I32(1) {
 		t.Fatalf("eqz got results %#v, want i32 1", results)
 	}
 
-	cmp, ok := inst.ExportedFunc("cmp")
-	if !ok {
-		t.Fatal("missing cmp export")
-	}
-	results, err = cmp.Call(wasmvm.I64(-2), wasmvm.I64(5))
-	if err != nil {
-		t.Fatalf("Call cmp failed: %v", err)
-	}
+	results = callExport(t, inst, "cmp", wasmvm.I64(-2), wasmvm.I64(5))
 	if len(results) != 1 || results[0] != wasmvm.I32(0) {
 		t.Fatalf("cmp got results %#v, want i32 0", results)
 	}
@@ -465,14 +375,7 @@ func TestI64ExtendedIntegerOps(t *testing.T) {
 		{name: "rotl", lhs: 1, rhs: 65, want: 2},
 		{name: "rotr", lhs: 2, rhs: 65, want: 1},
 	} {
-		f, ok := inst.ExportedFunc(tt.name)
-		if !ok {
-			t.Fatalf("missing %s export", tt.name)
-		}
-		results, err := f.Call(wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
-		if err != nil {
-			t.Fatalf("Call %s failed: %v", tt.name, err)
-		}
+		results := callExport(t, inst, tt.name, wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
 		if len(results) != 1 || results[0] != wasmvm.I64(tt.want) {
 			t.Fatalf("%s got results %#v, want i64 %d", tt.name, results, tt.want)
 		}
@@ -489,14 +392,7 @@ func TestI64ExtendedIntegerOps(t *testing.T) {
 		{name: "gt_u", lhs: -1, rhs: 1, want: 1},
 		{name: "ge_u", lhs: 0, rhs: -1, want: 0},
 	} {
-		f, ok := inst.ExportedFunc(tt.name)
-		if !ok {
-			t.Fatalf("missing %s export", tt.name)
-		}
-		results, err := f.Call(wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
-		if err != nil {
-			t.Fatalf("Call %s failed: %v", tt.name, err)
-		}
+		results := callExport(t, inst, tt.name, wasmvm.I64(tt.lhs), wasmvm.I64(tt.rhs))
 		if len(results) != 1 || results[0] != wasmvm.I32(tt.want) {
 			t.Fatalf("%s got results %#v, want i32 %d", tt.name, results, tt.want)
 		}
@@ -570,26 +466,12 @@ func TestF32ArithmeticAndPredicates(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	calc, ok := inst.ExportedFunc("calc")
-	if !ok {
-		t.Fatal("missing calc export")
-	}
-	results, err := calc.Call(wasmvm.F32(4))
-	if err != nil {
-		t.Fatalf("Call calc failed: %v", err)
-	}
+	results := callExport(t, inst, "calc", wasmvm.F32(4))
 	if len(results) != 1 || results[0] != wasmvm.F32(11) {
 		t.Fatalf("calc got results %#v, want f32 11", results)
 	}
 
-	cmp, ok := inst.ExportedFunc("cmp")
-	if !ok {
-		t.Fatal("missing cmp export")
-	}
-	results, err = cmp.Call(wasmvm.F32(-1.5), wasmvm.F32(2.25))
-	if err != nil {
-		t.Fatalf("Call cmp failed: %v", err)
-	}
+	results = callExport(t, inst, "cmp", wasmvm.F32(-1.5), wasmvm.F32(2.25))
 	if len(results) != 1 || results[0] != wasmvm.I32(1) {
 		t.Fatalf("cmp got results %#v, want i32 1", results)
 	}
@@ -614,26 +496,12 @@ func TestF64ArithmeticAndPredicates(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	calc, ok := inst.ExportedFunc("calc")
-	if !ok {
-		t.Fatal("missing calc export")
-	}
-	results, err := calc.Call(wasmvm.F64(6))
-	if err != nil {
-		t.Fatalf("Call calc failed: %v", err)
-	}
+	results := callExport(t, inst, "calc", wasmvm.F64(6))
 	if len(results) != 1 || results[0] != wasmvm.F64(7) {
 		t.Fatalf("calc got results %#v, want f64 7", results)
 	}
 
-	cmp, ok := inst.ExportedFunc("cmp")
-	if !ok {
-		t.Fatal("missing cmp export")
-	}
-	results, err = cmp.Call(wasmvm.F64(3.5), wasmvm.F64(3.5))
-	if err != nil {
-		t.Fatalf("Call cmp failed: %v", err)
-	}
+	results = callExport(t, inst, "cmp", wasmvm.F64(3.5), wasmvm.F64(3.5))
 	if len(results) != 1 || results[0] != wasmvm.I32(1) {
 		t.Fatalf("cmp got results %#v, want i32 1", results)
 	}
@@ -658,21 +526,11 @@ func TestDropAndReturn(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	early, ok := inst.ExportedFunc("early")
-	if !ok {
-		t.Fatal("missing early export")
-	}
-	results, err := early.Call(wasmvm.I32(0))
-	if err != nil {
-		t.Fatalf("Call early(0) failed: %v", err)
-	}
+	results := callExport(t, inst, "early", wasmvm.I32(0))
 	if len(results) != 1 || results[0] != wasmvm.I32(42) {
 		t.Fatalf("early(0) got results %#v, want i32 42", results)
 	}
-	results, err = early.Call(wasmvm.I32(9))
-	if err != nil {
-		t.Fatalf("Call early(9) failed: %v", err)
-	}
+	results = callExport(t, inst, "early", wasmvm.I32(9))
 	if len(results) != 1 || results[0] != wasmvm.I32(9) {
 		t.Fatalf("early(9) got results %#v, want i32 9", results)
 	}
@@ -698,21 +556,11 @@ func TestIfElse(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	abs, ok := inst.ExportedFunc("abs")
-	if !ok {
-		t.Fatal("missing abs export")
-	}
-	results, err := abs.Call(wasmvm.I32(-7))
-	if err != nil {
-		t.Fatalf("Call abs(-7) failed: %v", err)
-	}
+	results := callExport(t, inst, "abs", wasmvm.I32(-7))
 	if len(results) != 1 || results[0] != wasmvm.I32(7) {
 		t.Fatalf("abs(-7) got results %#v, want i32 7", results)
 	}
-	results, err = abs.Call(wasmvm.I32(5))
-	if err != nil {
-		t.Fatalf("Call abs(5) failed: %v", err)
-	}
+	results = callExport(t, inst, "abs", wasmvm.I32(5))
 	if len(results) != 1 || results[0] != wasmvm.I32(5) {
 		t.Fatalf("abs(5) got results %#v, want i32 5", results)
 	}
@@ -733,14 +581,7 @@ func TestBlockBranch(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	skip, ok := inst.ExportedFunc("skip")
-	if !ok {
-		t.Fatal("missing skip export")
-	}
-	results, err := skip.Call()
-	if err != nil {
-		t.Fatalf("Call skip failed: %v", err)
-	}
+	results := callExport(t, inst, "skip")
 	if len(results) != 1 || results[0] != wasmvm.I32(99) {
 		t.Fatalf("skip got results %#v, want i32 99", results)
 	}
@@ -765,21 +606,11 @@ func TestBlockBranchIf(t *testing.T) {
 		t.Fatalf("Instantiate failed: %v", err)
 	}
 
-	clampZero, ok := inst.ExportedFunc("clamp_zero")
-	if !ok {
-		t.Fatal("missing clamp_zero export")
-	}
-	results, err := clampZero.Call(wasmvm.I32(12))
-	if err != nil {
-		t.Fatalf("Call clamp_zero(12) failed: %v", err)
-	}
+	results := callExport(t, inst, "clamp_zero", wasmvm.I32(12))
 	if len(results) != 1 || results[0] != wasmvm.I32(12) {
 		t.Fatalf("clamp_zero(12) got results %#v, want i32 12", results)
 	}
-	results, err = clampZero.Call(wasmvm.I32(-3))
-	if err != nil {
-		t.Fatalf("Call clamp_zero(-3) failed: %v", err)
-	}
+	results = callExport(t, inst, "clamp_zero", wasmvm.I32(-3))
 	if len(results) != 1 || results[0] != wasmvm.I32(0) {
 		t.Fatalf("clamp_zero(-3) got results %#v, want i32 0", results)
 	}
