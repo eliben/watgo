@@ -95,6 +95,8 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.FuncIndex
 		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 			op.index = ins.GlobalIndex
+		case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow:
+			op.index = ins.MemoryIndex
 		case wasmir.InstrI32Load, wasmir.InstrI32Store,
 			wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,

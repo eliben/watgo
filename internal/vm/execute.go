@@ -83,6 +83,13 @@ type Resolver interface {
 	// MemoryStore writes size low-order bytes of value to memory at address in
 	// little-endian order.
 	MemoryStore(index uint32, address uint64, size uint32, value uint64) error
+
+	// MemorySize returns the current memory size in WebAssembly pages.
+	MemorySize(index uint32) (uint64, error)
+
+	// MemoryGrow grows memory by delta pages. It returns the old memory size in
+	// pages when growth succeeds, and ok=false when growth is rejected.
+	MemoryGrow(index uint32, delta uint64) (oldPages uint64, ok bool, err error)
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -390,6 +397,32 @@ func (e *executor) run() ([]Value, error) {
 			if err := e.resolver.MemoryStore(ins.index, effective, 8, math.Float64bits(value)); err != nil {
 				return nil, e.instructionError(err)
 			}
+		case wasmir.InstrMemorySize:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			pages, err := e.resolver.MemorySize(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(pages))})
+		case wasmir.InstrMemoryGrow:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			delta, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			oldPages, ok, err := e.resolver.MemoryGrow(ins.index, uint64(uint32(delta)))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !ok {
+				e.push(Value{Type: wasmir.ValueTypeI32, I32: -1})
+				continue
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(oldPages))})
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
 			wasmir.InstrI32DivS, wasmir.InstrI32DivU, wasmir.InstrI32RemS, wasmir.InstrI32RemU,
 			wasmir.InstrI32And, wasmir.InstrI32Or, wasmir.InstrI32Xor,

@@ -862,6 +862,68 @@ func TestScalarMemoryOps(t *testing.T) {
 	}
 }
 
+func TestMemorySizeAndGrow(t *testing.T) {
+	// memory.grow returns the old size on success, -1 on failure, and newly
+	// allocated pages are zero-initialized.
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1 3)
+			(func (export "size") (result i32)
+				memory.size)
+			(func (export "grow") (param i32) (result i32)
+				local.get 0
+				memory.grow)
+			(func (export "load_grown_page") (result i32)
+				i32.const 70000
+				i32.load)
+			(func (export "store_grown_page") (result i32)
+				i32.const 70000
+				i32.const 99
+				i32.store
+				i32.const 70000
+				i32.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("initial size got results %#v, want i32 1", results)
+	}
+
+	results = callExport(t, inst, "grow", wasmvm.I32(1))
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("grow(1) got results %#v, want old size i32 1", results)
+	}
+
+	results = callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(2) {
+		t.Fatalf("size after grow got results %#v, want i32 2", results)
+	}
+
+	results = callExport(t, inst, "load_grown_page")
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("load_grown_page got results %#v, want zero-filled i32 0", results)
+	}
+
+	results = callExport(t, inst, "store_grown_page")
+	if len(results) != 1 || results[0] != wasmvm.I32(99) {
+		t.Fatalf("store_grown_page got results %#v, want i32 99", results)
+	}
+
+	results = callExport(t, inst, "grow", wasmvm.I32(2))
+	if len(results) != 1 || results[0] != wasmvm.I32(-1) {
+		t.Fatalf("grow past max got results %#v, want i32 -1", results)
+	}
+
+	results = callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(2) {
+		t.Fatalf("size after failed grow got results %#v, want i32 2", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced

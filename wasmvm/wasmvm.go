@@ -255,6 +255,9 @@ type memoryInst struct {
 	// declaration needed for future memory64 support.
 	addressType wasmir.ValueType
 
+	// max is the optional declared maximum size in WebAssembly pages.
+	max *uint64
+
 	// data is the mutable linear-memory byte buffer. Its length is always a
 	// whole number of WebAssembly pages.
 	data []byte
@@ -275,6 +278,7 @@ func (inst *ModuleInstance) buildMemories() error {
 		size := int(m.Min * wasmPageSize)
 		inst.memories = append(inst.memories, memoryInst{
 			addressType: m.AddressType,
+			max:         m.Max,
 			data:        make([]byte, size),
 		})
 	}
@@ -539,6 +543,46 @@ func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value
 	}
 }
 
+// MemorySize returns the current size of an instantiated memory in WebAssembly
+// pages.
+func (r vmResolver) MemorySize(index uint32) (uint64, error) {
+	mem, err := r.memoryInst(index)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(len(mem.data) / wasmPageSize), nil
+}
+
+// MemoryGrow grows an instantiated memory by delta WebAssembly pages.
+func (r vmResolver) MemoryGrow(index uint32, delta uint64) (uint64, bool, error) {
+	mem, err := r.memoryInst(index)
+	if err != nil {
+		return 0, false, err
+	}
+	oldPages := uint64(len(mem.data) / wasmPageSize)
+	if delta > ^uint64(0)-oldPages {
+		return oldPages, false, nil
+	}
+	newPages := oldPages + delta
+	if mem.max != nil && newPages > *mem.max {
+		return oldPages, false, nil
+	}
+	if newPages > uint64(int(^uint(0)>>1))/wasmPageSize {
+		return oldPages, false, nil
+	}
+	newSize := int(newPages * wasmPageSize)
+	mem.data = append(mem.data, make([]byte, newSize-len(mem.data))...)
+	return oldPages, true, nil
+}
+
+// memoryInst resolves a memory index to the mutable instantiated memory state.
+func (r vmResolver) memoryInst(index uint32) (*memoryInst, error) {
+	if int(index) >= len(r.inst.memories) {
+		return nil, fmt.Errorf("memory index %d out of range", index)
+	}
+	return &r.inst.memories[index], nil
+}
+
 // memory returns the in-bounds byte window addressed by a VM memory operation.
 //
 // The VM has already computed the effective address from the dynamic address
@@ -546,10 +590,11 @@ func (r vmResolver) MemoryStore(index uint32, address uint64, size uint32, value
 // checks: memory index resolution, overflow-safe bounds validation, and
 // conversion from uint64 addresses to Go slice indices.
 func (r vmResolver) memory(index uint32, address uint64, size uint32) ([]byte, error) {
-	if int(index) >= len(r.inst.memories) {
-		return nil, fmt.Errorf("memory index %d out of range", index)
+	memInst, err := r.memoryInst(index)
+	if err != nil {
+		return nil, err
 	}
-	mem := r.inst.memories[index].data
+	mem := memInst.data
 	if address > uint64(len(mem)) || uint64(size) > uint64(len(mem))-address {
 		return nil, fmt.Errorf("memory access out of bounds")
 	}
