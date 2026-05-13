@@ -197,6 +197,8 @@ func (e *executor) run() ([]Value, error) {
 		ins := e.fn.code[e.pc]
 		switch ins.kind {
 		case wasmir.InstrBlock:
+		case wasmir.InstrUnreachable:
+			return nil, e.instructionError(fmt.Errorf("unreachable executed"))
 		case wasmir.InstrIf:
 			// The condition has already been validated as i32. A true condition
 			// enters the then arm. A false condition skips to the else marker

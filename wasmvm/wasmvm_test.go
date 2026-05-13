@@ -1076,6 +1076,31 @@ func TestExecutionErrorInstructionContext(t *testing.T) {
 	}
 }
 
+// TestExecutionErrorUnreachableContext checks that unreachable traps include
+// the failing instruction location.
+func TestExecutionErrorUnreachableContext(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "trap")
+				unreachable))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	trap, ok := inst.ExportedFunc("trap")
+	if !ok {
+		t.Fatal("missing trap export")
+	}
+	_, err = trap.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 0 unreachable: unreachable executed"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestExecutionErrorCallContext(t *testing.T) {
 	// A call to an invalid function index should report the call instruction's
 	// pc and opcode along with the resolver error.

@@ -4,6 +4,7 @@ Immediate TODOs
 vm:
 
 * Resolver interface becoming very big; any recourse?
+* update upstream tests at some point
 
 Longer-term plans
 -----------------
