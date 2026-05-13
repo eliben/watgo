@@ -51,6 +51,30 @@ func TestExportedAdd(t *testing.T) {
 	}
 }
 
+// TestNop checks that nop executes without changing the operand stack or
+// control flow.
+func TestNop(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "run") (result i32)
+				nop
+				i32.const 40
+				nop
+				i32.const 2
+				i32.add
+				nop))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "run")
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("run got results %#v, want i32 42", results)
+	}
+}
+
 func TestHostFunctionImport(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
