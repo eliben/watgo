@@ -1032,6 +1032,32 @@ func TestMemoryCopyAndFill(t *testing.T) {
 	}
 }
 
+// TestPassiveDataMemoryInit checks that memory.init copies from a passive data
+// segment into memory and honors the source offset operand.
+func TestPassiveDataMemoryInit(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data "abcdef")
+			(func (export "init") (result i32)
+				i32.const 8
+				i32.const 1
+				i32.const 4
+				memory.init 0
+				i32.const 8
+				i32.load))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "init")
+	if len(results) != 1 || results[0] != wasmvm.I32(0x65646362) {
+		t.Fatalf("init got results %#v, want i32 0x65646362", results)
+	}
+}
+
 // The execution-error tests below use hand-built wasmir modules instead of WAT.
 // WAT parsing validates stack shape and function indices before the runtime
 // sees the code, but these tests specifically check the diagnostics produced
@@ -1203,6 +1229,67 @@ func TestExecutionErrorMemoryFillOutOfBoundsContext(t *testing.T) {
 		t.Fatal("Call succeeded unexpectedly")
 	}
 	if got, want := err.Error(), "pc 3 memory.fill: memory access out of bounds"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestExecutionErrorMemoryInitAfterDataDropContext checks that data.drop makes
+// a data segment unavailable for later memory.init operations.
+func TestExecutionErrorMemoryInitAfterDataDropContext(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data "abc")
+			(func (export "drop_then_init")
+				data.drop 0
+				i32.const 0
+				i32.const 0
+				i32.const 1
+				memory.init 0))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("drop_then_init")
+	if !ok {
+		t.Fatal("missing drop_then_init export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 4 memory.init: data segment 0 is dropped"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestExecutionErrorMemoryInitSourceOutOfBoundsContext checks that memory.init
+// reports data segment source-range failures with instruction context.
+func TestExecutionErrorMemoryInitSourceOutOfBoundsContext(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(data "abc")
+			(func (export "init_oob")
+				i32.const 0
+				i32.const 2
+				i32.const 2
+				memory.init 0))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("init_oob")
+	if !ok {
+		t.Fatal("missing init_oob export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 memory.init: data segment access out of bounds"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

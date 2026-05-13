@@ -97,6 +97,13 @@ type Resolver interface {
 
 	// MemoryFill writes value to size bytes of an instantiated memory.
 	MemoryFill(index uint32, address uint64, size uint64, value byte) error
+
+	// MemoryInit copies size bytes from a passive data segment into memory.
+	MemoryInit(memoryIndex uint32, dataIndex uint32, dstAddress uint64, srcOffset uint64, size uint64) error
+
+	// DataDrop marks a passive data segment unavailable for future memory.init
+	// operations.
+	DataDrop(index uint32) error
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -469,6 +476,32 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			if err := e.resolver.MemoryFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), byte(value)); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrMemoryInit:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			src, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.MemoryInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrDataDrop:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			if err := e.resolver.DataDrop(ins.index); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,

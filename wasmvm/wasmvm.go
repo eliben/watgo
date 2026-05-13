@@ -148,6 +148,7 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 	if err := inst.buildMemories(); err != nil {
 		return nil, err
 	}
+	inst.buildDataSegments()
 	if err := inst.buildGlobals(); err != nil {
 		return nil, err
 	}
@@ -179,6 +180,7 @@ type ModuleInstance struct {
 	funcs    []funcInst
 	globals  []globalInst
 	memories []memoryInst
+	data     []dataInst
 	exports  map[string]*Func
 }
 
@@ -263,6 +265,16 @@ type memoryInst struct {
 	data []byte
 }
 
+// dataInst is one instantiated data segment in the module's data index space.
+type dataInst struct {
+	// init is the byte payload used by memory.init while the segment is live.
+	init []byte
+
+	// dropped reports whether data.drop or active-segment initialization has
+	// made this segment unavailable.
+	dropped bool
+}
+
 // buildMemories creates the instance memory address space.
 func (inst *ModuleInstance) buildMemories() error {
 	for i, m := range inst.m.Memories {
@@ -283,6 +295,13 @@ func (inst *ModuleInstance) buildMemories() error {
 		})
 	}
 	return nil
+}
+
+// buildDataSegments creates the instance data segment address space.
+func (inst *ModuleInstance) buildDataSegments() {
+	for _, seg := range inst.m.Data {
+		inst.data = append(inst.data, dataInst{init: slices.Clone(seg.Init)})
+	}
 }
 
 // applyDataSegments copies active data segments into instantiated memories.
@@ -307,6 +326,7 @@ func (inst *ModuleInstance) applyDataSegments() error {
 			return fmt.Errorf("data[%d]: %w", i, err)
 		}
 		copy(dst, seg.Init)
+		inst.data[i].dropped = true
 	}
 	return nil
 }
@@ -599,6 +619,46 @@ func (r vmResolver) MemoryFill(index uint32, address uint64, size uint64, value 
 		dst[i] = value
 	}
 	return nil
+}
+
+// MemoryInit copies bytes from a live data segment into an instantiated memory.
+func (r vmResolver) MemoryInit(memoryIndex uint32, dataIndex uint32, dstAddress uint64, srcOffset uint64, size uint64) error {
+	data, err := r.dataSegment(dataIndex)
+	if err != nil {
+		return err
+	}
+	if data.dropped {
+		return fmt.Errorf("data segment %d is dropped", dataIndex)
+	}
+	if srcOffset > uint64(len(data.init)) || size > uint64(len(data.init))-srcOffset {
+		return fmt.Errorf("data segment access out of bounds")
+	}
+	dst, err := r.memory(memoryIndex, dstAddress, size)
+	if err != nil {
+		return err
+	}
+	start := int(srcOffset)
+	copy(dst, data.init[start:start+int(size)])
+	return nil
+}
+
+// DataDrop marks a data segment unavailable for future memory.init operations.
+func (r vmResolver) DataDrop(index uint32) error {
+	data, err := r.dataSegment(index)
+	if err != nil {
+		return err
+	}
+	data.dropped = true
+	return nil
+}
+
+// dataSegment resolves a data index to the mutable instantiated data segment
+// state.
+func (r vmResolver) dataSegment(index uint32) (*dataInst, error) {
+	if int(index) >= len(r.inst.data) {
+		return nil, fmt.Errorf("data segment index %d out of range", index)
+	}
+	return &r.inst.data[index], nil
 }
 
 // memoryInst resolves a memory index to the mutable instantiated memory state.
