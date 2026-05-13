@@ -40,9 +40,9 @@ type instr struct {
 	kind wasmir.InstrKind
 
 	// target is the resolved program counter for fixed-target control-flow
-	// instructions. It is used by if, else, br, and br_if; other instructions
-	// leave it at -1. The interpreter assigns pc = target, then its loop
-	// increment moves execution to the following instruction.
+	// instructions. It is used by if, else, br, br_if, and loop-branch targets;
+	// other instructions leave it at -1. The interpreter assigns pc = target,
+	// then its loop increment moves execution to the following instruction.
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
@@ -76,9 +76,9 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 	for pc, ins := range fn.Body {
 		op := instr{kind: ins.Kind, target: -1}
 		switch ins.Kind {
-		case wasmir.InstrBlock:
+		case wasmir.InstrBlock, wasmir.InstrLoop:
 			if _, ok := ctrl.labels[pc]; !ok {
-				return nil, fmt.Errorf("block at %d has no matching end", pc)
+				return nil, fmt.Errorf("%s at %d has no matching end", instrName(ins.Kind), pc)
 			}
 			labelStack = append(labelStack, pc)
 		case wasmir.InstrIf:
@@ -224,22 +224,25 @@ func compileBranchTarget(depth uint32, labelStack []int, ctrl controlInfo) (int,
 	if !ok {
 		return 0, fmt.Errorf("branch target at %d has no matching end", start)
 	}
-	return label.endIndex, nil
+	return label.branchTarget, nil
 }
 
 // controlLabel describes one structured-control label in the flattened
 // instruction stream.
 //
-// endIndex is the matching end instruction and is currently the branch target
-// for both block and if labels. elseIndex is the matching else instruction for
-// if labels, or -1 when the label has no else arm.
+// endIndex is the matching end instruction. branchTarget is the instruction pc
+// assigned to br/br_if/br_table for this label; it is endIndex for block and if,
+// but the loop instruction pc for loop, so the interpreter's pc increment
+// re-enters the loop body. elseIndex is the matching else instruction for if
+// labels, or -1 when the label has no else arm.
 type controlLabel struct {
-	endIndex  int
-	elseIndex int
+	endIndex     int
+	branchTarget int
+	elseIndex    int
 }
 
 // controlInfo stores precomputed control-boundary metadata by opening
-// instruction index. Only block and if instructions have entries.
+// instruction index. Only block, loop, and if instructions have entries.
 type controlInfo struct {
 	labels map[int]controlLabel
 }
@@ -248,10 +251,10 @@ type controlInfo struct {
 //
 // The VM assumes modules were validated before instantiation, but it still
 // receives a plain wasmir.Module and should not rely on nested source syntax.
-// This pass treats block/if as openers, else as metadata on the current if, and
-// end as the closer for the innermost opener. End instructions with no opener
-// are accepted here because the final function end is represented the same way
-// as a structured-control end.
+// This pass treats block/loop/if as openers, else as metadata on the current
+// if, and end as the closer for the innermost opener. End instructions with no
+// opener are accepted here because the final function end is represented the
+// same way as a structured-control end.
 func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 	ctrl := controlInfo{labels: make(map[int]controlLabel)}
 	stack := make([]int, 0)
@@ -259,7 +262,7 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 
 	for pc, ins := range body {
 		switch ins.Kind {
-		case wasmir.InstrBlock, wasmir.InstrIf:
+		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
 			stack = append(stack, pc)
 		case wasmir.InstrElse:
 			if len(stack) == 0 {
@@ -277,8 +280,12 @@ func analyzeControl(body []wasmir.Instruction) (controlInfo, error) {
 			start := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			label := controlLabel{
-				endIndex:  pc,
-				elseIndex: -1,
+				endIndex:     pc,
+				branchTarget: pc,
+				elseIndex:    -1,
+			}
+			if body[start].Kind == wasmir.InstrLoop {
+				label.branchTarget = start
 			}
 			if elsePC, ok := elseIndex[start]; ok {
 				label.elseIndex = elsePC

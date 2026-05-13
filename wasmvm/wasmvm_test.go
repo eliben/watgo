@@ -682,6 +682,52 @@ func TestBlockBranchTable(t *testing.T) {
 	}
 }
 
+// TestLoopBranch checks that br to a loop label jumps back to the loop body,
+// while br_if to an outer block exits the loop.
+func TestLoopBranch(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "sum") (param $n i32) (result i32)
+				(local $acc i32)
+				block $exit
+					loop $again
+						local.get $n
+						i32.eqz
+						br_if $exit
+						local.get $acc
+						local.get $n
+						i32.add
+						local.set $acc
+						local.get $n
+						i32.const 1
+						i32.sub
+						local.set $n
+						br $again
+					end
+				end
+				local.get $acc))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	tests := []struct {
+		arg  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{wasmvm.I32(0), wasmvm.I32(0)},
+		{wasmvm.I32(1), wasmvm.I32(1)},
+		{wasmvm.I32(5), wasmvm.I32(15)},
+	}
+	for _, tt := range tests {
+		results := callExport(t, inst, "sum", tt.arg)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("sum(%v) got results %#v, want %v", tt.arg, results, tt.want)
+		}
+	}
+}
+
 func TestModuleGlobals(t *testing.T) {
 	// Module-defined globals are instantiated once and then accessed through
 	// global.get/global.set while functions execute.

@@ -196,7 +196,7 @@ func (e *executor) run() ([]Value, error) {
 	for e.pc = 0; e.pc < len(e.fn.code); e.pc++ {
 		ins := e.fn.code[e.pc]
 		switch ins.kind {
-		case wasmir.InstrBlock, wasmir.InstrNop:
+		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrNop:
 		case wasmir.InstrUnreachable:
 			return nil, e.instructionError(fmt.Errorf("unreachable executed"))
 		case wasmir.InstrIf:
