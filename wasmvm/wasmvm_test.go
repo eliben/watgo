@@ -105,6 +105,64 @@ func TestHostFunctionImport(t *testing.T) {
 	}
 }
 
+// TestReturnCall checks that return_call invokes a module-defined function and
+// immediately returns its results from the current function.
+func TestReturnCall(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func $add (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				i32.add)
+			(func (export "tail_add") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				return_call $add
+				i32.const 99))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "tail_add", wasmvm.I32(20), wasmvm.I32(22))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("tail_add got results %#v, want i32 42", results)
+	}
+}
+
+// TestReturnCallHostFunction checks that return_call can tail-call an imported
+// host function through the same resolver path as call.
+func TestReturnCallHostFunction(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(import "env" "double" (func $double (param i32) (result i32)))
+			(func (export "tail_double") (param i32) (result i32)
+				local.get 0
+				return_call $double
+				i32.const 99))
+	`), wasmvm.Imports{
+		"env": {
+			"double": wasmvm.NewHostFunc(
+				[]wasmir.ValueType{wasmir.ValueTypeI32},
+				[]wasmir.ValueType{wasmir.ValueTypeI32},
+				func(_ *wasmvm.Context, args []wasmvm.Value) ([]wasmvm.Value, error) {
+					return []wasmvm.Value{wasmvm.I32(args[0].I32 * 2)}, nil
+				},
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "tail_double", wasmvm.I32(21))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("tail_double got results %#v, want i32 42", results)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -1550,6 +1608,19 @@ func TestExecutionErrorCallContext(t *testing.T) {
 	}, nil)
 
 	if got, want := err.Error(), "pc 0 call: call function index 3 out of range"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestExecutionErrorReturnCallContext checks that return_call reports the
+// instruction location when direct call resolution fails.
+func TestExecutionErrorReturnCallContext(t *testing.T) {
+	err := callInvalidRuntimeModule(t, []wasmir.Instruction{
+		{Kind: wasmir.InstrReturnCall, FuncIndex: 3},
+		{Kind: wasmir.InstrEnd},
+	}, nil)
+
+	if got, want := err.Error(), "pc 0 return_call: call function index 3 out of range"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

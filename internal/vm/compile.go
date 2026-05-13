@@ -104,7 +104,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.target = label.endIndex
 		case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
 			op.index = ins.LocalIndex
-		case wasmir.InstrCall:
+		case wasmir.InstrCall, wasmir.InstrReturnCall:
 			op.index = ins.FuncIndex
 		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 			op.index = ins.GlobalIndex

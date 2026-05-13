@@ -682,22 +682,20 @@ func (e *executor) run() ([]Value, error) {
 				e.push(v2)
 			}
 		case wasmir.InstrCall:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
-			}
-			calleeType, err := e.resolver.FuncType(ins.index)
-			if err != nil {
-				return nil, e.instructionError(err)
-			}
-			callArgs, err := e.popArgs(calleeType.Params)
-			if err != nil {
-				return nil, e.instructionError(err)
-			}
-			results, err := e.resolver.CallFunc(ins.index, callArgs)
+			results, err := e.callFunction(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.stack = append(e.stack, results...)
+		case wasmir.InstrReturnCall:
+			results, err := e.callFunction(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := CheckResults(e.ft.Results, results); err != nil {
+				return nil, e.instructionError(err)
+			}
+			return results, nil
 		case wasmir.InstrBr:
 			e.pc = ins.target
 		case wasmir.InstrBrIf:
@@ -794,6 +792,23 @@ func (e *executor) pop() (Value, error) {
 	v := e.stack[len(e.stack)-1]
 	e.stack = e.stack[:len(e.stack)-1]
 	return v, nil
+}
+
+// callFunction pops arguments for the target function and invokes it through
+// the resolver.
+func (e *executor) callFunction(index uint32) ([]Value, error) {
+	if e.resolver == nil {
+		return nil, fmt.Errorf("resolver is nil")
+	}
+	calleeType, err := e.resolver.FuncType(index)
+	if err != nil {
+		return nil, err
+	}
+	callArgs, err := e.popArgs(calleeType.Params)
+	if err != nil {
+		return nil, err
+	}
+	return e.resolver.CallFunc(index, callArgs)
 }
 
 // evalI64Binary pops two i64 operands and evaluates an i64 binary instruction.
