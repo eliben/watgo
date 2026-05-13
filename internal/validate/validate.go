@@ -3894,7 +3894,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			truncateStack(len(stack) - 2)
 			appendStackType(wasmir.ValueTypeF32)
 
-		case wasmir.InstrF32Sqrt, wasmir.InstrF32Ceil, wasmir.InstrF32Floor, wasmir.InstrF32Trunc, wasmir.InstrF32Nearest, wasmir.InstrF32Neg:
+		case wasmir.InstrF32Abs, wasmir.InstrF32Sqrt, wasmir.InstrF32Ceil, wasmir.InstrF32Floor, wasmir.InstrF32Trunc, wasmir.InstrF32Nearest, wasmir.InstrF32Neg:
 			name := instrName(ins.Kind)
 			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)
@@ -3931,7 +3931,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			truncateStack(len(stack) - 2)
 			appendStackType(wasmir.ValueTypeF64)
 
-		case wasmir.InstrF64Sqrt, wasmir.InstrF64Ceil, wasmir.InstrF64Floor, wasmir.InstrF64Trunc, wasmir.InstrF64Nearest, wasmir.InstrF64Neg:
+		case wasmir.InstrF64Abs, wasmir.InstrF64Sqrt, wasmir.InstrF64Ceil, wasmir.InstrF64Floor, wasmir.InstrF64Trunc, wasmir.InstrF64Nearest, wasmir.InstrF64Neg:
 			name := instrName(ins.Kind)
 			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 1 operand", insCtx, name)

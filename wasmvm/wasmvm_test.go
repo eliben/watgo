@@ -577,6 +577,45 @@ func TestF32ArithmeticAndPredicates(t *testing.T) {
 	}
 }
 
+// TestF32UnaryOps checks non-converting f32 unary instructions, including
+// nearest's ties-to-even behavior.
+func TestF32UnaryOps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "abs") (param f32) (result f32) local.get 0 f32.abs)
+			(func (export "neg") (param f32) (result f32) local.get 0 f32.neg)
+			(func (export "sqrt") (param f32) (result f32) local.get 0 f32.sqrt)
+			(func (export "ceil") (param f32) (result f32) local.get 0 f32.ceil)
+			(func (export "floor") (param f32) (result f32) local.get 0 f32.floor)
+			(func (export "trunc") (param f32) (result f32) local.get 0 f32.trunc)
+			(func (export "nearest") (param f32) (result f32) local.get 0 f32.nearest))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  float32
+		want float32
+	}{
+		{name: "abs", arg: -2.25, want: 2.25},
+		{name: "neg", arg: 2.25, want: -2.25},
+		{name: "sqrt", arg: 9, want: 3},
+		{name: "ceil", arg: 2.25, want: 3},
+		{name: "floor", arg: 2.75, want: 2},
+		{name: "trunc", arg: -2.75, want: -2},
+		{name: "nearest", arg: 2.5, want: 2},
+		{name: "nearest", arg: 3.5, want: 4},
+	} {
+		results := callExport(t, inst, tt.name, wasmvm.F32(tt.arg))
+		if len(results) != 1 || results[0] != wasmvm.F32(tt.want) {
+			t.Fatalf("%s(%v) got results %#v, want f32 %v", tt.name, tt.arg, results, tt.want)
+		}
+	}
+}
+
 func TestF64ArithmeticAndPredicates(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -604,6 +643,45 @@ func TestF64ArithmeticAndPredicates(t *testing.T) {
 	results = callExport(t, inst, "cmp", wasmvm.F64(3.5), wasmvm.F64(3.5))
 	if len(results) != 1 || results[0] != wasmvm.I32(1) {
 		t.Fatalf("cmp got results %#v, want i32 1", results)
+	}
+}
+
+// TestF64UnaryOps checks non-converting f64 unary instructions, including
+// nearest's ties-to-even behavior.
+func TestF64UnaryOps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "abs") (param f64) (result f64) local.get 0 f64.abs)
+			(func (export "neg") (param f64) (result f64) local.get 0 f64.neg)
+			(func (export "sqrt") (param f64) (result f64) local.get 0 f64.sqrt)
+			(func (export "ceil") (param f64) (result f64) local.get 0 f64.ceil)
+			(func (export "floor") (param f64) (result f64) local.get 0 f64.floor)
+			(func (export "trunc") (param f64) (result f64) local.get 0 f64.trunc)
+			(func (export "nearest") (param f64) (result f64) local.get 0 f64.nearest))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  float64
+		want float64
+	}{
+		{name: "abs", arg: -2.25, want: 2.25},
+		{name: "neg", arg: 2.25, want: -2.25},
+		{name: "sqrt", arg: 9, want: 3},
+		{name: "ceil", arg: 2.25, want: 3},
+		{name: "floor", arg: 2.75, want: 2},
+		{name: "trunc", arg: -2.75, want: -2},
+		{name: "nearest", arg: 2.5, want: 2},
+		{name: "nearest", arg: 3.5, want: 4},
+	} {
+		results := callExport(t, inst, tt.name, wasmvm.F64(tt.arg))
+		if len(results) != 1 || results[0] != wasmvm.F64(tt.want) {
+			t.Fatalf("%s(%v) got results %#v, want f64 %v", tt.name, tt.arg, results, tt.want)
+		}
 	}
 }
 
