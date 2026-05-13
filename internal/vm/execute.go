@@ -76,6 +76,30 @@ type Value struct {
 
 	// F64 is the payload for wasmir.ValueTypeF64 values.
 	F64 float64
+
+	// Ref is the payload for reference-typed values.
+	Ref Reference
+}
+
+// RefKind classifies the reference payload carried by a runtime Value.
+type RefKind uint8
+
+const (
+	// RefKindNull is the null reference.
+	RefKindNull RefKind = iota
+
+	// RefKindFunc is a reference to a function in the instance function index
+	// space.
+	RefKindFunc
+)
+
+// Reference is one runtime reference value.
+type Reference struct {
+	// Kind identifies the concrete reference payload.
+	Kind RefKind
+
+	// FuncIndex is set when Kind is RefKindFunc.
+	FuncIndex uint32
 }
 
 // Resolver is the VM's view of the instantiated module environment.
@@ -134,7 +158,7 @@ func CheckArgs(params []wasmir.ValueType, args []Value) error {
 		return fmt.Errorf("got %d arguments, want %d", len(args), len(params))
 	}
 	for i, want := range params {
-		if args[i].Type != want {
+		if !runtimeTypeMatches(args[i].Type, want) {
 			return fmt.Errorf("argument %d has type %s, want %s", i, args[i].Type, want)
 		}
 	}
@@ -147,11 +171,20 @@ func CheckResults(want []wasmir.ValueType, got []Value) error {
 		return fmt.Errorf("got %d results, want %d", len(got), len(want))
 	}
 	for i := range want {
-		if got[i].Type != want[i] {
+		if !runtimeTypeMatches(got[i].Type, want[i]) {
 			return fmt.Errorf("result %d has type %s, want %s", i, got[i].Type, want[i])
 		}
 	}
 	return nil
+}
+
+// runtimeTypeMatches checks runtime value compatibility after validation has
+// already enforced the full WebAssembly static typing rules.
+func runtimeTypeMatches(got, want wasmir.ValueType) bool {
+	if got == want {
+		return true
+	}
+	return got.IsRef() && want.IsRef()
 }
 
 // executor is one active module-defined function frame.
@@ -250,7 +283,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if v.Type != e.locals[ins.index].Type {
+			if !runtimeTypeMatches(v.Type, e.locals[ins.index].Type) {
 				return nil, e.instructionError(fmt.Errorf("local.set %d got %s, want %s", ins.index, v.Type, e.locals[ins.index].Type))
 			}
 			e.locals[ins.index] = v
@@ -262,7 +295,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if v.Type != e.locals[ins.index].Type {
+			if !runtimeTypeMatches(v.Type, e.locals[ins.index].Type) {
 				return nil, e.instructionError(fmt.Errorf("local.tee %d got %s, want %s", ins.index, v.Type, e.locals[ins.index].Type))
 			}
 			e.locals[ins.index] = v
@@ -681,6 +714,29 @@ func (e *executor) run() ([]Value, error) {
 			} else {
 				e.push(v2)
 			}
+		case wasmir.InstrRefNull:
+			refTypeIndex := int(ins.index)
+			if refTypeIndex >= len(e.fn.refTypes) {
+				return nil, e.instructionError(fmt.Errorf("ref.null type index %d out of range", ins.index))
+			}
+			e.push(Value{Type: e.fn.refTypes[refTypeIndex], Ref: Reference{Kind: RefKindNull}})
+		case wasmir.InstrRefFunc:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			if _, err := e.resolver.FuncType(ins.index); err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.RefTypeFunc(false), Ref: Reference{Kind: RefKindFunc, FuncIndex: ins.index}})
+		case wasmir.InstrRefIsNull:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("ref.is_null got %s operand", v.Type))
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v.Ref.Kind == RefKindNull)})
 		case wasmir.InstrCall:
 			results, err := e.callFunction(ins.index)
 			if err != nil {
@@ -770,6 +826,9 @@ func zeroValue(vt wasmir.ValueType) (Value, error) {
 	case wasmir.ValueTypeF64:
 		return Value{Type: wasmir.ValueTypeF64}, nil
 	default:
+		if vt.IsRef() {
+			return Value{Type: vt, Ref: Reference{Kind: RefKindNull}}, nil
+		}
 		return Value{}, fmt.Errorf("unsupported local type %s", vt)
 	}
 }

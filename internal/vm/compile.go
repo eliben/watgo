@@ -32,6 +32,11 @@ type Function struct {
 	// below len(table)-1 as direct table indices and use len(table)-1 for the
 	// default case.
 	branchTables [][]int
+
+	// refTypes stores reference type immediates used by ref.null instructions.
+	// A ref.null instruction keeps its fixed-size instr small by storing the
+	// index of its type immediate in instr.index.
+	refTypes []wasmir.ValueType
 }
 
 // instr is one instruction in the VM's execution form.
@@ -46,8 +51,8 @@ type instr struct {
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
-	// global.get/set, call, memory instructions, and br_table's branchTables
-	// entry.
+	// global.get/set, call, memory instructions, br_table's branchTables entry,
+	// and ref.null's refTypes entry.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -105,6 +110,11 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 		case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
 			op.index = ins.LocalIndex
 		case wasmir.InstrCall, wasmir.InstrReturnCall:
+			op.index = ins.FuncIndex
+		case wasmir.InstrRefNull:
+			op.index = uint32(len(out.refTypes))
+			out.refTypes = append(out.refTypes, ins.RefType)
+		case wasmir.InstrRefFunc:
 			op.index = ins.FuncIndex
 		case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
 			op.index = ins.GlobalIndex
@@ -217,6 +227,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrI32ReinterpretF32, wasmir.InstrI64ReinterpretF64,
 			wasmir.InstrF32ReinterpretI32, wasmir.InstrF64ReinterpretI64,
 			wasmir.InstrDrop, wasmir.InstrSelect, wasmir.InstrNop, wasmir.InstrUnreachable,
+			wasmir.InstrRefIsNull,
 			wasmir.InstrReturn:
 		case wasmir.InstrEnd:
 			if len(labelStack) == 0 {

@@ -163,6 +163,58 @@ func TestReturnCallHostFunction(t *testing.T) {
 	}
 }
 
+// TestReferenceInstructions checks the minimal reference instruction set:
+// ref.null, ref.func, and ref.is_null.
+func TestReferenceInstructions(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func $target)
+			(elem declare func $target)
+			(func (export "null_is_null") (result i32)
+				ref.null func
+				ref.is_null)
+			(func (export "func_is_null") (result i32)
+				ref.func $target
+				ref.is_null)
+			(func (export "return_null") (result funcref)
+				ref.null func)
+			(func (export "return_func") (result funcref)
+				ref.func $target)
+			(func (export "local_func_is_null") (result i32)
+				(local funcref)
+				ref.func $target
+				local.set 0
+				local.get 0
+				ref.is_null))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "null_is_null")
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("null_is_null got results %#v, want i32 1", results)
+	}
+	results = callExport(t, inst, "func_is_null")
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("func_is_null got results %#v, want i32 0", results)
+	}
+	results = callExport(t, inst, "local_func_is_null")
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("local_func_is_null got results %#v, want i32 0", results)
+	}
+
+	results = callExport(t, inst, "return_null")
+	if len(results) != 1 || !results[0].Type.IsRef() {
+		t.Fatalf("return_null got results %#v, want one reference", results)
+	}
+	results = callExport(t, inst, "return_func")
+	if len(results) != 1 || !results[0].Type.IsRef() || results[0].Ref.FuncIndex != 0 {
+		t.Fatalf("return_func got results %#v, want function reference 0", results)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
