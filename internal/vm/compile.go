@@ -21,6 +21,17 @@ type Function struct {
 	// the same instruction order as wasmir.Function.Body, but immediate fields
 	// have been normalized for execution.
 	code []instr
+
+	// branchTables stores the variable-length target lists used by br_table
+	// instructions. A br_table instruction keeps its fixed-size instr small by
+	// storing the index of its target list in instr.index.
+	//
+	// Each target list contains already-resolved program counters, in the same
+	// order as the source instruction's BranchTable depths. The default target
+	// is appended as the final element, so execution can use selector values
+	// below len(table)-1 as direct table indices and use len(table)-1 for the
+	// default case.
+	branchTables [][]int
 }
 
 // instr is one instruction in the VM's execution form.
@@ -28,14 +39,15 @@ type instr struct {
 	// kind is the semantic instruction kind executed by the interpreter.
 	kind wasmir.InstrKind
 
-	// target is the resolved program counter for control-flow instructions. It
-	// is used by if, else, br, and br_if; other instructions leave it at -1.
-	// The interpreter assigns pc = target, then its loop increment moves
-	// execution to the following instruction.
+	// target is the resolved program counter for fixed-target control-flow
+	// instructions. It is used by if, else, br, and br_if; other instructions
+	// leave it at -1. The interpreter assigns pc = target, then its loop
+	// increment moves execution to the following instruction.
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
-	// global.get/set, call, and memory load/store instructions.
+	// global.get/set, call, memory instructions, and br_table's branchTables
+	// entry.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -128,6 +140,22 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 				return nil, fmt.Errorf("%s at %d: %w", instrName(ins.Kind), pc, err)
 			}
 			op.target = target
+		case wasmir.InstrBrTable:
+			targets := make([]int, 0, len(ins.BranchTable)+1)
+			for i, depth := range ins.BranchTable {
+				target, err := compileBranchTarget(depth, labelStack, ctrl)
+				if err != nil {
+					return nil, fmt.Errorf("br_table at %d target %d: %w", pc, i, err)
+				}
+				targets = append(targets, target)
+			}
+			target, err := compileBranchTarget(ins.BranchDefault, labelStack, ctrl)
+			if err != nil {
+				return nil, fmt.Errorf("br_table at %d default target: %w", pc, err)
+			}
+			targets = append(targets, target)
+			op.index = uint32(len(out.branchTables))
+			out.branchTables = append(out.branchTables, targets)
 		case wasmir.InstrI32Const:
 			op.bits = int64(ins.I32Const)
 		case wasmir.InstrI64Const:

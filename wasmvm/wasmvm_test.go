@@ -640,6 +640,48 @@ func TestBlockBranchIf(t *testing.T) {
 	}
 }
 
+// TestBlockBranchTable checks that br_table selects table targets by an i32
+// selector and falls back to the default target for out-of-range selectors.
+func TestBlockBranchTable(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "choose") (param i32) (result i32)
+				block $default
+					block $one
+						block $zero
+							local.get 0
+							br_table $zero $one $default
+						end
+						i32.const 0
+						return
+					end
+					i32.const 1
+					return
+				end
+				i32.const 9))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	tests := []struct {
+		arg  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{wasmvm.I32(0), wasmvm.I32(0)},
+		{wasmvm.I32(1), wasmvm.I32(1)},
+		{wasmvm.I32(2), wasmvm.I32(9)},
+		{wasmvm.I32(-1), wasmvm.I32(9)},
+	}
+	for _, tt := range tests {
+		results := callExport(t, inst, "choose", tt.arg)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("choose(%v) got results %#v, want %v", tt.arg, results, tt.want)
+		}
+	}
+}
+
 func TestModuleGlobals(t *testing.T) {
 	// Module-defined globals are instantiated once and then accessed through
 	// global.get/global.set while functions execute.

@@ -636,6 +636,29 @@ func (e *executor) run() ([]Value, error) {
 			if cond != 0 {
 				e.pc = ins.target
 			}
+		case wasmir.InstrBrTable:
+			// br_table consumes only the i32 selector. Branch result values, if
+			// any, are already below it on the operand stack and are left there
+			// for the selected target block's end to consume.
+			selector, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			tableIndex := int(ins.index)
+			if tableIndex >= len(e.fn.branchTables) {
+				return nil, e.instructionError(fmt.Errorf("br_table index %d out of range", ins.index))
+			}
+			targets := e.fn.branchTables[tableIndex]
+			if len(targets) == 0 {
+				return nil, e.instructionError(fmt.Errorf("br_table has no default target"))
+			}
+			targetIndex := uint32(selector)
+			defaultIndex := len(targets) - 1
+			if uint64(targetIndex) < uint64(defaultIndex) {
+				e.pc = targets[int(targetIndex)]
+			} else {
+				e.pc = targets[defaultIndex]
+			}
 		case wasmir.InstrReturn:
 			results, err := e.popResults(e.ft.Results)
 			if err != nil {
