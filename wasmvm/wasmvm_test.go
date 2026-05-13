@@ -1,6 +1,7 @@
 package wasmvm_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/eliben/watgo"
@@ -681,6 +682,179 @@ func TestF64UnaryOps(t *testing.T) {
 		results := callExport(t, inst, tt.name, wasmvm.F64(tt.arg))
 		if len(results) != 1 || results[0] != wasmvm.F64(tt.want) {
 			t.Fatalf("%s(%v) got results %#v, want f64 %v", tt.name, tt.arg, results, tt.want)
+		}
+	}
+}
+
+// TestFloatBinaryExtraOps checks min, max, and copysign for f32 and f64.
+func TestFloatBinaryExtraOps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "f32_min") (param f32 f32) (result f32) local.get 0 local.get 1 f32.min)
+			(func (export "f32_max") (param f32 f32) (result f32) local.get 0 local.get 1 f32.max)
+			(func (export "f32_copysign") (param f32 f32) (result f32) local.get 0 local.get 1 f32.copysign)
+			(func (export "f64_min") (param f64 f64) (result f64) local.get 0 local.get 1 f64.min)
+			(func (export "f64_max") (param f64 f64) (result f64) local.get 0 local.get 1 f64.max)
+			(func (export "f64_copysign") (param f64 f64) (result f64) local.get 0 local.get 1 f64.copysign))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		lhs  wasmvm.Value
+		rhs  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{name: "f32_min", lhs: wasmvm.F32(3.5), rhs: wasmvm.F32(-1.25), want: wasmvm.F32(-1.25)},
+		{name: "f32_max", lhs: wasmvm.F32(3.5), rhs: wasmvm.F32(-1.25), want: wasmvm.F32(3.5)},
+		{name: "f32_copysign", lhs: wasmvm.F32(3.5), rhs: wasmvm.F32(float32(math.Copysign(0, -1))), want: wasmvm.F32(-3.5)},
+		{name: "f64_min", lhs: wasmvm.F64(3.5), rhs: wasmvm.F64(-1.25), want: wasmvm.F64(-1.25)},
+		{name: "f64_max", lhs: wasmvm.F64(3.5), rhs: wasmvm.F64(-1.25), want: wasmvm.F64(3.5)},
+		{name: "f64_copysign", lhs: wasmvm.F64(3.5), rhs: wasmvm.F64(math.Copysign(0, -1)), want: wasmvm.F64(-3.5)},
+	} {
+		results := callExport(t, inst, tt.name, tt.lhs, tt.rhs)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("%s got results %#v, want %v", tt.name, results, tt.want)
+		}
+	}
+}
+
+// TestNumericConversionsAndReinterpret checks non-trapping numeric conversions
+// and bit-preserving reinterpret instructions.
+func TestNumericConversionsAndReinterpret(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "i32_wrap") (param i64) (result i32) local.get 0 i32.wrap_i64)
+			(func (export "i64_ext_s") (param i32) (result i64) local.get 0 i64.extend_i32_s)
+			(func (export "i64_ext_u") (param i32) (result i64) local.get 0 i64.extend_i32_u)
+			(func (export "f32_i32_s") (param i32) (result f32) local.get 0 f32.convert_i32_s)
+			(func (export "f32_i32_u") (param i32) (result f32) local.get 0 f32.convert_i32_u)
+			(func (export "f32_i64_s") (param i64) (result f32) local.get 0 f32.convert_i64_s)
+			(func (export "f32_i64_u") (param i64) (result f32) local.get 0 f32.convert_i64_u)
+			(func (export "f32_demote") (param f64) (result f32) local.get 0 f32.demote_f64)
+			(func (export "f64_i32_s") (param i32) (result f64) local.get 0 f64.convert_i32_s)
+			(func (export "f64_i32_u") (param i32) (result f64) local.get 0 f64.convert_i32_u)
+			(func (export "f64_i64_s") (param i64) (result f64) local.get 0 f64.convert_i64_s)
+			(func (export "f64_i64_u") (param i64) (result f64) local.get 0 f64.convert_i64_u)
+			(func (export "f64_promote") (param f32) (result f64) local.get 0 f64.promote_f32)
+			(func (export "i32_re_f32") (param f32) (result i32) local.get 0 i32.reinterpret_f32)
+			(func (export "i64_re_f64") (param f64) (result i64) local.get 0 i64.reinterpret_f64)
+			(func (export "f32_re_i32") (param i32) (result f32) local.get 0 f32.reinterpret_i32)
+			(func (export "f64_re_i64") (param i64) (result f64) local.get 0 f64.reinterpret_i64))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{name: "i32_wrap", arg: wasmvm.I64(0x100000002), want: wasmvm.I32(2)},
+		{name: "i64_ext_s", arg: wasmvm.I32(-1), want: wasmvm.I64(-1)},
+		{name: "i64_ext_u", arg: wasmvm.I32(-1), want: wasmvm.I64(4294967295)},
+		{name: "f32_i32_s", arg: wasmvm.I32(-7), want: wasmvm.F32(-7)},
+		{name: "f32_i32_u", arg: wasmvm.I32(-1), want: wasmvm.F32(float32(^uint32(0)))},
+		{name: "f32_i64_s", arg: wasmvm.I64(-9), want: wasmvm.F32(-9)},
+		{name: "f32_i64_u", arg: wasmvm.I64(9), want: wasmvm.F32(9)},
+		{name: "f32_demote", arg: wasmvm.F64(12.5), want: wasmvm.F32(12.5)},
+		{name: "f64_i32_s", arg: wasmvm.I32(-11), want: wasmvm.F64(-11)},
+		{name: "f64_i32_u", arg: wasmvm.I32(-1), want: wasmvm.F64(float64(^uint32(0)))},
+		{name: "f64_i64_s", arg: wasmvm.I64(-13), want: wasmvm.F64(-13)},
+		{name: "f64_i64_u", arg: wasmvm.I64(13), want: wasmvm.F64(13)},
+		{name: "f64_promote", arg: wasmvm.F32(6.25), want: wasmvm.F64(6.25)},
+		{name: "i32_re_f32", arg: wasmvm.F32(1), want: wasmvm.I32(0x3f800000)},
+		{name: "i64_re_f64", arg: wasmvm.F64(1), want: wasmvm.I64(0x3ff0000000000000)},
+		{name: "f32_re_i32", arg: wasmvm.I32(0x3f800000), want: wasmvm.F32(1)},
+		{name: "f64_re_i64", arg: wasmvm.I64(0x3ff0000000000000), want: wasmvm.F64(1)},
+	} {
+		results := callExport(t, inst, tt.name, tt.arg)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("%s got results %#v, want %v", tt.name, results, tt.want)
+		}
+	}
+}
+
+// TestFloatToIntegerTruncation checks trapping and saturating float-to-integer
+// conversions for representative f32 and f64 inputs.
+func TestFloatToIntegerTruncation(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "i32_f32_s") (param f32) (result i32) local.get 0 i32.trunc_f32_s)
+			(func (export "i32_f32_u") (param f32) (result i32) local.get 0 i32.trunc_f32_u)
+			(func (export "i32_f64_s") (param f64) (result i32) local.get 0 i32.trunc_f64_s)
+			(func (export "i32_f64_u") (param f64) (result i32) local.get 0 i32.trunc_f64_u)
+			(func (export "i64_f32_s") (param f32) (result i64) local.get 0 i64.trunc_f32_s)
+			(func (export "i64_f32_u") (param f32) (result i64) local.get 0 i64.trunc_f32_u)
+			(func (export "i64_f64_s") (param f64) (result i64) local.get 0 i64.trunc_f64_s)
+			(func (export "i64_f64_u") (param f64) (result i64) local.get 0 i64.trunc_f64_u)
+			(func (export "i32_sat_f32_s") (param f32) (result i32) local.get 0 i32.trunc_sat_f32_s)
+			(func (export "i32_sat_f32_u") (param f32) (result i32) local.get 0 i32.trunc_sat_f32_u)
+			(func (export "i32_sat_f64_s") (param f64) (result i32) local.get 0 i32.trunc_sat_f64_s)
+			(func (export "i32_sat_f64_u") (param f64) (result i32) local.get 0 i32.trunc_sat_f64_u)
+			(func (export "i64_sat_f32_s") (param f32) (result i64) local.get 0 i64.trunc_sat_f32_s)
+			(func (export "i64_sat_f32_u") (param f32) (result i64) local.get 0 i64.trunc_sat_f32_u)
+			(func (export "i64_sat_f64_s") (param f64) (result i64) local.get 0 i64.trunc_sat_f64_s)
+			(func (export "i64_sat_f64_u") (param f64) (result i64) local.get 0 i64.trunc_sat_f64_u))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{name: "i32_f32_s", arg: wasmvm.F32(-2.9), want: wasmvm.I32(-2)},
+		{name: "i32_f32_u", arg: wasmvm.F32(3.9), want: wasmvm.I32(3)},
+		{name: "i32_f64_s", arg: wasmvm.F64(-2.9), want: wasmvm.I32(-2)},
+		{name: "i32_f64_u", arg: wasmvm.F64(3.9), want: wasmvm.I32(3)},
+		{name: "i64_f32_s", arg: wasmvm.F32(-2.9), want: wasmvm.I64(-2)},
+		{name: "i64_f32_u", arg: wasmvm.F32(3.9), want: wasmvm.I64(3)},
+		{name: "i64_f64_s", arg: wasmvm.F64(-2.9), want: wasmvm.I64(-2)},
+		{name: "i64_f64_u", arg: wasmvm.F64(3.9), want: wasmvm.I64(3)},
+		{name: "i32_sat_f32_s", arg: wasmvm.F32(float32(math.Inf(1))), want: wasmvm.I32(1<<31 - 1)},
+		{name: "i32_sat_f32_u", arg: wasmvm.F32(-1), want: wasmvm.I32(0)},
+		{name: "i32_sat_f64_s", arg: wasmvm.F64(math.Inf(-1)), want: wasmvm.I32(-1 << 31)},
+		{name: "i32_sat_f64_u", arg: wasmvm.F64(math.Inf(1)), want: wasmvm.I32(-1)},
+		{name: "i64_sat_f32_s", arg: wasmvm.F32(float32(math.Inf(1))), want: wasmvm.I64(1<<63 - 1)},
+		{name: "i64_sat_f32_u", arg: wasmvm.F32(float32(math.Inf(1))), want: wasmvm.I64(-1)},
+		{name: "i64_sat_f64_s", arg: wasmvm.F64(math.Inf(-1)), want: wasmvm.I64(-1 << 63)},
+		{name: "i64_sat_f64_u", arg: wasmvm.F64(math.NaN()), want: wasmvm.I64(0)},
+	} {
+		results := callExport(t, inst, tt.name, tt.arg)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("%s got results %#v, want %v", tt.name, results, tt.want)
+		}
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  wasmvm.Value
+		want string
+	}{
+		{name: "i32_f64_s", arg: wasmvm.F64(2147483648), want: "pc 1 i32.trunc_f64_s: integer overflow"},
+		{name: "i32_f64_u", arg: wasmvm.F64(-1), want: "pc 1 i32.trunc_f64_u: integer overflow"},
+		{name: "i64_f64_s", arg: wasmvm.F64(math.Inf(1)), want: "pc 1 i64.trunc_f64_s: integer overflow"},
+		{name: "i32_f64_s", arg: wasmvm.F64(math.NaN()), want: "pc 1 i32.trunc_f64_s: invalid conversion to integer"},
+	} {
+		f, ok := inst.ExportedFunc(tt.name)
+		if !ok {
+			t.Fatalf("missing %s export", tt.name)
+		}
+		_, err := f.Call(tt.arg)
+		if err == nil {
+			t.Fatalf("Call %s succeeded unexpectedly", tt.name)
+		}
+		if got := err.Error(); got != tt.want {
+			t.Fatalf("%s error = %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }

@@ -9,8 +9,30 @@ import (
 )
 
 const (
+	// minInt32/maxInt32 and minInt64/maxInt64 are used when saturating
+	// float-to-signed-integer conversions clamp out-of-range values.
 	minInt32 = -1 << 31
+	maxInt32 = 1<<31 - 1
 	minInt64 = -1 << 63
+	maxInt64 = 1<<63 - 1
+
+	// The float thresholds below describe the half-open valid ranges for
+	// trapping float-to-integer truncation:
+	//
+	//   - signed i32: [minInt32Float, two31Float)
+	//   - unsigned i32: [0, two32Float)
+	//   - signed i64: [minInt64Float, two63Float)
+	//   - unsigned i64: [0, two64Float)
+	//
+	// They are also used as saturation cutoffs. Powers of two are exactly
+	// representable in binary floating point, which makes these comparisons
+	// stable across f32 and f64 inputs after promotion to float64.
+	minInt32Float = -2147483648.0
+	two31Float    = 2147483648.0
+	two32Float    = 4294967296.0
+	minInt64Float = -9223372036854775808.0
+	two63Float    = 9223372036854775808.0
+	two64Float    = 18446744073709551616.0
 )
 
 // instructionError adds interpreter location to low-level execution errors.
@@ -565,6 +587,29 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI64, I64: v})
+		case wasmir.InstrI32WrapI64,
+			wasmir.InstrI32TruncF32S, wasmir.InstrI32TruncF32U,
+			wasmir.InstrI32TruncF64S, wasmir.InstrI32TruncF64U,
+			wasmir.InstrI32TruncSatF32S, wasmir.InstrI32TruncSatF32U,
+			wasmir.InstrI32TruncSatF64S, wasmir.InstrI32TruncSatF64U,
+			wasmir.InstrI64ExtendI32S, wasmir.InstrI64ExtendI32U,
+			wasmir.InstrI64TruncF32S, wasmir.InstrI64TruncF32U,
+			wasmir.InstrI64TruncF64S, wasmir.InstrI64TruncF64U,
+			wasmir.InstrI64TruncSatF32S, wasmir.InstrI64TruncSatF32U,
+			wasmir.InstrI64TruncSatF64S, wasmir.InstrI64TruncSatF64U,
+			wasmir.InstrF32ConvertI32S, wasmir.InstrF32ConvertI32U,
+			wasmir.InstrF32ConvertI64S, wasmir.InstrF32ConvertI64U,
+			wasmir.InstrF32DemoteF64,
+			wasmir.InstrF64ConvertI32S, wasmir.InstrF64ConvertI32U,
+			wasmir.InstrF64ConvertI64S, wasmir.InstrF64ConvertI64U,
+			wasmir.InstrF64PromoteF32,
+			wasmir.InstrI32ReinterpretF32, wasmir.InstrI64ReinterpretF64,
+			wasmir.InstrF32ReinterpretI32, wasmir.InstrF64ReinterpretI64:
+			v, err := e.evalConversion(ins.kind)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(v)
 		case wasmir.InstrF32Const:
 			e.push(Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.bits))})
 		case wasmir.InstrF32Abs, wasmir.InstrF32Neg, wasmir.InstrF32Sqrt,
@@ -574,7 +619,8 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeF32, F32: v})
-		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
+		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div,
+			wasmir.InstrF32Min, wasmir.InstrF32Max, wasmir.InstrF32Copysign:
 			v, err := e.evalF32Binary(ins.kind)
 			if err != nil {
 				return nil, e.instructionError(err)
@@ -596,7 +642,8 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeF64, F64: v})
-		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div:
+		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div,
+			wasmir.InstrF64Min, wasmir.InstrF64Max, wasmir.InstrF64Copysign:
 			v, err := e.evalF64Binary(ins.kind)
 			if err != nil {
 				return nil, e.instructionError(err)
@@ -895,6 +942,12 @@ func (e *executor) evalF32Binary(kind wasmir.InstrKind) (float32, error) {
 		return lhs * rhs, nil
 	case wasmir.InstrF32Div:
 		return lhs / rhs, nil
+	case wasmir.InstrF32Min:
+		return float32(math.Min(float64(lhs), float64(rhs))), nil
+	case wasmir.InstrF32Max:
+		return float32(math.Max(float64(lhs), float64(rhs))), nil
+	case wasmir.InstrF32Copysign:
+		return math.Float32frombits((math.Float32bits(lhs) &^ (1 << 31)) | (math.Float32bits(rhs) & (1 << 31))), nil
 	default:
 		return 0, fmt.Errorf("unsupported f32 binary instruction %s", instrName(kind))
 	}
@@ -1005,6 +1058,12 @@ func (e *executor) evalF64Binary(kind wasmir.InstrKind) (float64, error) {
 		return lhs * rhs, nil
 	case wasmir.InstrF64Div:
 		return lhs / rhs, nil
+	case wasmir.InstrF64Min:
+		return math.Min(lhs, rhs), nil
+	case wasmir.InstrF64Max:
+		return math.Max(lhs, rhs), nil
+	case wasmir.InstrF64Copysign:
+		return math.Float64frombits((math.Float64bits(lhs) &^ (1 << 63)) | (math.Float64bits(rhs) & (1 << 63))), nil
 	default:
 		return 0, fmt.Errorf("unsupported f64 binary instruction %s", instrName(kind))
 	}
@@ -1143,6 +1202,248 @@ func (e *executor) evalI32Unary(kind wasmir.InstrKind) (int32, error) {
 	default:
 		return 0, fmt.Errorf("unsupported i32 unary instruction %s", instrName(kind))
 	}
+}
+
+// evalConversion pops the source operand for a numeric conversion or
+// reinterpret instruction and returns the converted runtime value.
+func (e *executor) evalConversion(kind wasmir.InstrKind) (Value, error) {
+	switch kind {
+	case wasmir.InstrI32WrapI64:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeI32, I32: int32(v)}, err
+	case wasmir.InstrI32TruncF32S:
+		v, err := e.popF32()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI32S(float64(v))
+		return Value{Type: wasmir.ValueTypeI32, I32: out}, err
+	case wasmir.InstrI32TruncF32U:
+		v, err := e.popF32()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI32U(float64(v))
+		return Value{Type: wasmir.ValueTypeI32, I32: out}, err
+	case wasmir.InstrI32TruncF64S:
+		v, err := e.popF64()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI32S(v)
+		return Value{Type: wasmir.ValueTypeI32, I32: out}, err
+	case wasmir.InstrI32TruncF64U:
+		v, err := e.popF64()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI32U(v)
+		return Value{Type: wasmir.ValueTypeI32, I32: out}, err
+	case wasmir.InstrI32TruncSatF32S:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeI32, I32: truncSatFloatToI32S(float64(v))}, err
+	case wasmir.InstrI32TruncSatF32U:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeI32, I32: truncSatFloatToI32U(float64(v))}, err
+	case wasmir.InstrI32TruncSatF64S:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeI32, I32: truncSatFloatToI32S(v)}, err
+	case wasmir.InstrI32TruncSatF64U:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeI32, I32: truncSatFloatToI32U(v)}, err
+	case wasmir.InstrI64ExtendI32S:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeI64, I64: int64(v)}, err
+	case wasmir.InstrI64ExtendI32U:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeI64, I64: int64(uint32(v))}, err
+	case wasmir.InstrI64TruncF32S:
+		v, err := e.popF32()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI64S(float64(v))
+		return Value{Type: wasmir.ValueTypeI64, I64: out}, err
+	case wasmir.InstrI64TruncF32U:
+		v, err := e.popF32()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI64U(float64(v))
+		return Value{Type: wasmir.ValueTypeI64, I64: out}, err
+	case wasmir.InstrI64TruncF64S:
+		v, err := e.popF64()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI64S(v)
+		return Value{Type: wasmir.ValueTypeI64, I64: out}, err
+	case wasmir.InstrI64TruncF64U:
+		v, err := e.popF64()
+		if err != nil {
+			return Value{}, err
+		}
+		out, err := truncFloatToI64U(v)
+		return Value{Type: wasmir.ValueTypeI64, I64: out}, err
+	case wasmir.InstrI64TruncSatF32S:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeI64, I64: truncSatFloatToI64S(float64(v))}, err
+	case wasmir.InstrI64TruncSatF32U:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeI64, I64: truncSatFloatToI64U(float64(v))}, err
+	case wasmir.InstrI64TruncSatF64S:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeI64, I64: truncSatFloatToI64S(v)}, err
+	case wasmir.InstrI64TruncSatF64U:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeI64, I64: truncSatFloatToI64U(v)}, err
+	case wasmir.InstrF32ConvertI32S:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeF32, F32: float32(v)}, err
+	case wasmir.InstrF32ConvertI32U:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeF32, F32: float32(uint32(v))}, err
+	case wasmir.InstrF32ConvertI64S:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeF32, F32: float32(v)}, err
+	case wasmir.InstrF32ConvertI64U:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeF32, F32: float32(uint64(v))}, err
+	case wasmir.InstrF32DemoteF64:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeF32, F32: float32(v)}, err
+	case wasmir.InstrF64ConvertI32S:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeF64, F64: float64(v)}, err
+	case wasmir.InstrF64ConvertI32U:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeF64, F64: float64(uint32(v))}, err
+	case wasmir.InstrF64ConvertI64S:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeF64, F64: float64(v)}, err
+	case wasmir.InstrF64ConvertI64U:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeF64, F64: float64(uint64(v))}, err
+	case wasmir.InstrF64PromoteF32:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeF64, F64: float64(v)}, err
+	case wasmir.InstrI32ReinterpretF32:
+		v, err := e.popF32()
+		return Value{Type: wasmir.ValueTypeI32, I32: int32(math.Float32bits(v))}, err
+	case wasmir.InstrI64ReinterpretF64:
+		v, err := e.popF64()
+		return Value{Type: wasmir.ValueTypeI64, I64: int64(math.Float64bits(v))}, err
+	case wasmir.InstrF32ReinterpretI32:
+		v, err := e.popI32()
+		return Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(v))}, err
+	case wasmir.InstrF64ReinterpretI64:
+		v, err := e.popI64()
+		return Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(uint64(v))}, err
+	default:
+		return Value{}, fmt.Errorf("unsupported conversion instruction %s", instrName(kind))
+	}
+}
+
+// checkedTruncFloat truncates x toward zero and verifies the truncated value is
+// in [lower, upper).
+func checkedTruncFloat(x, lower, upper float64) (float64, error) {
+	if math.IsNaN(x) {
+		return 0, fmt.Errorf("invalid conversion to integer")
+	}
+	if math.IsInf(x, 0) {
+		return 0, fmt.Errorf("integer overflow")
+	}
+	t := math.Trunc(x)
+	if t < lower || t >= upper {
+		return 0, fmt.Errorf("integer overflow")
+	}
+	return t, nil
+}
+
+// truncFloatToI32S implements trapping signed float-to-i32 truncation.
+func truncFloatToI32S(x float64) (int32, error) {
+	t, err := checkedTruncFloat(x, minInt32Float, two31Float)
+	return int32(t), err
+}
+
+// truncFloatToI32U implements trapping unsigned float-to-i32 truncation.
+func truncFloatToI32U(x float64) (int32, error) {
+	t, err := checkedTruncFloat(x, 0, two32Float)
+	return int32(uint32(t)), err
+}
+
+// truncFloatToI64S implements trapping signed float-to-i64 truncation.
+func truncFloatToI64S(x float64) (int64, error) {
+	t, err := checkedTruncFloat(x, minInt64Float, two63Float)
+	return int64(t), err
+}
+
+// truncFloatToI64U implements trapping unsigned float-to-i64 truncation.
+func truncFloatToI64U(x float64) (int64, error) {
+	t, err := checkedTruncFloat(x, 0, two64Float)
+	return int64(uint64(t)), err
+}
+
+// truncSatFloatToI32S implements saturating signed float-to-i32 truncation.
+func truncSatFloatToI32S(x float64) int32 {
+	if math.IsNaN(x) {
+		return 0
+	}
+	t := math.Trunc(x)
+	if t < minInt32Float {
+		return minInt32
+	}
+	if t >= two31Float {
+		return maxInt32
+	}
+	return int32(t)
+}
+
+// truncSatFloatToI32U implements saturating unsigned float-to-i32 truncation.
+func truncSatFloatToI32U(x float64) int32 {
+	if math.IsNaN(x) {
+		return 0
+	}
+	t := math.Trunc(x)
+	if t <= 0 {
+		return 0
+	}
+	if t >= two32Float {
+		v := ^uint32(0)
+		return int32(v)
+	}
+	return int32(uint32(t))
+}
+
+// truncSatFloatToI64S implements saturating signed float-to-i64 truncation.
+func truncSatFloatToI64S(x float64) int64 {
+	if math.IsNaN(x) {
+		return 0
+	}
+	t := math.Trunc(x)
+	if t < minInt64Float {
+		return minInt64
+	}
+	if t >= two63Float {
+		return maxInt64
+	}
+	return int64(t)
+}
+
+// truncSatFloatToI64U implements saturating unsigned float-to-i64 truncation.
+func truncSatFloatToI64U(x float64) int64 {
+	if math.IsNaN(x) {
+		return 0
+	}
+	t := math.Trunc(x)
+	if t <= 0 {
+		return 0
+	}
+	if t >= two64Float {
+		v := ^uint64(0)
+		return int64(v)
+	}
+	return int64(uint64(t))
 }
 
 // boolI32 converts a WebAssembly i32 condition result to 0 or 1.

@@ -3859,29 +3859,115 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI64))
 
-		case wasmir.InstrF32ConvertI32S:
+		case wasmir.InstrI32TruncF32S, wasmir.InstrI32TruncF32U,
+			wasmir.InstrI32TruncSatF32S, wasmir.InstrI32TruncSatF32U:
+			name := instrName(ins.Kind)
 			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
-				diags.Addf("%s: f32.convert_i32_s needs 1 operand", insCtx)
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF32) {
+				diags.Addf("%s: %s expects f32 operand", insCtx, name)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI32))
+
+		case wasmir.InstrI32TruncF64S, wasmir.InstrI32TruncF64U,
+			wasmir.InstrI32TruncSatF64S, wasmir.InstrI32TruncSatF64U:
+			name := instrName(ins.Kind)
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF64) {
+				diags.Addf("%s: %s expects f64 operand", insCtx, name)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI32))
+
+		case wasmir.InstrI64TruncF32S, wasmir.InstrI64TruncF32U,
+			wasmir.InstrI64TruncSatF32S, wasmir.InstrI64TruncSatF32U:
+			name := instrName(ins.Kind)
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF32) {
+				diags.Addf("%s: %s expects f32 operand", insCtx, name)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI64))
+
+		case wasmir.InstrI64TruncF64S, wasmir.InstrI64TruncF64U,
+			wasmir.InstrI64TruncSatF64S, wasmir.InstrI64TruncSatF64U:
+			name := instrName(ins.Kind)
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF64) {
+				diags.Addf("%s: %s expects f64 operand", insCtx, name)
+				continue
+			}
+			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeI64))
+
+		case wasmir.InstrF32ConvertI32S, wasmir.InstrF32ConvertI32U,
+			wasmir.InstrF64ConvertI32S, wasmir.InstrF64ConvertI32U:
+			name := instrName(ins.Kind)
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
 				continue
 			}
 			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeI32) {
-				diags.Addf("%s: f32.convert_i32_s expects i32 operand", insCtx)
+				diags.Addf("%s: %s expects i32 operand", insCtx, name)
+				continue
+			}
+			if ins.Kind == wasmir.InstrF32ConvertI32S || ins.Kind == wasmir.InstrF32ConvertI32U {
+				setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF32))
+			} else {
+				setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF64))
+			}
+
+		case wasmir.InstrF32ConvertI64S, wasmir.InstrF32ConvertI64U,
+			wasmir.InstrF64ConvertI64S, wasmir.InstrF64ConvertI64U:
+			name := instrName(ins.Kind)
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: %s needs 1 operand", insCtx, name)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeI64) {
+				diags.Addf("%s: %s expects i64 operand", insCtx, name)
+				continue
+			}
+			if ins.Kind == wasmir.InstrF32ConvertI64S || ins.Kind == wasmir.InstrF32ConvertI64U {
+				setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF32))
+			} else {
+				setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF64))
+			}
+
+		case wasmir.InstrF32DemoteF64:
+			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
+				diags.Addf("%s: f32.demote_f64 needs 1 operand", insCtx)
+				continue
+			}
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF64) {
+				diags.Addf("%s: f32.demote_f64 expects f64 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF32))
 
-		case wasmir.InstrF64ConvertI64S:
+		case wasmir.InstrF64PromoteF32:
 			if !ensureCurrentFrameOperands(1, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
-				diags.Addf("%s: f64.convert_i64_s needs 1 operand", insCtx)
+				diags.Addf("%s: f64.promote_f32 needs 1 operand", insCtx)
 				continue
 			}
-			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeI64) {
-				diags.Addf("%s: f64.convert_i64_s expects i64 operand", insCtx)
+			if !stackValueHasType(len(stack)-1, wasmir.ValueTypeF32) {
+				diags.Addf("%s: f64.promote_f32 expects f32 operand", insCtx)
 				continue
 			}
 			setStackValue(len(stack)-1, validatedValueFromType(wasmir.ValueTypeF64))
 
-		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div, wasmir.InstrF32Min, wasmir.InstrF32Max:
+		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div, wasmir.InstrF32Min, wasmir.InstrF32Max, wasmir.InstrF32Copysign:
 			name := instrName(ins.Kind)
 			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
@@ -3918,7 +4004,7 @@ func (v *bodyValidator) validate() diag.ErrorList {
 			truncateStack(len(stack) - 2)
 			appendStackType(wasmir.ValueTypeI32)
 
-		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div, wasmir.InstrF64Min, wasmir.InstrF64Max:
+		case wasmir.InstrF64Add, wasmir.InstrF64Sub, wasmir.InstrF64Mul, wasmir.InstrF64Div, wasmir.InstrF64Min, wasmir.InstrF64Max, wasmir.InstrF64Copysign:
 			name := instrName(ins.Kind)
 			if !ensureCurrentFrameOperands(2, int(hint.ExplicitInstrArgs), int(hint.BottomInstrArgs)) {
 				diags.Addf("%s: %s needs 2 operands", insCtx, name)
