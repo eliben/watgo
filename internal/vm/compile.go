@@ -120,6 +120,8 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.GlobalIndex
 		case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 			op.index = ins.MemoryIndex
+		case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableSize:
+			op.index = ins.TableIndex
 		case wasmir.InstrMemoryCopy:
 			op.index = ins.MemoryIndex
 			op.bits = int64(ins.SourceMemoryIndex)

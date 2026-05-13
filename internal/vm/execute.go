@@ -150,6 +150,15 @@ type Resolver interface {
 	// DataDrop marks a passive data segment unavailable for future memory.init
 	// operations.
 	DataDrop(index uint32) error
+
+	// TableGet returns the reference at elemIndex in table index.
+	TableGet(index uint32, elemIndex uint64) (Value, error)
+
+	// TableSet updates the reference at elemIndex in table index.
+	TableSet(index uint32, elemIndex uint64, value Value) error
+
+	// TableSize returns the current table size in elements.
+	TableSize(index uint32) (uint64, error)
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -559,6 +568,43 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
 			}
 			if err := e.resolver.DataDrop(ins.index); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrTableSize:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.resolver.TableSize(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(size))})
+		case wasmir.InstrTableGet:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			elemIndex, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			v, err := e.resolver.TableGet(ins.index, uint64(uint32(elemIndex)))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(v)
+		case wasmir.InstrTableSet:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			elemIndex, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.TableSet(ins.index, uint64(uint32(elemIndex)), v); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,

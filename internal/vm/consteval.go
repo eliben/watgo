@@ -26,6 +26,16 @@ func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) 
 			stack = append(stack, Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(ins.F32Const)})
 		case wasmir.InstrF64Const:
 			stack = append(stack, Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(ins.F64Const)})
+		case wasmir.InstrRefNull:
+			stack = append(stack, Value{Type: ins.RefType, Ref: Reference{Kind: RefKindNull}})
+		case wasmir.InstrRefFunc:
+			if resolver == nil {
+				return Value{}, fmt.Errorf("initializer instruction %d: resolver is nil", pc)
+			}
+			if _, err := resolver.FuncType(ins.FuncIndex); err != nil {
+				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
+			}
+			stack = append(stack, Value{Type: wasmir.RefTypeFunc(false), Ref: Reference{Kind: RefKindFunc, FuncIndex: ins.FuncIndex}})
 		case wasmir.InstrGlobalGet:
 			if resolver == nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: resolver is nil", pc)

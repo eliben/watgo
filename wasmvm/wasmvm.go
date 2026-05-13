@@ -149,13 +149,19 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 		return nil, err
 	}
 	inst.buildDataSegments()
+	if err := inst.buildFuncs(imports); err != nil {
+		return nil, err
+	}
 	if err := inst.buildGlobals(); err != nil {
+		return nil, err
+	}
+	if err := inst.buildTables(); err != nil {
 		return nil, err
 	}
 	if err := inst.applyDataSegments(); err != nil {
 		return nil, err
 	}
-	if err := inst.buildFuncs(imports); err != nil {
+	if err := inst.applyElementSegments(); err != nil {
 		return nil, err
 	}
 	for _, exp := range m.Exports {
@@ -180,6 +186,7 @@ type ModuleInstance struct {
 	funcs    []funcInst
 	globals  []globalInst
 	memories []memoryInst
+	tables   []tableInst
 	data     []dataInst
 	exports  map[string]*Func
 }
@@ -265,6 +272,25 @@ type memoryInst struct {
 	data []byte
 }
 
+// tableInst is one instantiated table in the module's table index space.
+//
+// wasmvm owns the reference slots; internal/vm reaches them only through
+// vm.Resolver table methods so execution stays independent of instance layout.
+type tableInst struct {
+	// addressType is the validated index type for this table. wasmvm currently
+	// supports only i32-indexed tables.
+	addressType wasmir.ValueType
+
+	// refType is the reference type accepted by this table's elements.
+	refType wasmir.ValueType
+
+	// max is the optional declared maximum size in elements.
+	max *uint64
+
+	// elems is the mutable table storage.
+	elems []Value
+}
+
 // dataInst is one instantiated data segment in the module's data index space.
 type dataInst struct {
 	// init is the byte payload used by memory.init while the segment is live.
@@ -295,6 +321,54 @@ func (inst *ModuleInstance) buildMemories() error {
 		})
 	}
 	return nil
+}
+
+// buildTables creates the instance table address space.
+func (inst *ModuleInstance) buildTables() error {
+	for i, t := range inst.m.Tables {
+		if t.ImportModule != "" || t.ImportName != "" {
+			return fmt.Errorf("unsupported table import %q.%q", t.ImportModule, t.ImportName)
+		}
+		if t.AddressType != wasmir.ValueTypeI32 {
+			return fmt.Errorf("table[%d]: unsupported address type %s", i, t.AddressType)
+		}
+		if t.Min > uint64(int(^uint(0)>>1)) {
+			return fmt.Errorf("table[%d]: minimum size is too large", i)
+		}
+		init, err := inst.tableInitialValue(t)
+		if err != nil {
+			return fmt.Errorf("table[%d]: %w", i, err)
+		}
+		elems := make([]Value, int(t.Min))
+		for j := range elems {
+			elems[j] = init
+		}
+		inst.tables = append(inst.tables, tableInst{
+			addressType: t.AddressType,
+			refType:     t.RefType,
+			max:         t.Max,
+			elems:       elems,
+		})
+	}
+	return nil
+}
+
+// tableInitialValue returns the value used to initialize every slot of table t.
+func (inst *ModuleInstance) tableInitialValue(t wasmir.Table) (Value, error) {
+	if len(t.Init) == 0 {
+		if !t.RefType.Nullable {
+			return Value{}, fmt.Errorf("non-nullable table requires initializer")
+		}
+		return Value{Type: t.RefType, Ref: vm.Reference{Kind: vm.RefKindNull}}, nil
+	}
+	value, err := vm.EvalConstExpr(t.Init, vmResolver{inst: inst, constExpr: true})
+	if err != nil {
+		return Value{}, err
+	}
+	if err := vm.CheckResults([]wasmir.ValueType{t.RefType}, []Value{value}); err != nil {
+		return Value{}, fmt.Errorf("initializer type mismatch: %w", err)
+	}
+	return value, nil
 }
 
 // buildDataSegments creates the instance data segment address space.
@@ -350,6 +424,77 @@ func (inst *ModuleInstance) dataSegmentOffset(seg wasmir.DataSegment) (uint64, e
 	return uint64(uint32(int32(seg.OffsetI64))), nil
 }
 
+// applyElementSegments copies active element segments into instantiated tables.
+func (inst *ModuleInstance) applyElementSegments() error {
+	for i, seg := range inst.m.Elements {
+		if seg.Mode != wasmir.ElemSegmentModeActive {
+			continue
+		}
+		offset, err := inst.elementSegmentOffset(seg)
+		if err != nil {
+			return fmt.Errorf("element[%d]: %w", i, err)
+		}
+		values, err := inst.elementSegmentValues(seg)
+		if err != nil {
+			return fmt.Errorf("element[%d]: %w", i, err)
+		}
+		if uint64(len(values)) > uint64(^uint32(0)) {
+			return fmt.Errorf("element[%d]: segment is too large", i)
+		}
+		table, err := (vmResolver{inst: inst}).table(seg.TableIndex, offset, uint64(len(values)))
+		if err != nil {
+			return fmt.Errorf("element[%d]: %w", i, err)
+		}
+		copy(table, values)
+	}
+	return nil
+}
+
+// elementSegmentOffset evaluates the active element segment offset as an i32
+// table index.
+func (inst *ModuleInstance) elementSegmentOffset(seg wasmir.ElementSegment) (uint64, error) {
+	if len(seg.OffsetExpr) > 0 {
+		v, err := vm.EvalConstExpr(seg.OffsetExpr, vmResolver{inst: inst, constExpr: true})
+		if err != nil {
+			return 0, err
+		}
+		if v.Type != wasmir.ValueTypeI32 {
+			return 0, fmt.Errorf("offset expression has type %s, want i32", v.Type)
+		}
+		return uint64(uint32(v.I32)), nil
+	}
+	if seg.OffsetType != wasmir.ValueTypeI32 {
+		return 0, fmt.Errorf("offset has type %s, want i32", seg.OffsetType)
+	}
+	return uint64(uint32(int32(seg.OffsetI64))), nil
+}
+
+// elementSegmentValues evaluates the element payload into runtime references.
+func (inst *ModuleInstance) elementSegmentValues(seg wasmir.ElementSegment) ([]Value, error) {
+	if len(seg.FuncIndices) > 0 {
+		values := make([]Value, len(seg.FuncIndices))
+		for i, funcIndex := range seg.FuncIndices {
+			if _, err := (vmResolver{inst: inst}).FuncType(funcIndex); err != nil {
+				return nil, err
+			}
+			values[i] = Value{Type: wasmir.RefTypeFunc(false), Ref: vm.Reference{Kind: vm.RefKindFunc, FuncIndex: funcIndex}}
+		}
+		return values, nil
+	}
+	values := make([]Value, len(seg.Exprs))
+	for i, expr := range seg.Exprs {
+		v, err := vm.EvalConstExpr(expr, vmResolver{inst: inst, constExpr: true})
+		if err != nil {
+			return nil, fmt.Errorf("expr[%d]: %w", i, err)
+		}
+		if !v.Type.IsRef() {
+			return nil, fmt.Errorf("expr[%d]: got %s, want reference", i, v.Type)
+		}
+		values[i] = v
+	}
+	return values, nil
+}
+
 // buildGlobals creates the instance global address space.
 func (inst *ModuleInstance) buildGlobals() error {
 	for i, g := range inst.m.Globals {
@@ -360,8 +505,8 @@ func (inst *ModuleInstance) buildGlobals() error {
 		if err != nil {
 			return fmt.Errorf("global[%d]: %w", i, err)
 		}
-		if value.Type != g.Type {
-			return fmt.Errorf("global[%d]: initializer type mismatch: got %s want %s", i, value.Type, g.Type)
+		if err := vm.CheckResults([]wasmir.ValueType{g.Type}, []Value{value}); err != nil {
+			return fmt.Errorf("global[%d]: initializer type mismatch: %w", i, err)
 		}
 		inst.globals = append(inst.globals, globalInst{typ: g.Type, mutable: g.Mutable, value: value})
 	}
@@ -511,8 +656,8 @@ func (r vmResolver) GlobalSet(index uint32, value Value) error {
 	if !g.mutable {
 		return fmt.Errorf("global %d is immutable", index)
 	}
-	if value.Type != g.typ {
-		return fmt.Errorf("global.set %d got %s, want %s", index, value.Type, g.typ)
+	if err := vm.CheckArgs([]wasmir.ValueType{g.typ}, []Value{value}); err != nil {
+		return fmt.Errorf("global.set %d: %w", index, err)
 	}
 	g.value = value
 	return nil
@@ -652,6 +797,41 @@ func (r vmResolver) DataDrop(index uint32) error {
 	return nil
 }
 
+// TableGet returns one reference from an instantiated table.
+func (r vmResolver) TableGet(index uint32, elemIndex uint64) (Value, error) {
+	table, err := r.table(index, elemIndex, 1)
+	if err != nil {
+		return Value{}, err
+	}
+	return table[0], nil
+}
+
+// TableSet writes one reference to an instantiated table.
+func (r vmResolver) TableSet(index uint32, elemIndex uint64, value Value) error {
+	tableInst, err := r.tableInst(index)
+	if err != nil {
+		return err
+	}
+	if err := vm.CheckArgs([]wasmir.ValueType{tableInst.refType}, []Value{value}); err != nil {
+		return err
+	}
+	table, err := r.table(index, elemIndex, 1)
+	if err != nil {
+		return err
+	}
+	table[0] = value
+	return nil
+}
+
+// TableSize returns the current size of an instantiated table in elements.
+func (r vmResolver) TableSize(index uint32) (uint64, error) {
+	table, err := r.tableInst(index)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(len(table.elems)), nil
+}
+
 // dataSegment resolves a data index to the mutable instantiated data segment
 // state.
 func (r vmResolver) dataSegment(index uint32) (*dataInst, error) {
@@ -667,6 +847,28 @@ func (r vmResolver) memoryInst(index uint32) (*memoryInst, error) {
 		return nil, fmt.Errorf("memory index %d out of range", index)
 	}
 	return &r.inst.memories[index], nil
+}
+
+// tableInst resolves a table index to the mutable instantiated table state.
+func (r vmResolver) tableInst(index uint32) (*tableInst, error) {
+	if int(index) >= len(r.inst.tables) {
+		return nil, fmt.Errorf("table index %d out of range", index)
+	}
+	return &r.inst.tables[index], nil
+}
+
+// table returns the in-bounds element window addressed by a VM table operation.
+func (r vmResolver) table(index uint32, elemIndex uint64, size uint64) ([]Value, error) {
+	tableInst, err := r.tableInst(index)
+	if err != nil {
+		return nil, err
+	}
+	elems := tableInst.elems
+	if elemIndex > uint64(len(elems)) || size > uint64(len(elems))-elemIndex {
+		return nil, fmt.Errorf("table access out of bounds")
+	}
+	start := int(elemIndex)
+	return elems[start : start+int(size)], nil
 }
 
 // memory returns the in-bounds byte window addressed by a VM memory operation.

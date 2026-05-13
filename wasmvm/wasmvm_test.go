@@ -215,6 +215,51 @@ func TestReferenceInstructions(t *testing.T) {
 	}
 }
 
+// TestTableBasics checks module-defined table instantiation, active element
+// initialization, table.size, table.get, and table.set.
+func TestTableBasics(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(table 3 funcref)
+			(func $a)
+			(func $b)
+			(elem (i32.const 1) func $a)
+			(elem declare func $b)
+			(func (export "size") (result i32)
+				table.size)
+			(func (export "is_null") (param i32) (result i32)
+				local.get 0
+				table.get
+				ref.is_null)
+			(func (export "set_b") (param i32)
+				local.get 0
+				ref.func $b
+				table.set))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(3) {
+		t.Fatalf("size got results %#v, want i32 3", results)
+	}
+	results = callExport(t, inst, "is_null", wasmvm.I32(0))
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("is_null(0) got results %#v, want i32 1", results)
+	}
+	results = callExport(t, inst, "is_null", wasmvm.I32(1))
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("is_null(1) got results %#v, want i32 0", results)
+	}
+	callExport(t, inst, "set_b", wasmvm.I32(2))
+	results = callExport(t, inst, "is_null", wasmvm.I32(2))
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("is_null(2) after set got results %#v, want i32 0", results)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -1673,6 +1718,34 @@ func TestExecutionErrorReturnCallContext(t *testing.T) {
 	}, nil)
 
 	if got, want := err.Error(), "pc 0 return_call: call function index 3 out of range"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// TestExecutionErrorTableOutOfBoundsContext checks that table access traps
+// include the failing instruction location.
+func TestExecutionErrorTableOutOfBoundsContext(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(table 1 funcref)
+			(func (export "get_oob")
+				i32.const 1
+				table.get
+				drop))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("get_oob")
+	if !ok {
+		t.Fatal("missing get_oob export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 1 table.get: table access out of bounds"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
