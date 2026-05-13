@@ -317,6 +317,82 @@ func TestI32ExtendedIntegerOps(t *testing.T) {
 	}
 }
 
+// TestIntegerUnaryAndSignExtension checks core integer unary operators and
+// sign-extension operators for both i32 and i64.
+func TestIntegerUnaryAndSignExtension(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "i32_counts") (param i32) (result i32 i32 i32)
+				local.get 0
+				i32.clz
+				local.get 0
+				i32.ctz
+				local.get 0
+				i32.popcnt)
+			(func (export "i64_counts") (param i64) (result i64 i64 i64)
+				local.get 0
+				i64.clz
+				local.get 0
+				i64.ctz
+				local.get 0
+				i64.popcnt)
+			(func (export "i32_ext8") (param i32) (result i32)
+				local.get 0
+				i32.extend8_s)
+			(func (export "i32_ext16") (param i32) (result i32)
+				local.get 0
+				i32.extend16_s)
+			(func (export "i64_ext8") (param i64) (result i64)
+				local.get 0
+				i64.extend8_s)
+			(func (export "i64_ext16") (param i64) (result i64)
+				local.get 0
+				i64.extend16_s)
+			(func (export "i64_ext32") (param i64) (result i64)
+				local.get 0
+				i64.extend32_s))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "i32_counts", wasmvm.I32(0x00f00000))
+	if len(results) != 3 || results[0] != wasmvm.I32(8) || results[1] != wasmvm.I32(20) || results[2] != wasmvm.I32(4) {
+		t.Fatalf("i32_counts got results %#v, want [8 20 4]", results)
+	}
+	results = callExport(t, inst, "i32_counts", wasmvm.I32(0))
+	if len(results) != 3 || results[0] != wasmvm.I32(32) || results[1] != wasmvm.I32(32) || results[2] != wasmvm.I32(0) {
+		t.Fatalf("i32_counts(0) got results %#v, want [32 32 0]", results)
+	}
+
+	results = callExport(t, inst, "i64_counts", wasmvm.I64(0x00f0000000000000))
+	if len(results) != 3 || results[0] != wasmvm.I64(8) || results[1] != wasmvm.I64(52) || results[2] != wasmvm.I64(4) {
+		t.Fatalf("i64_counts got results %#v, want [8 52 4]", results)
+	}
+	results = callExport(t, inst, "i64_counts", wasmvm.I64(0))
+	if len(results) != 3 || results[0] != wasmvm.I64(64) || results[1] != wasmvm.I64(64) || results[2] != wasmvm.I64(0) {
+		t.Fatalf("i64_counts(0) got results %#v, want [64 64 0]", results)
+	}
+
+	for _, tt := range []struct {
+		name string
+		arg  wasmvm.Value
+		want wasmvm.Value
+	}{
+		{name: "i32_ext8", arg: wasmvm.I32(0x80), want: wasmvm.I32(-128)},
+		{name: "i32_ext16", arg: wasmvm.I32(0x8001), want: wasmvm.I32(-32767)},
+		{name: "i64_ext8", arg: wasmvm.I64(0xff), want: wasmvm.I64(-1)},
+		{name: "i64_ext16", arg: wasmvm.I64(0x8001), want: wasmvm.I64(-32767)},
+		{name: "i64_ext32", arg: wasmvm.I64(0x80000001), want: wasmvm.I64(-2147483647)},
+	} {
+		results := callExport(t, inst, tt.name, tt.arg)
+		if len(results) != 1 || results[0] != tt.want {
+			t.Fatalf("%s got results %#v, want %v", tt.name, results, tt.want)
+		}
+	}
+}
+
 func TestI64ArithmeticAndPredicates(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `

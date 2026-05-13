@@ -525,6 +525,13 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
+		case wasmir.InstrI32Clz, wasmir.InstrI32Ctz, wasmir.InstrI32Popcnt,
+			wasmir.InstrI32Extend8S, wasmir.InstrI32Extend16S:
+			v, err := e.evalI32Unary(ins.kind)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: v})
 		case wasmir.InstrI64Const:
 			e.push(Value{Type: wasmir.ValueTypeI64, I64: ins.bits})
 		case wasmir.InstrI64Add, wasmir.InstrI64Sub, wasmir.InstrI64Mul,
@@ -551,6 +558,13 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v == 0)})
+		case wasmir.InstrI64Clz, wasmir.InstrI64Ctz, wasmir.InstrI64Popcnt,
+			wasmir.InstrI64Extend8S, wasmir.InstrI64Extend16S, wasmir.InstrI64Extend32S:
+			v, err := e.evalI64Unary(ins.kind)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.push(Value{Type: wasmir.ValueTypeI64, I64: v})
 		case wasmir.InstrF32Const:
 			e.push(Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(ins.bits))})
 		case wasmir.InstrF32Add, wasmir.InstrF32Sub, wasmir.InstrF32Mul, wasmir.InstrF32Div:
@@ -783,6 +797,31 @@ func (e *executor) evalI64Binary(kind wasmir.InstrKind) (int64, error) {
 	}
 }
 
+// evalI64Unary pops one i64 operand and evaluates an i64 unary instruction.
+func (e *executor) evalI64Unary(kind wasmir.InstrKind) (int64, error) {
+	v, err := e.popI64()
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrI64Clz:
+		return int64(bits.LeadingZeros64(uint64(v))), nil
+	case wasmir.InstrI64Ctz:
+		return int64(bits.TrailingZeros64(uint64(v))), nil
+	case wasmir.InstrI64Popcnt:
+		return int64(bits.OnesCount64(uint64(v))), nil
+	case wasmir.InstrI64Extend8S:
+		return int64(int8(v)), nil
+	case wasmir.InstrI64Extend16S:
+		return int64(int16(v)), nil
+	case wasmir.InstrI64Extend32S:
+		return int64(int32(v)), nil
+	default:
+		return 0, fmt.Errorf("unsupported i64 unary instruction %s", instrName(kind))
+	}
+}
+
 // evalI64Compare pops two i64 operands and evaluates an i64 comparison,
 // returning the WebAssembly i32 boolean result.
 func (e *executor) evalI64Compare(kind wasmir.InstrKind) (int32, error) {
@@ -1012,6 +1051,29 @@ func (e *executor) evalI32Binary(kind wasmir.InstrKind) (int32, error) {
 		return boolI32(uint32(lhs) >= uint32(rhs)), nil
 	default:
 		return 0, fmt.Errorf("unsupported i32 binary instruction %s", instrName(kind))
+	}
+}
+
+// evalI32Unary pops one i32 operand and evaluates an i32 unary instruction.
+func (e *executor) evalI32Unary(kind wasmir.InstrKind) (int32, error) {
+	v, err := e.popI32()
+	if err != nil {
+		return 0, err
+	}
+
+	switch kind {
+	case wasmir.InstrI32Clz:
+		return int32(bits.LeadingZeros32(uint32(v))), nil
+	case wasmir.InstrI32Ctz:
+		return int32(bits.TrailingZeros32(uint32(v))), nil
+	case wasmir.InstrI32Popcnt:
+		return int32(bits.OnesCount32(uint32(v))), nil
+	case wasmir.InstrI32Extend8S:
+		return int32(int8(v)), nil
+	case wasmir.InstrI32Extend16S:
+		return int32(int16(v)), nil
+	default:
+		return 0, fmt.Errorf("unsupported i32 unary instruction %s", instrName(kind))
 	}
 }
 
