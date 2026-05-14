@@ -51,8 +51,8 @@ type instr struct {
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
-	// global.get/set, call, memory instructions, br_table's branchTables entry,
-	// and ref.null's refTypes entry.
+	// global.get/set, call, memory and table instructions, data.drop/elem.drop,
+	// br_table's branchTables entry, and ref.null's refTypes entry.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -61,7 +61,8 @@ type instr struct {
 	// i64.const uses bits, f32.const uses uint32(bits), and f64.const uses
 	// uint64(bits). For currently supported memory load/store instructions,
 	// bits stores the static offset immediate. For memory.copy and memory.init,
-	// bits stores the secondary index immediate.
+	// bits stores the secondary index immediate. Table bulk instructions use
+	// bits similarly for the source table or element segment index.
 	bits int64
 }
 
@@ -120,8 +121,17 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.GlobalIndex
 		case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 			op.index = ins.MemoryIndex
-		case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableSize:
+		case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableSize,
+			wasmir.InstrTableGrow, wasmir.InstrTableFill:
 			op.index = ins.TableIndex
+		case wasmir.InstrTableCopy:
+			op.index = ins.TableIndex
+			op.bits = int64(ins.SourceTableIndex)
+		case wasmir.InstrTableInit:
+			op.index = ins.TableIndex
+			op.bits = int64(ins.ElemIndex)
+		case wasmir.InstrElemDrop:
+			op.index = ins.ElemIndex
 		case wasmir.InstrMemoryCopy:
 			op.index = ins.MemoryIndex
 			op.bits = int64(ins.SourceMemoryIndex)

@@ -260,6 +260,124 @@ func TestTableBasics(t *testing.T) {
 	}
 }
 
+// TestTableGrowFillCopy checks table.grow failure/success behavior and the
+// bulk table.fill/table.copy operations over reference values.
+func TestTableGrowFillCopy(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(table 2 5 funcref)
+			(func $a)
+			(func $b)
+			(elem declare func $a $b)
+			(func (export "size") (result i32)
+				table.size)
+			(func (export "is_null") (param i32) (result i32)
+				local.get 0
+				table.get
+				ref.is_null)
+			(func (export "grow") (param i32) (result i32)
+				ref.func $a
+				local.get 0
+				table.grow)
+			(func (export "fill_b") (param i32 i32)
+				local.get 0
+				ref.func $b
+				local.get 1
+				table.fill)
+			(func (export "fill_null") (param i32 i32)
+				local.get 0
+				ref.null func
+				local.get 1
+				table.fill)
+			(func (export "copy") (param i32 i32 i32)
+				local.get 0
+				local.get 1
+				local.get 2
+				table.copy))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(2) {
+		t.Fatalf("size got results %#v, want i32 2", results)
+	}
+	results = callExport(t, inst, "grow", wasmvm.I32(2))
+	if len(results) != 1 || results[0] != wasmvm.I32(2) {
+		t.Fatalf("grow got results %#v, want old size i32 2", results)
+	}
+	results = callExport(t, inst, "size")
+	if len(results) != 1 || results[0] != wasmvm.I32(4) {
+		t.Fatalf("size after grow got results %#v, want i32 4", results)
+	}
+	results = callExport(t, inst, "grow", wasmvm.I32(2))
+	if len(results) != 1 || results[0] != wasmvm.I32(-1) {
+		t.Fatalf("over-max grow got results %#v, want i32 -1", results)
+	}
+
+	callExport(t, inst, "fill_null", wasmvm.I32(2), wasmvm.I32(2))
+	results = callExport(t, inst, "is_null", wasmvm.I32(2))
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("is_null(2) after fill_null got results %#v, want i32 1", results)
+	}
+	callExport(t, inst, "fill_b", wasmvm.I32(0), wasmvm.I32(2))
+	callExport(t, inst, "copy", wasmvm.I32(2), wasmvm.I32(0), wasmvm.I32(2))
+	results = callExport(t, inst, "is_null", wasmvm.I32(3))
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("is_null(3) after copy got results %#v, want i32 0", results)
+	}
+}
+
+// TestPassiveElementSegments checks that table.init can copy from a passive
+// element segment and elem.drop makes that segment unavailable afterward.
+func TestPassiveElementSegments(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(table 2 funcref)
+			(func $a)
+			(elem $e funcref (ref.func $a))
+			(func (export "init") (param i32 i32 i32)
+				local.get 0
+				local.get 1
+				local.get 2
+				table.init $e)
+			(func (export "drop")
+				elem.drop $e)
+			(func (export "is_null") (param i32) (result i32)
+				local.get 0
+				table.get
+				ref.is_null))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "is_null", wasmvm.I32(0))
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("is_null(0) before init got results %#v, want i32 1", results)
+	}
+	callExport(t, inst, "init", wasmvm.I32(0), wasmvm.I32(0), wasmvm.I32(1))
+	results = callExport(t, inst, "is_null", wasmvm.I32(0))
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("is_null(0) after init got results %#v, want i32 0", results)
+	}
+	callExport(t, inst, "drop")
+	initFunc, ok := inst.ExportedFunc("init")
+	if !ok {
+		t.Fatal("missing init export")
+	}
+	_, err = initFunc.Call(wasmvm.I32(1), wasmvm.I32(0), wasmvm.I32(1))
+	if err == nil {
+		t.Fatal("Call init after elem.drop succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 table.init: element segment 0 is dropped"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `

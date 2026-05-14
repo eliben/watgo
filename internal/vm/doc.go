@@ -21,8 +21,8 @@
 //   - Resolver is implemented by the package that owns the instantiated
 //     module environment. ExecuteFunction and EvalConstExpr use it for
 //     operations that may cross into host-visible state, such as function
-//     calls, global access, and memory access, without knowing about module
-//     instances or host imports.
+//     calls, global access, memory access, and table access, without knowing
+//     about module instances or host imports.
 //   - CheckArgs and CheckResults are shared signature checks used at call
 //     boundaries.
 //
@@ -42,7 +42,7 @@
 //     passed to ExecuteFunction.
 //   - ExecuteFunction runs the compiled instruction stream with its own operand
 //     stack and locals, using Resolver when the instruction stream calls a
-//     function or reads/writes instance globals or memories.
+//     function or reads/writes instance globals, memories, or tables.
 //   - When ExecuteFunction reaches a wasm call instruction, it pops the
 //     callee's arguments, asks Resolver for the callee's signature, and invokes
 //     Resolver.CallFunc.

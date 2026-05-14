@@ -158,6 +158,9 @@ func (rt *Runtime) Instantiate(m *wasmir.Module, imports Imports) (*ModuleInstan
 	if err := inst.buildTables(); err != nil {
 		return nil, err
 	}
+	if err := inst.buildElementSegments(); err != nil {
+		return nil, err
+	}
 	if err := inst.applyDataSegments(); err != nil {
 		return nil, err
 	}
@@ -188,6 +191,7 @@ type ModuleInstance struct {
 	memories []memoryInst
 	tables   []tableInst
 	data     []dataInst
+	elems    []elemInst
 	exports  map[string]*Func
 }
 
@@ -301,6 +305,18 @@ type dataInst struct {
 	dropped bool
 }
 
+// elemInst is one instantiated element segment in the module's element index
+// space.
+type elemInst struct {
+	// values is the reference payload used by table.init while the segment is
+	// live.
+	values []Value
+
+	// dropped reports whether elem.drop, active-segment initialization, or
+	// declarative-segment instantiation has made this segment unavailable.
+	dropped bool
+}
+
 // buildMemories creates the instance memory address space.
 func (inst *ModuleInstance) buildMemories() error {
 	for i, m := range inst.m.Memories {
@@ -378,11 +394,25 @@ func (inst *ModuleInstance) buildDataSegments() {
 	}
 }
 
+// buildElementSegments creates the instance element segment address space.
+func (inst *ModuleInstance) buildElementSegments() error {
+	for i, seg := range inst.m.Elements {
+		values, err := inst.elementSegmentValues(seg)
+		if err != nil {
+			return fmt.Errorf("element[%d]: %w", i, err)
+		}
+		inst.elems = append(inst.elems, elemInst{
+			values:  values,
+			dropped: seg.Mode == wasmir.ElemSegmentModeDeclarative,
+		})
+	}
+	return nil
+}
+
 // applyDataSegments copies active data segments into instantiated memories.
 //
-// Passive segments are retained only in the source module for now. They become
-// observable when memory.init/data.drop are implemented; until then, ignoring
-// them matches their instantiation-time behavior.
+// Passive segments remain live in inst.data so memory.init can copy from them
+// until data.drop marks them unavailable.
 func (inst *ModuleInstance) applyDataSegments() error {
 	for i, seg := range inst.m.Data {
 		if seg.Mode == wasmir.DataSegmentModePassive {
@@ -424,7 +454,8 @@ func (inst *ModuleInstance) dataSegmentOffset(seg wasmir.DataSegment) (uint64, e
 	return uint64(uint32(int32(seg.OffsetI64))), nil
 }
 
-// applyElementSegments copies active element segments into instantiated tables.
+// applyElementSegments copies active element segments into instantiated tables
+// and then marks them unavailable for table.init.
 func (inst *ModuleInstance) applyElementSegments() error {
 	for i, seg := range inst.m.Elements {
 		if seg.Mode != wasmir.ElemSegmentModeActive {
@@ -434,10 +465,7 @@ func (inst *ModuleInstance) applyElementSegments() error {
 		if err != nil {
 			return fmt.Errorf("element[%d]: %w", i, err)
 		}
-		values, err := inst.elementSegmentValues(seg)
-		if err != nil {
-			return fmt.Errorf("element[%d]: %w", i, err)
-		}
+		values := inst.elems[i].values
 		if uint64(len(values)) > uint64(^uint32(0)) {
 			return fmt.Errorf("element[%d]: segment is too large", i)
 		}
@@ -446,6 +474,7 @@ func (inst *ModuleInstance) applyElementSegments() error {
 			return fmt.Errorf("element[%d]: %w", i, err)
 		}
 		copy(table, values)
+		inst.elems[i].dropped = true
 	}
 	return nil
 }
@@ -832,6 +861,100 @@ func (r vmResolver) TableSize(index uint32) (uint64, error) {
 	return uint64(len(table.elems)), nil
 }
 
+// TableGrow grows an instantiated table by delta elements.
+func (r vmResolver) TableGrow(index uint32, init Value, delta uint64) (uint64, bool, error) {
+	table, err := r.tableInst(index)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := vm.CheckArgs([]wasmir.ValueType{table.refType}, []Value{init}); err != nil {
+		return 0, false, err
+	}
+	oldSize := uint64(len(table.elems))
+	if delta > ^uint64(0)-oldSize {
+		return oldSize, false, nil
+	}
+	newSize := oldSize + delta
+	if table.max != nil && newSize > *table.max {
+		return oldSize, false, nil
+	}
+	if newSize > uint64(int(^uint(0)>>1)) {
+		return oldSize, false, nil
+	}
+	table.elems = append(table.elems, make([]Value, int(delta))...)
+	for i := int(oldSize); i < len(table.elems); i++ {
+		table.elems[i] = init
+	}
+	return oldSize, true, nil
+}
+
+// TableFill writes value to a contiguous element range in an instantiated
+// table.
+func (r vmResolver) TableFill(index uint32, elemIndex uint64, size uint64, value Value) error {
+	tableInst, err := r.tableInst(index)
+	if err != nil {
+		return err
+	}
+	if err := vm.CheckArgs([]wasmir.ValueType{tableInst.refType}, []Value{value}); err != nil {
+		return err
+	}
+	dst, err := r.table(index, elemIndex, size)
+	if err != nil {
+		return err
+	}
+	for i := range dst {
+		dst[i] = value
+	}
+	return nil
+}
+
+// TableCopy copies elements between instantiated tables.
+func (r vmResolver) TableCopy(dstIndex uint32, dstElemIndex uint64, srcIndex uint32, srcElemIndex uint64, size uint64) error {
+	dst, err := r.table(dstIndex, dstElemIndex, size)
+	if err != nil {
+		return err
+	}
+	src, err := r.table(srcIndex, srcElemIndex, size)
+	if err != nil {
+		return err
+	}
+	copy(dst, src)
+	return nil
+}
+
+// TableInit copies references from a live element segment into an instantiated
+// table.
+func (r vmResolver) TableInit(tableIndex uint32, elemIndex uint32, dstElemIndex uint64, srcOffset uint64, size uint64) error {
+	elem, err := r.elemSegment(elemIndex)
+	if err != nil {
+		return err
+	}
+	if elem.dropped {
+		return fmt.Errorf("element segment %d is dropped", elemIndex)
+	}
+	if srcOffset > uint64(len(elem.values)) || size > uint64(len(elem.values))-srcOffset {
+		return fmt.Errorf("element segment access out of bounds")
+	}
+	dst, err := r.table(tableIndex, dstElemIndex, size)
+	if err != nil {
+		return err
+	}
+	start := int(srcOffset)
+	copy(dst, elem.values[start:start+int(size)])
+	return nil
+}
+
+// ElemDrop marks an element segment unavailable for future table.init
+// operations.
+func (r vmResolver) ElemDrop(index uint32) error {
+	elem, err := r.elemSegment(index)
+	if err != nil {
+		return err
+	}
+	elem.dropped = true
+	return nil
+}
+
 // dataSegment resolves a data index to the mutable instantiated data segment
 // state.
 func (r vmResolver) dataSegment(index uint32) (*dataInst, error) {
@@ -839,6 +962,15 @@ func (r vmResolver) dataSegment(index uint32) (*dataInst, error) {
 		return nil, fmt.Errorf("data segment index %d out of range", index)
 	}
 	return &r.inst.data[index], nil
+}
+
+// elemSegment resolves an element index to the mutable instantiated element
+// segment state.
+func (r vmResolver) elemSegment(index uint32) (*elemInst, error) {
+	if int(index) >= len(r.inst.elems) {
+		return nil, fmt.Errorf("element segment index %d out of range", index)
+	}
+	return &r.inst.elems[index], nil
 }
 
 // memoryInst resolves a memory index to the mutable instantiated memory state.

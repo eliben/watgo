@@ -159,6 +159,25 @@ type Resolver interface {
 
 	// TableSize returns the current table size in elements.
 	TableSize(index uint32) (uint64, error)
+
+	// TableGrow grows a table by delta elements, initializing new slots with
+	// init. It returns the old table size when growth succeeds, and ok=false
+	// when growth is rejected.
+	TableGrow(index uint32, init Value, delta uint64) (oldSize uint64, ok bool, err error)
+
+	// TableFill writes value to size elements of an instantiated table.
+	TableFill(index uint32, elemIndex uint64, size uint64, value Value) error
+
+	// TableCopy copies size elements between instantiated tables. The copy must
+	// have memmove semantics when the source and destination overlap.
+	TableCopy(dstIndex uint32, dstElemIndex uint64, srcIndex uint32, srcElemIndex uint64, size uint64) error
+
+	// TableInit copies size elements from an element segment into a table.
+	TableInit(tableIndex uint32, elemIndex uint32, dstElemIndex uint64, srcOffset uint64, size uint64) error
+
+	// ElemDrop marks an element segment unavailable for future table.init
+	// operations.
+	ElemDrop(index uint32) error
 }
 
 // CheckArgs verifies call argument count and value types.
@@ -605,6 +624,91 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			if err := e.resolver.TableSet(ins.index, uint64(uint32(elemIndex)), v); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrTableGrow:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			delta, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			init, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			oldSize, ok, err := e.resolver.TableGrow(ins.index, init, uint64(uint32(delta)))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !ok {
+				e.push(Value{Type: wasmir.ValueTypeI32, I32: -1})
+				continue
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(oldSize))})
+		case wasmir.InstrTableFill:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			value, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.TableFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), value); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrTableCopy:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			src, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.TableCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrTableInit:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			size, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			src, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			dst, err := e.popI32()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := e.resolver.TableInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+				return nil, e.instructionError(err)
+			}
+		case wasmir.InstrElemDrop:
+			if e.resolver == nil {
+				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			}
+			if err := e.resolver.ElemDrop(ins.index); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
