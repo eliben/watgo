@@ -474,6 +474,81 @@ func TestIndirectCallTraps(t *testing.T) {
 	}
 }
 
+// TestCallRef checks call_ref and return_call_ref through function references
+// produced by ref.func.
+func TestCallRef(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(func $add (type $binary)
+				local.get 0
+				local.get 1
+				i32.add)
+			(func $sub (type $binary)
+				local.get 0
+				local.get 1
+				i32.sub)
+			(elem declare func $add $sub)
+			(func (export "call") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				ref.func $add
+				call_ref $binary)
+			(func (export "tail") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				ref.func $sub
+				return_call_ref $binary))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "call", wasmvm.I32(20), wasmvm.I32(22))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("call got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "tail", wasmvm.I32(50), wasmvm.I32(8))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("tail got results %#v, want i32 42", results)
+	}
+}
+
+// TestCallRefTraps checks call_ref traps for null references and runtime
+// function type mismatches.
+func TestCallRefTraps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(func (export "call_null") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				ref.null $binary
+				call_ref $binary))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	callNull, ok := inst.ExportedFunc("call_null")
+	if !ok {
+		t.Fatal("missing call_null export")
+	}
+	_, err = callNull.Call(wasmvm.I32(1), wasmvm.I32(2))
+	if err == nil {
+		t.Fatal("Call through null reference succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 call_ref: call_ref to null reference"; got != want {
+		t.Fatalf("null reference error = %q, want %q", got, want)
+	}
+
+	err = callInvalidCallRefRuntimeModule(t)
+	if got, want := err.Error(), "pc 3 call_ref: indirect call type mismatch"; got != want {
+		t.Fatalf("type mismatch error = %q, want %q", got, want)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
@@ -2202,6 +2277,61 @@ func callInvalidRuntimeModule(t *testing.T, body []wasmir.Instruction, results [
 	_, err = run.Call()
 	if err == nil {
 		t.Fatal("Call succeeded unexpectedly")
+	}
+	return err
+}
+
+// callInvalidCallRefRuntimeModule runs a deliberately unvalidated module whose
+// call_ref operand is a function reference with the wrong runtime signature.
+func callInvalidCallRefRuntimeModule(t *testing.T) error {
+	t.Helper()
+
+	rt := wasmvm.NewRuntime()
+	i32 := wasmir.ValueTypeI32
+	m := &wasmir.Module{
+		Types: []wasmir.TypeDef{
+			{Kind: wasmir.TypeDefKindFunc, Params: []wasmir.ValueType{i32, i32}, Results: []wasmir.ValueType{i32}},
+			{Kind: wasmir.TypeDefKindFunc, Params: []wasmir.ValueType{i32}, Results: []wasmir.ValueType{i32}},
+			{Kind: wasmir.TypeDefKindFunc, Results: []wasmir.ValueType{i32}},
+		},
+		Funcs: []wasmir.Function{
+			{
+				TypeIdx: 2,
+				Body: []wasmir.Instruction{
+					{Kind: wasmir.InstrI32Const, I32Const: 1},
+					{Kind: wasmir.InstrI32Const, I32Const: 2},
+					{Kind: wasmir.InstrRefFunc, FuncIndex: 1},
+					{Kind: wasmir.InstrCallRef, CallTypeIndex: 0},
+					{Kind: wasmir.InstrEnd},
+				},
+			},
+			{
+				TypeIdx: 1,
+				Body: []wasmir.Instruction{
+					{Kind: wasmir.InstrLocalGet, LocalIndex: 0},
+					{Kind: wasmir.InstrI32Const, I32Const: 1},
+					{Kind: wasmir.InstrI32Add},
+					{Kind: wasmir.InstrEnd},
+				},
+			},
+		},
+		Exports: []wasmir.Export{{
+			Name:  "run",
+			Kind:  wasmir.ExternalKindFunction,
+			Index: 0,
+		}},
+	}
+	inst, err := rt.Instantiate(m, nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	run, ok := inst.ExportedFunc("run")
+	if !ok {
+		t.Fatal("missing run export")
+	}
+	_, err = run.Call()
+	if err == nil {
+		t.Fatal("Call with mismatched call_ref target succeeded unexpectedly")
 	}
 	return err
 }

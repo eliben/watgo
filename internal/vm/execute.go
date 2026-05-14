@@ -904,6 +904,12 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.stack = append(e.stack, results...)
+		case wasmir.InstrCallRef:
+			results, err := e.callRefFunction(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.stack = append(e.stack, results...)
 		case wasmir.InstrReturnCall:
 			results, err := e.callFunction(ins.index)
 			if err != nil {
@@ -915,6 +921,15 @@ func (e *executor) run() ([]Value, error) {
 			return results, nil
 		case wasmir.InstrReturnCallIndirect:
 			results, err := e.callIndirectFunction(ins.index, uint32(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := CheckResults(e.ft.Results, results); err != nil {
+				return nil, e.instructionError(err)
+			}
+			return results, nil
+		case wasmir.InstrReturnCallRef:
+			results, err := e.callRefFunction(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
@@ -1063,15 +1078,40 @@ func (e *executor) callIndirectFunction(tableIndex uint32, callTypeIndex uint32)
 	if ref.Ref.Kind != RefKindFunc {
 		return nil, fmt.Errorf("indirect call to non-function reference")
 	}
-	if err := e.checkIndirectFunctionType(ref.Ref.FuncIndex, callTypeIndex); err != nil {
+	if err := e.checkFunctionReferenceType(ref.Ref.FuncIndex, callTypeIndex); err != nil {
 		return nil, err
 	}
 	return e.callFunction(ref.Ref.FuncIndex)
 }
 
-// checkIndirectFunctionType verifies the runtime call_indirect type check for
-// the resolved function reference.
-func (e *executor) checkIndirectFunctionType(funcIndex uint32, callTypeIndex uint32) error {
+// callRefFunction pops a function reference operand, checks its runtime type,
+// and invokes it.
+func (e *executor) callRefFunction(callTypeIndex uint32) ([]Value, error) {
+	if e.resolver == nil {
+		return nil, fmt.Errorf("resolver is nil")
+	}
+	ref, err := e.pop()
+	if err != nil {
+		return nil, err
+	}
+	if !ref.Type.IsRef() {
+		return nil, fmt.Errorf("call_ref got %s operand", ref.Type)
+	}
+	if ref.Ref.Kind == RefKindNull {
+		return nil, fmt.Errorf("call_ref to null reference")
+	}
+	if ref.Ref.Kind != RefKindFunc {
+		return nil, fmt.Errorf("call_ref to non-function reference")
+	}
+	if err := e.checkFunctionReferenceType(ref.Ref.FuncIndex, callTypeIndex); err != nil {
+		return nil, err
+	}
+	return e.callFunction(ref.Ref.FuncIndex)
+}
+
+// checkFunctionReferenceType verifies the runtime type check for a resolved
+// function reference.
+func (e *executor) checkFunctionReferenceType(funcIndex uint32, callTypeIndex uint32) error {
 	want, err := e.resolver.CallType(callTypeIndex)
 	if err != nil {
 		return err

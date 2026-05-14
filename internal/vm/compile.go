@@ -51,8 +51,9 @@ type instr struct {
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
-	// global.get/set, call, memory and table instructions, data.drop/elem.drop,
-	// br_table's branchTables entry, and ref.null's refTypes entry.
+	// global.get/set, call, call_ref, memory and table instructions,
+	// data.drop/elem.drop, br_table's branchTables entry, and ref.null's
+	// refTypes entry.
 	index uint32
 
 	// bits is the raw immediate payload for constant instructions.
@@ -113,6 +114,8 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.LocalIndex
 		case wasmir.InstrCall, wasmir.InstrReturnCall:
 			op.index = ins.FuncIndex
+		case wasmir.InstrCallRef, wasmir.InstrReturnCallRef:
+			op.index = ins.CallTypeIndex
 		case wasmir.InstrCallIndirect, wasmir.InstrReturnCallIndirect:
 			op.index = ins.TableIndex
 			op.bits = int64(ins.CallTypeIndex)
