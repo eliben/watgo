@@ -549,6 +549,71 @@ func TestCallRefTraps(t *testing.T) {
 	}
 }
 
+// TestRefAsNonNull checks that ref.as_non_null passes through a non-null
+// function reference and can feed call_ref.
+func TestRefAsNonNull(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(func $add (type $binary)
+				local.get 0
+				local.get 1
+				i32.add)
+			(elem declare func $add)
+			(func (export "call_checked") (param i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				ref.func $add
+				ref.as_non_null
+				call_ref $binary)
+			(func (export "is_null_after_check") (result i32)
+				ref.func $add
+				ref.as_non_null
+				ref.is_null))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "call_checked", wasmvm.I32(20), wasmvm.I32(22))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("call_checked got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "is_null_after_check")
+	if len(results) != 1 || results[0] != wasmvm.I32(0) {
+		t.Fatalf("is_null_after_check got results %#v, want i32 0", results)
+	}
+}
+
+// TestRefAsNonNullTrap checks that ref.as_non_null traps when the reference
+// operand is null.
+func TestRefAsNonNullTrap(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(func (export "check_null")
+				ref.null $binary
+				ref.as_non_null
+				drop))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	checkNull, ok := inst.ExportedFunc("check_null")
+	if !ok {
+		t.Fatal("missing check_null export")
+	}
+	_, err = checkNull.Call()
+	if err == nil {
+		t.Fatal("ref.as_non_null on null reference succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 1 ref.as_non_null: ref.as_non_null to null reference"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `

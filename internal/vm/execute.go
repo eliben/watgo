@@ -892,6 +892,19 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(fmt.Errorf("ref.is_null got %s operand", v.Type))
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(v.Ref.Kind == RefKindNull)})
+		case wasmir.InstrRefAsNonNull:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("ref.as_non_null got %s operand", v.Type))
+			}
+			if v.Ref.Kind == RefKindNull {
+				return nil, e.instructionError(fmt.Errorf("ref.as_non_null to null reference"))
+			}
+			v.Type.Nullable = false
+			e.push(v)
 		case wasmir.InstrCall:
 			results, err := e.callFunction(ins.index)
 			if err != nil {

@@ -246,7 +246,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrI32ReinterpretF32, wasmir.InstrI64ReinterpretF64,
 			wasmir.InstrF32ReinterpretI32, wasmir.InstrF64ReinterpretI64,
 			wasmir.InstrDrop, wasmir.InstrSelect, wasmir.InstrNop, wasmir.InstrUnreachable,
-			wasmir.InstrRefIsNull,
+			wasmir.InstrRefIsNull, wasmir.InstrRefAsNonNull,
 			wasmir.InstrReturn:
 		case wasmir.InstrEnd:
 			if len(labelStack) == 0 {
