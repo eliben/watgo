@@ -37,6 +37,11 @@ type Function struct {
 	// A ref.null instruction keeps its fixed-size instr small by storing the
 	// index of its type immediate in instr.index.
 	refTypes []wasmir.ValueType
+
+	// selectTypes stores explicit result type immediates used by typed select.
+	// A typed select instruction stores its selectTypes index in instr.bits;
+	// untyped select stores -1 there.
+	selectTypes []wasmir.ValueType
 }
 
 // instr is one instruction in the VM's execution form.
@@ -83,7 +88,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 	labelStack := make([]int, 0)
 
 	for pc, ins := range fn.Body {
-		op := instr{kind: ins.Kind, target: -1}
+		op := instr{kind: ins.Kind, target: -1, bits: -1}
 		switch ins.Kind {
 		case wasmir.InstrBlock, wasmir.InstrLoop:
 			if _, ok := ctrl.labels[pc]; !ok {
@@ -148,6 +153,11 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.bits = int64(ins.DataIndex)
 		case wasmir.InstrDataDrop:
 			op.index = ins.DataIndex
+		case wasmir.InstrSelect:
+			if ins.SelectType != nil {
+				op.bits = int64(len(out.selectTypes))
+				out.selectTypes = append(out.selectTypes, *ins.SelectType)
+			}
 		case wasmir.InstrI32Load, wasmir.InstrI32Store,
 			wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U,
@@ -246,8 +256,9 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			wasmir.InstrF64Lt, wasmir.InstrF64Le, wasmir.InstrF64Gt, wasmir.InstrF64Ge,
 			wasmir.InstrI32ReinterpretF32, wasmir.InstrI64ReinterpretF64,
 			wasmir.InstrF32ReinterpretI32, wasmir.InstrF64ReinterpretI64,
-			wasmir.InstrDrop, wasmir.InstrSelect, wasmir.InstrNop, wasmir.InstrUnreachable,
+			wasmir.InstrDrop, wasmir.InstrNop, wasmir.InstrUnreachable,
 			wasmir.InstrRefIsNull, wasmir.InstrRefAsNonNull,
+			wasmir.InstrRefEq, wasmir.InstrExternConvertAny, wasmir.InstrAnyConvertExtern,
 			wasmir.InstrReturn:
 		case wasmir.InstrEnd:
 			if len(labelStack) == 0 {

@@ -747,6 +747,10 @@ func TestSelect(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `
 		(module
+			(type $result (func (result i32)))
+			(func $forty_two (type $result)
+				i32.const 42)
+			(elem declare func $forty_two)
 			(func (export "pick_i32") (param i32) (result i32)
 				i32.const 10
 				i32.const 20
@@ -761,7 +765,20 @@ func TestSelect(t *testing.T) {
 				i64.const 30
 				i64.const 40
 				local.get 0
-				select (result i64)))
+				select (result i64))
+			(func (export "pick_typed_ref") (param i32) (result i32)
+				ref.func $forty_two
+				ref.null $result
+				local.get 0
+				select (result (ref null $result))
+				ref.as_non_null
+				call_ref $result)
+			(func (export "pick_null_ref_is_null") (param i32) (result i32)
+				ref.func $forty_two
+				ref.null $result
+				local.get 0
+				select (result (ref null $result))
+				ref.is_null))
 	`), nil)
 	if err != nil {
 		t.Fatalf("Instantiate failed: %v", err)
@@ -784,6 +801,51 @@ func TestSelect(t *testing.T) {
 	results = callExport(t, inst, "pick_typed_i64", wasmvm.I32(0))
 	if len(results) != 1 || results[0] != wasmvm.I64(40) {
 		t.Fatalf("pick_typed_i64 got results %#v, want i64 40", results)
+	}
+	results = callExport(t, inst, "pick_typed_ref", wasmvm.I32(1))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("pick_typed_ref got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "pick_null_ref_is_null", wasmvm.I32(0))
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("pick_null_ref_is_null got results %#v, want i32 1", results)
+	}
+}
+
+// TestRefEqAndConversions checks small reference operations that do not require
+// allocating GC objects in the current wasmvm slice.
+func TestRefEqAndConversions(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func (export "null_eq") (result i32)
+				ref.null eq
+				ref.null eq
+				ref.eq)
+			(func (export "null_any_to_extern_is_null") (result i32)
+				ref.null any
+				extern.convert_any
+				ref.is_null)
+			(func (export "null_extern_to_any_is_null") (result i32)
+				ref.null extern
+				any.convert_extern
+				ref.is_null))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "null_eq")
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("null_eq got results %#v, want i32 1", results)
+	}
+	results = callExport(t, inst, "null_any_to_extern_is_null")
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("null_any_to_extern_is_null got results %#v, want i32 1", results)
+	}
+	results = callExport(t, inst, "null_extern_to_any_is_null")
+	if len(results) != 1 || results[0] != wasmvm.I32(1) {
+		t.Fatalf("null_extern_to_any_is_null got results %#v, want i32 1", results)
 	}
 }
 

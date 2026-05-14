@@ -849,26 +849,34 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrSelect:
-			cond, err := e.popI32()
+			if ins.bits < 0 {
+				cond, err := e.popI32()
+				if err != nil {
+					return nil, e.instructionError(err)
+				}
+				v2, err := e.pop()
+				if err != nil {
+					return nil, e.instructionError(err)
+				}
+				v1, err := e.pop()
+				if err != nil {
+					return nil, e.instructionError(err)
+				}
+				if v1.Type != v2.Type {
+					return nil, e.instructionError(fmt.Errorf("select got %s and %s operands", v1.Type, v2.Type))
+				}
+				if cond != 0 {
+					e.push(v1)
+				} else {
+					e.push(v2)
+				}
+				continue
+			}
+			v, err := e.evalTypedSelect(uint32(ins.bits))
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			v2, err := e.pop()
-			if err != nil {
-				return nil, e.instructionError(err)
-			}
-			v1, err := e.pop()
-			if err != nil {
-				return nil, e.instructionError(err)
-			}
-			if v1.Type != v2.Type {
-				return nil, e.instructionError(fmt.Errorf("select got %s and %s operands", v1.Type, v2.Type))
-			}
-			if cond != 0 {
-				e.push(v1)
-			} else {
-				e.push(v2)
-			}
+			e.push(v)
 		case wasmir.InstrRefNull:
 			refTypeIndex := int(ins.index)
 			if refTypeIndex >= len(e.fn.refTypes) {
@@ -904,6 +912,39 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(fmt.Errorf("ref.as_non_null to null reference"))
 			}
 			v.Type.Nullable = false
+			e.push(v)
+		case wasmir.InstrRefEq:
+			v2, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			v1, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v1.Type.IsRef() || !v2.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("ref.eq got %s and %s operands", v1.Type, v2.Type))
+			}
+			e.push(Value{Type: wasmir.ValueTypeI32, I32: boolI32(refsEqual(v1.Ref, v2.Ref))})
+		case wasmir.InstrExternConvertAny:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("extern.convert_any got %s operand", v.Type))
+			}
+			v.Type = wasmir.RefTypeExtern(v.Type.Nullable)
+			e.push(v)
+		case wasmir.InstrAnyConvertExtern:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("any.convert_extern got %s operand", v.Type))
+			}
+			v.Type = wasmir.RefTypeAny(v.Type.Nullable)
 			e.push(v)
 		case wasmir.InstrCall:
 			results, err := e.callFunction(ins.index)
@@ -1168,6 +1209,51 @@ func (e *executor) checkFunctionReferenceType(funcIndex uint32, callTypeIndex ui
 		return fmt.Errorf("indirect call type mismatch")
 	}
 	return nil
+}
+
+// evalTypedSelect pops a typed select's operands and returns the selected value
+// normalized to the explicit select result type.
+func (e *executor) evalTypedSelect(selectTypeIndex uint32) (Value, error) {
+	if int(selectTypeIndex) >= len(e.fn.selectTypes) {
+		return Value{}, fmt.Errorf("select type index %d out of range", selectTypeIndex)
+	}
+	want := e.fn.selectTypes[selectTypeIndex]
+	cond, err := e.popI32()
+	if err != nil {
+		return Value{}, err
+	}
+	v2, err := e.pop()
+	if err != nil {
+		return Value{}, err
+	}
+	v1, err := e.pop()
+	if err != nil {
+		return Value{}, err
+	}
+	if !runtimeTypeMatches(v1.Type, want) || !runtimeTypeMatches(v2.Type, want) {
+		return Value{}, fmt.Errorf("select expects operands of type %s", want)
+	}
+	if cond != 0 {
+		v1.Type = want
+		return v1, nil
+	}
+	v2.Type = want
+	return v2, nil
+}
+
+// refsEqual reports whether two runtime references have the same identity.
+func refsEqual(a Reference, b Reference) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	switch a.Kind {
+	case RefKindNull:
+		return true
+	case RefKindFunc:
+		return a.FuncIndex == b.FuncIndex
+	default:
+		return false
+	}
 }
 
 // evalI64Binary pops two i64 operands and evaluates an i64 binary instruction.
