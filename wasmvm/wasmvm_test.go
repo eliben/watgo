@@ -614,6 +614,89 @@ func TestRefAsNonNullTrap(t *testing.T) {
 	}
 }
 
+// TestBrOnNull checks both br_on_null paths: a null reference branches and a
+// non-null reference falls through as a refined function reference.
+func TestBrOnNull(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $result (func (result i32)))
+			(func $forty_two (type $result)
+				i32.const 42)
+			(elem declare func $forty_two)
+			(func (export "null_branch") (result i32)
+				block $null
+					ref.null $result
+					br_on_null $null
+					drop
+					i32.const 99
+					return
+				end
+				i32.const 42)
+			(func (export "nonnull_fallthrough") (result i32)
+				block $null
+					ref.func $forty_two
+					br_on_null $null
+					call_ref $result
+					return
+				end
+				i32.const 99))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "null_branch")
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("null_branch got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "nonnull_fallthrough")
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("nonnull_fallthrough got results %#v, want i32 42", results)
+	}
+}
+
+// TestBrOnNonNull checks both br_on_non_null paths: a non-null reference
+// branches as a label value and a null reference is consumed on fallthrough.
+func TestBrOnNonNull(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $result (func (result i32)))
+			(func $seven (type $result)
+				i32.const 7)
+			(func $forty_two (type $result)
+				i32.const 42)
+			(elem declare func $seven $forty_two)
+			(func (export "nonnull_branch") (result i32)
+				block $target (result (ref $result))
+					ref.func $forty_two
+					br_on_non_null $target
+					ref.func $seven
+				end
+				call_ref $result)
+			(func (export "null_fallthrough") (result i32)
+				block $target (result (ref $result))
+					ref.null $result
+					br_on_non_null $target
+					ref.func $seven
+				end
+				call_ref $result))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "nonnull_branch")
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("nonnull_branch got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "null_fallthrough")
+	if len(results) != 1 || results[0] != wasmvm.I32(7) {
+		t.Fatalf("null_fallthrough got results %#v, want i32 7", results)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `

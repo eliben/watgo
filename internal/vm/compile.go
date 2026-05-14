@@ -45,9 +45,10 @@ type instr struct {
 	kind wasmir.InstrKind
 
 	// target is the resolved program counter for fixed-target control-flow
-	// instructions. It is used by if, else, br, br_if, and loop-branch targets;
-	// other instructions leave it at -1. The interpreter assigns pc = target,
-	// then its loop increment moves execution to the following instruction.
+	// instructions. It is used by if, else, br, br_if, br_on_null,
+	// br_on_non_null, and loop-branch targets; other instructions leave it at
+	// -1. The interpreter assigns pc = target, then its loop increment moves
+	// execution to the following instruction.
 	target int
 
 	// index is the resolved index immediate for local.get/set/tee,
@@ -163,7 +164,7 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			}
 			op.index = ins.MemoryIndex
 			op.bits = int64(ins.MemoryOffset)
-		case wasmir.InstrBr, wasmir.InstrBrIf:
+		case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
 			target, err := compileBranchTarget(ins.BranchDepth, labelStack, ctrl)
 			if err != nil {
 				return nil, fmt.Errorf("%s at %d: %w", instrName(ins.Kind), pc, err)

@@ -963,6 +963,34 @@ func (e *executor) run() ([]Value, error) {
 			if cond != 0 {
 				e.pc = ins.target
 			}
+		case wasmir.InstrBrOnNull:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("br_on_null got %s operand", v.Type))
+			}
+			if v.Ref.Kind == RefKindNull {
+				e.pc = ins.target
+				continue
+			}
+			v.Type.Nullable = false
+			e.push(v)
+		case wasmir.InstrBrOnNonNull:
+			v, err := e.pop()
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if !v.Type.IsRef() {
+				return nil, e.instructionError(fmt.Errorf("br_on_non_null got %s operand", v.Type))
+			}
+			if v.Ref.Kind != RefKindNull {
+				v.Type.Nullable = false
+				e.push(v)
+				e.pc = ins.target
+				continue
+			}
 		case wasmir.InstrBrTable:
 			// br_table consumes only the i32 selector. Branch result values, if
 			// any, are already below it on the operand stack and are left there
