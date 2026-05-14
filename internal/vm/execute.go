@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/eliben/watgo/wasmir"
 )
@@ -111,6 +112,10 @@ type Reference struct {
 type Resolver interface {
 	// FuncType returns the signature of the function at index.
 	FuncType(index uint32) (wasmir.TypeDef, error)
+
+	// CallType returns the function type referenced by an indirect call type
+	// immediate.
+	CallType(index uint32) (wasmir.TypeDef, error)
 
 	// CallFunc invokes the function at index with already popped arguments in
 	// parameter order.
@@ -893,8 +898,23 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			e.stack = append(e.stack, results...)
+		case wasmir.InstrCallIndirect:
+			results, err := e.callIndirectFunction(ins.index, uint32(ins.bits))
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			e.stack = append(e.stack, results...)
 		case wasmir.InstrReturnCall:
 			results, err := e.callFunction(ins.index)
+			if err != nil {
+				return nil, e.instructionError(err)
+			}
+			if err := CheckResults(e.ft.Results, results); err != nil {
+				return nil, e.instructionError(err)
+			}
+			return results, nil
+		case wasmir.InstrReturnCallIndirect:
+			results, err := e.callIndirectFunction(ins.index, uint32(ins.bits))
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
@@ -1018,6 +1038,55 @@ func (e *executor) callFunction(index uint32) ([]Value, error) {
 		return nil, err
 	}
 	return e.resolver.CallFunc(index, callArgs)
+}
+
+// callIndirectFunction resolves a table element to a function reference,
+// checks that its runtime type matches callTypeIndex, and invokes it.
+func (e *executor) callIndirectFunction(tableIndex uint32, callTypeIndex uint32) ([]Value, error) {
+	if e.resolver == nil {
+		return nil, fmt.Errorf("resolver is nil")
+	}
+	elemIndex, err := e.popI32()
+	if err != nil {
+		return nil, err
+	}
+	ref, err := e.resolver.TableGet(tableIndex, uint64(uint32(elemIndex)))
+	if err != nil {
+		return nil, err
+	}
+	if !ref.Type.IsRef() {
+		return nil, fmt.Errorf("call_indirect table element has type %s", ref.Type)
+	}
+	if ref.Ref.Kind == RefKindNull {
+		return nil, fmt.Errorf("indirect call to null reference")
+	}
+	if ref.Ref.Kind != RefKindFunc {
+		return nil, fmt.Errorf("indirect call to non-function reference")
+	}
+	if err := e.checkIndirectFunctionType(ref.Ref.FuncIndex, callTypeIndex); err != nil {
+		return nil, err
+	}
+	return e.callFunction(ref.Ref.FuncIndex)
+}
+
+// checkIndirectFunctionType verifies the runtime call_indirect type check for
+// the resolved function reference.
+func (e *executor) checkIndirectFunctionType(funcIndex uint32, callTypeIndex uint32) error {
+	want, err := e.resolver.CallType(callTypeIndex)
+	if err != nil {
+		return err
+	}
+	if want.Kind != wasmir.TypeDefKindFunc {
+		return fmt.Errorf("type index %d is not a function type", callTypeIndex)
+	}
+	got, err := e.resolver.FuncType(funcIndex)
+	if err != nil {
+		return err
+	}
+	if got.Kind != wasmir.TypeDefKindFunc || !slices.Equal(got.Params, want.Params) || !slices.Equal(got.Results, want.Results) {
+		return fmt.Errorf("indirect call type mismatch")
+	}
+	return nil
 }
 
 // evalI64Binary pops two i64 operands and evaluates an i64 binary instruction.

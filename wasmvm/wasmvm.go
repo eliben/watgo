@@ -662,6 +662,15 @@ func (r vmResolver) FuncType(index uint32) (wasmir.TypeDef, error) {
 	return inst.funcType(inst.funcs[index].typeIdx)
 }
 
+// CallType returns the function type referenced by an indirect call type
+// immediate.
+func (r vmResolver) CallType(index uint32) (wasmir.TypeDef, error) {
+	if int(index) >= len(r.inst.m.Types) {
+		return wasmir.TypeDef{}, fmt.Errorf("type index %d out of range", index)
+	}
+	return r.inst.m.Types[index], nil
+}
+
 func (r vmResolver) CallFunc(index uint32, args []Value) ([]Value, error) {
 	return r.inst.callFunc(index, args)
 }

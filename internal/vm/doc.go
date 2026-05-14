@@ -21,8 +21,8 @@
 //   - Resolver is implemented by the package that owns the instantiated
 //     module environment. ExecuteFunction and EvalConstExpr use it for
 //     operations that may cross into host-visible state, such as function
-//     calls, global access, memory access, and table access, without knowing
-//     about module instances or host imports.
+//     calls, indirect-call type checks, global access, memory access, and
+//     table access, without knowing about module instances or host imports.
 //   - CheckArgs and CheckResults are shared signature checks used at call
 //     boundaries.
 //

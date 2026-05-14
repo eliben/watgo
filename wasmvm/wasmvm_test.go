@@ -378,6 +378,102 @@ func TestPassiveElementSegments(t *testing.T) {
 	}
 }
 
+// TestIndirectCalls checks call_indirect and return_call_indirect through a
+// funcref table populated by an active element segment.
+func TestIndirectCalls(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(table 3 funcref)
+			(func $add (type $binary)
+				local.get 0
+				local.get 1
+				i32.add)
+			(func $sub (type $binary)
+				local.get 0
+				local.get 1
+				i32.sub)
+			(elem (i32.const 0) func $add $sub)
+			(func (export "call") (param i32 i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				local.get 2
+				call_indirect (type $binary))
+			(func (export "tail") (param i32 i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				local.get 2
+				return_call_indirect (type $binary)))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+
+	results := callExport(t, inst, "call", wasmvm.I32(20), wasmvm.I32(22), wasmvm.I32(0))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("call add got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "call", wasmvm.I32(50), wasmvm.I32(8), wasmvm.I32(1))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("call sub got results %#v, want i32 42", results)
+	}
+	results = callExport(t, inst, "tail", wasmvm.I32(45), wasmvm.I32(3), wasmvm.I32(1))
+	if len(results) != 1 || results[0] != wasmvm.I32(42) {
+		t.Fatalf("tail got results %#v, want i32 42", results)
+	}
+}
+
+// TestIndirectCallTraps checks the runtime traps specific to indirect calls:
+// null table elements and function references whose type does not match the
+// call_indirect type immediate.
+func TestIndirectCallTraps(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(type $binary (func (param i32 i32) (result i32)))
+			(type $unary (func (param i32) (result i32)))
+			(table 3 funcref)
+			(func $add (type $binary)
+				local.get 0
+				local.get 1
+				i32.add)
+			(func $inc (type $unary)
+				local.get 0
+				i32.const 1
+				i32.add)
+			(elem (i32.const 0) func $add $inc)
+			(func (export "call") (param i32 i32 i32) (result i32)
+				local.get 0
+				local.get 1
+				local.get 2
+				call_indirect (type $binary)))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	call, ok := inst.ExportedFunc("call")
+	if !ok {
+		t.Fatal("missing call export")
+	}
+
+	_, err = call.Call(wasmvm.I32(1), wasmvm.I32(2), wasmvm.I32(1))
+	if err == nil {
+		t.Fatal("Call with mismatched indirect target succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 call_indirect: indirect call type mismatch"; got != want {
+		t.Fatalf("type mismatch error = %q, want %q", got, want)
+	}
+
+	_, err = call.Call(wasmvm.I32(1), wasmvm.I32(2), wasmvm.I32(2))
+	if err == nil {
+		t.Fatal("Call through null table slot succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "pc 3 call_indirect: indirect call to null reference"; got != want {
+		t.Fatalf("null reference error = %q, want %q", got, want)
+	}
+}
+
 func TestI32Arithmetic(t *testing.T) {
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(parseWAT(t, `

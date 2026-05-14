@@ -61,8 +61,9 @@ type instr struct {
 	// i64.const uses bits, f32.const uses uint32(bits), and f64.const uses
 	// uint64(bits). For currently supported memory load/store instructions,
 	// bits stores the static offset immediate. For memory.copy and memory.init,
-	// bits stores the secondary index immediate. Table bulk instructions use
-	// bits similarly for the source table or element segment index.
+	// bits stores the secondary index immediate. Indirect calls use bits for
+	// the call type index, and table bulk instructions use it for the source
+	// table or element segment index.
 	bits int64
 }
 
@@ -112,6 +113,9 @@ func CompileFunction(fn *wasmir.Function) (*Function, error) {
 			op.index = ins.LocalIndex
 		case wasmir.InstrCall, wasmir.InstrReturnCall:
 			op.index = ins.FuncIndex
+		case wasmir.InstrCallIndirect, wasmir.InstrReturnCallIndirect:
+			op.index = ins.TableIndex
+			op.bits = int64(ins.CallTypeIndex)
 		case wasmir.InstrRefNull:
 			op.index = uint32(len(out.refTypes))
 			out.refTypes = append(out.refTypes, ins.RefType)
