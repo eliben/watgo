@@ -152,7 +152,7 @@ func TestWABTWasmvm(t *testing.T) {
 
 // TestWABTPrintRoundTrip checks WABT interp fixture print stability.
 func TestWABTPrintRoundTrip(t *testing.T) {
-	runWABTFixturesWith(t, checkWABTPrintRoundTrip)
+	runWABTFixtureFiles(t, nil, checkWABTPrintRoundTrip)
 }
 
 // runWABTBackend runs one execution backend against its fixture set.
@@ -162,30 +162,15 @@ func runWABTBackend(t *testing.T, backend wabtBackend) {
 	if backend.requiresIntegration && os.Getenv("WATGO_INTEGRATION") == "0" {
 		t.Skip("integration tests disabled with WATGO_INTEGRATION=0")
 	}
-	files := backend.fixtures
-	if len(files) == 0 {
-		files = discoverWABTFixtures(t)
-	}
-	if len(files) == 0 {
-		t.Fatal("no .txt fixtures found")
-	}
 
-	for _, file := range files {
-		t.Run(strings.TrimSuffix(file, ".txt"), func(t *testing.T) {
-			if wabtShouldSkipFixture(file) {
-				t.Skip("fixture is intentionally not covered by this harness")
-			}
-			if _, err := os.Stat(file); err != nil {
-				t.Fatalf("Stat %q failed: %v", file, err)
-			}
-			fixture := compileWABTFixture(t, file)
-			got, err := backend.run(t, fixture)
-			if err != nil {
-				t.Fatalf("%s backend failed for %q: %v", backend.name, file, err)
-			}
-			checkWABTRunResult(t, backend.name, fixture, got)
-		})
-	}
+	runWABTFixtureFiles(t, backend.fixtures, func(t *testing.T, file string) {
+		fixture := compileWABTFixture(t, file)
+		got, err := backend.run(t, fixture)
+		if err != nil {
+			t.Fatalf("%s backend failed for %q: %v", backend.name, file, err)
+		}
+		checkWABTRunResult(t, backend.name, fixture, got)
+	})
 }
 
 // discoverWABTFixtures returns the sorted WABT interp fixture list.
@@ -207,18 +192,24 @@ func discoverWABTFixtures(t *testing.T) []string {
 	return files
 }
 
-// runWABTFixturesWith runs fn over every supported WABT interp fixture.
-func runWABTFixturesWith(t *testing.T, fn func(t *testing.T, path string)) {
+// runWABTFixtureFiles runs fn for each selected WABT interp fixture.
+func runWABTFixtureFiles(t *testing.T, files []string, fn func(t *testing.T, path string)) {
 	t.Helper()
 
-	files := discoverWABTFixtures(t)
+	if len(files) == 0 {
+		files = discoverWABTFixtures(t)
+	}
 	if len(files) == 0 {
 		t.Fatal("no .txt fixtures found")
 	}
+
 	for _, file := range files {
 		t.Run(strings.TrimSuffix(file, ".txt"), func(t *testing.T) {
 			if wabtShouldSkipFixture(file) {
 				t.Skip("fixture is intentionally not covered by this harness")
+			}
+			if _, err := os.Stat(file); err != nil {
+				t.Fatalf("Stat %q failed: %v", file, err)
 			}
 			fn(t, file)
 		})
