@@ -11,120 +11,120 @@ import (
 	"github.com/eliben/watgo/wasmvm"
 )
 
-// wabtInterpWasmVMFixtures lists fixtures covered by the wasmvm backend while
+// wabtWasmvmFixtures lists fixtures covered by the wasmvm backend while
 // its instruction support is still growing.
-var wabtInterpWasmVMFixtures = []string{
+var wabtWasmvmFixtures = []string{
 	"basic.txt",
 	"call.txt",
 	"callimport-zero-args.txt",
 }
 
-// wabtInterpWasmVMBackend returns the wasmvm-backed WABT interp execution
+// wabtWasmvmBackend returns the wasmvm-backed WABT interp execution
 // backend.
-func wabtInterpWasmVMBackend() wabtInterpBackend {
-	return wabtInterpBackend{
+func wabtWasmvmBackend() wabtBackend {
+	return wabtBackend{
 		name:     "wasmvm",
-		fixtures: wabtInterpWasmVMFixtures,
-		run:      runWABTInterpWasmVMFixture,
+		fixtures: wabtWasmvmFixtures,
+		run:      runWABTWasmvmFixture,
 	}
 }
 
-// runWABTInterpWasmVMFixture executes one compiled fixture through wasmvm.
-func runWABTInterpWasmVMFixture(t *testing.T, fixture wabtInterpCompiledFixture) (wabtInterpRunResult, error) {
+// runWABTWasmvmFixture executes one compiled fixture through wasmvm.
+func runWABTWasmvmFixture(t *testing.T, fixture wabtCompiledFixture) (wabtRunResult, error) {
 	t.Helper()
 
-	exports, err := wabtInterpExports(fixture.m)
+	exports, err := wabtExports(fixture.m)
 	if err != nil {
-		return wabtInterpRunResult{}, fmt.Errorf("wabtInterpExports %q failed: %w", fixture.path, err)
+		return wabtRunResult{}, fmt.Errorf("wabtExports %q failed: %w", fixture.path, err)
 	}
 
-	hostPrintResultKind, err := wabtInterpHostPrintResultKind(fixture.m)
+	hostPrintResultKind, err := wabtHostPrintResultKind(fixture.m)
 	if err != nil {
-		return wabtInterpRunResult{}, fmt.Errorf("wabtInterpHostPrintResultKind %q failed: %w", fixture.path, err)
+		return wabtRunResult{}, fmt.Errorf("wabtHostPrintResultKind %q failed: %w", fixture.path, err)
 	}
 
-	imports, err := wabtInterpImports(fixture.m)
+	imports, err := wabtImports(fixture.m)
 	if err != nil {
-		return wabtInterpRunResult{}, fmt.Errorf("wabtInterpImports %q failed: %w", fixture.path, err)
+		return wabtRunResult{}, fmt.Errorf("wabtImports %q failed: %w", fixture.path, err)
 	}
 
-	return runWABTInterpWasmVM(fixture.m, exports, imports, fixture.tc.runArgs, hostPrintResultKind)
+	return runWABTWasmvm(fixture.m, exports, imports, fixture.tc.runArgs, hostPrintResultKind)
 }
 
-// runWABTInterpWasmVM instantiates m with wasmvm and executes the requested
+// runWABTWasmvm instantiates m with wasmvm and executes the requested
 // WABT run-interp exports.
-func runWABTInterpWasmVM(m *wasmir.Module, exports []wabtInterpExport, imports []wabtInterpImport, runArgs []string, hostPrintResultKind string) (wabtInterpRunResult, error) {
-	invocations, hostPrint, dummyImportFunc, err := wabtInterpInvocations(exports, runArgs)
+func runWABTWasmvm(m *wasmir.Module, exports []wabtExport, imports []wabtImport, runArgs []string, hostPrintResultKind string) (wabtRunResult, error) {
+	invocations, hostPrint, dummyImportFunc, err := wabtInvocations(exports, runArgs)
 	if err != nil {
-		return wabtInterpRunResult{}, err
+		return wabtRunResult{}, err
 	}
-	if runResult, ok := wabtInterpValidateInvocations(exports, invocations); ok {
+	if runResult, ok := wabtValidateInvocations(exports, invocations); ok {
 		return runResult, nil
 	}
 
 	stdout := []string{}
-	vmImports, err := wabtInterpWasmVMImports(imports, hostPrint, dummyImportFunc, hostPrintResultKind, &stdout)
+	vmImports, err := wabtWasmvmImports(imports, hostPrint, dummyImportFunc, hostPrintResultKind, &stdout)
 	if err != nil {
-		return wabtInterpRunResult{}, err
+		return wabtRunResult{}, err
 	}
 
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(m, vmImports)
 	if err != nil {
-		return wabtInterpRunResult{Stderr: normalizeWABTInterpWasmVMError(err), ExitCode: 1}, nil
+		return wabtRunResult{Stderr: normalizeWABTWasmvmError(err), ExitCode: 1}, nil
 	}
 
-	exportMap := make(map[string]wabtInterpExport, len(exports))
+	exportMap := make(map[string]wabtExport, len(exports))
 	for _, exp := range exports {
 		exportMap[exp.Name] = exp
 	}
 
-	results := make([]wabtInterpResult, 0, len(invocations))
+	results := make([]wabtResult, 0, len(invocations))
 	for _, invocation := range invocations {
 		entry, ok := exportMap[invocation.ExportName]
 		if !ok {
-			return wabtInterpRunResult{Stderr: "unknown export " + invocation.ExportName, ExitCode: 1}, nil
+			return wabtRunResult{Stderr: "unknown export " + invocation.ExportName, ExitCode: 1}, nil
 		}
 		if entry.Kind != "func" {
-			return wabtInterpRunResult{Stdout: "Export '" + invocation.ExportName + "' is not a function", ExitCode: 1}, nil
+			return wabtRunResult{Stdout: "Export '" + invocation.ExportName + "' is not a function", ExitCode: 1}, nil
 		}
 		fn, ok := inst.ExportedFunc(entry.Name)
 		if !ok {
-			return wabtInterpRunResult{Stderr: "unknown export " + invocation.ExportName, ExitCode: 1}, nil
+			return wabtRunResult{Stderr: "unknown export " + invocation.ExportName, ExitCode: 1}, nil
 		}
 
-		args, argText, err := wabtInterpWasmVMArgs(invocation.Args)
+		args, argText, err := wabtWasmvmArgs(invocation.Args)
 		if err != nil {
-			return wabtInterpRunResult{}, err
+			return wabtRunResult{}, err
 		}
 		values, callErr := fn.Call(args...)
-		result := wabtInterpResult{
+		result := wabtResult{
 			Name:        entry.Name,
 			ResultKind:  entry.ResultKind,
 			ArgText:     argText,
 			StdoutCount: len(stdout),
 		}
 		if callErr != nil {
-			result.Error = normalizeWABTInterpWasmVMError(callErr)
+			result.Error = normalizeWABTWasmvmError(callErr)
 			results = append(results, result)
 			continue
 		}
-		result.Value, err = wabtInterpWasmVMResultValue(entry.ResultKind, values)
+		result.Value, err = wabtWasmvmResultValue(entry.ResultKind, values)
 		if err != nil {
-			return wabtInterpRunResult{}, err
+			return wabtRunResult{}, err
 		}
 		results = append(results, result)
 	}
 
-	return wabtInterpRunResult{
-		Stdout:   wabtInterpMergeStdout(stdout, results),
+	return wabtRunResult{
+		Stdout:   wabtMergeStdout(stdout, results),
 		ExitCode: 0,
 	}, nil
 }
 
-// wabtInterpWasmVMImports builds the synthetic host imports requested by WABT
+// wabtWasmvmImports builds the synthetic host imports requested by WABT
 // run-interp flags.
-func wabtInterpWasmVMImports(imports []wabtInterpImport, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string, stdout *[]string) (wasmvm.Imports, error) {
+func wabtWasmvmImports(imports []wabtImport, hostPrint bool, dummyImportFunc bool, hostPrintResultKind string, stdout *[]string) (wasmvm.Imports, error) {
 	var out wasmvm.Imports
 	add := func(module string, name string, host wasmvm.HostFunc) error {
 		if out == nil {
@@ -144,7 +144,7 @@ func wabtInterpWasmVMImports(imports []wabtInterpImport, hostPrint bool, dummyIm
 		imported := imported
 		switch {
 		case hostPrint && imported.Module == "host" && imported.Name == "print":
-			host, err := wabtInterpWasmVMHostPrint(imported, hostPrintResultKind, stdout)
+			host, err := wabtWasmvmHostPrint(imported, hostPrintResultKind, stdout)
 			if err != nil {
 				return nil, err
 			}
@@ -152,7 +152,7 @@ func wabtInterpWasmVMImports(imports []wabtInterpImport, hostPrint bool, dummyIm
 				return nil, err
 			}
 		case dummyImportFunc:
-			host, err := wabtInterpWasmVMDummyImport(imported, stdout)
+			host, err := wabtWasmvmDummyImport(imported, stdout)
 			if err != nil {
 				return nil, err
 			}
@@ -164,61 +164,61 @@ func wabtInterpWasmVMImports(imports []wabtInterpImport, hostPrint bool, dummyIm
 	return out, nil
 }
 
-// wabtInterpWasmVMHostPrint returns a host.print shim for the wasmvm backend.
-func wabtInterpWasmVMHostPrint(imported wabtInterpImport, hostPrintResultKind string, stdout *[]string) (wasmvm.HostFunc, error) {
-	params, err := wabtInterpWasmVMValueTypes(imported.ParamKinds)
+// wabtWasmvmHostPrint returns a host.print shim for the wasmvm backend.
+func wabtWasmvmHostPrint(imported wabtImport, hostPrintResultKind string, stdout *[]string) (wasmvm.HostFunc, error) {
+	params, err := wabtWasmvmValueTypes(imported.ParamKinds)
 	if err != nil {
 		return wasmvm.HostFunc{}, err
 	}
-	results, err := wabtInterpWasmVMResultTypes(imported.ResultKind)
+	results, err := wabtWasmvmResultTypes(imported.ResultKind)
 	if err != nil {
 		return wasmvm.HostFunc{}, err
 	}
 	return wasmvm.NewHostFunc(params, results, func(_ *wasmvm.Context, args []wasmvm.Value) ([]wasmvm.Value, error) {
 		formattedArgs := make([]string, 0, len(args))
 		for _, arg := range args {
-			formattedArgs = append(formattedArgs, wabtInterpWasmVMHostPrintArg(arg))
+			formattedArgs = append(formattedArgs, wabtWasmvmHostPrintArg(arg))
 		}
 		if hostPrintResultKind == "void" || hostPrintResultKind == "" {
 			*stdout = append(*stdout, "called host host.print("+strings.Join(formattedArgs, ", ")+") =>")
 		} else {
 			*stdout = append(*stdout, "called host host.print("+strings.Join(formattedArgs, ", ")+") => "+hostPrintResultKind+":0")
 		}
-		return wabtInterpWasmVMZeroResults(imported.ResultKind)
+		return wabtWasmvmZeroResults(imported.ResultKind)
 	}), nil
 }
 
-// wabtInterpWasmVMDummyImport returns a dummy host function for the wasmvm
+// wabtWasmvmDummyImport returns a dummy host function for the wasmvm
 // backend.
-func wabtInterpWasmVMDummyImport(imported wabtInterpImport, stdout *[]string) (wasmvm.HostFunc, error) {
-	params, err := wabtInterpWasmVMValueTypes(imported.ParamKinds)
+func wabtWasmvmDummyImport(imported wabtImport, stdout *[]string) (wasmvm.HostFunc, error) {
+	params, err := wabtWasmvmValueTypes(imported.ParamKinds)
 	if err != nil {
 		return wasmvm.HostFunc{}, err
 	}
-	results, err := wabtInterpWasmVMResultTypes(imported.ResultKind)
+	results, err := wabtWasmvmResultTypes(imported.ResultKind)
 	if err != nil {
 		return wasmvm.HostFunc{}, err
 	}
 	return wasmvm.NewHostFunc(params, results, func(_ *wasmvm.Context, args []wasmvm.Value) ([]wasmvm.Value, error) {
 		formattedArgs := make([]string, 0, len(args))
 		for i, arg := range args {
-			formattedArgs = append(formattedArgs, wabtInterpWasmVMFormatValueByKind(imported.ParamKinds[i], arg))
+			formattedArgs = append(formattedArgs, wabtWasmvmFormatValueByKind(imported.ParamKinds[i], arg))
 		}
 		suffix := ""
 		if imported.ResultKind != "void" {
 			suffix = " " + imported.ResultKind + ":0"
 		}
 		*stdout = append(*stdout, "called host "+imported.Module+"."+imported.Name+"("+strings.Join(formattedArgs, ", ")+") =>"+suffix)
-		return wabtInterpWasmVMZeroResults(imported.ResultKind)
+		return wabtWasmvmZeroResults(imported.ResultKind)
 	}), nil
 }
 
-// wabtInterpWasmVMArgs decodes one WABT invocation argument list.
-func wabtInterpWasmVMArgs(args []wabtInterpInvocationArg) ([]wasmvm.Value, string, error) {
+// wabtWasmvmArgs decodes one WABT invocation argument list.
+func wabtWasmvmArgs(args []wabtInvocationArg) ([]wasmvm.Value, string, error) {
 	values := make([]wasmvm.Value, 0, len(args))
 	argText := make([]string, 0, len(args))
 	for _, arg := range args {
-		v, err := wabtInterpWasmVMArg(arg)
+		v, err := wabtWasmvmArg(arg)
 		if err != nil {
 			return nil, "", err
 		}
@@ -228,8 +228,8 @@ func wabtInterpWasmVMArgs(args []wabtInterpInvocationArg) ([]wasmvm.Value, strin
 	return values, strings.Join(argText, ", "), nil
 }
 
-// wabtInterpWasmVMArg decodes one WABT invocation argument.
-func wabtInterpWasmVMArg(arg wabtInterpInvocationArg) (wasmvm.Value, error) {
+// wabtWasmvmArg decodes one WABT invocation argument.
+func wabtWasmvmArg(arg wabtInvocationArg) (wasmvm.Value, error) {
 	switch arg.Kind {
 	case "i32":
 		v, err := strconv.ParseInt(arg.Text, 10, 32)
@@ -260,12 +260,12 @@ func wabtInterpWasmVMArg(arg wabtInterpInvocationArg) (wasmvm.Value, error) {
 	}
 }
 
-// wabtInterpWasmVMValueTypes converts WABT value-kind strings to wasm value
+// wabtWasmvmValueTypes converts WABT value-kind strings to wasm value
 // types.
-func wabtInterpWasmVMValueTypes(kinds []string) ([]wasmir.ValueType, error) {
+func wabtWasmvmValueTypes(kinds []string) ([]wasmir.ValueType, error) {
 	types := make([]wasmir.ValueType, 0, len(kinds))
 	for _, kind := range kinds {
-		vt, err := wabtInterpWasmVMValueType(kind)
+		vt, err := wabtWasmvmValueType(kind)
 		if err != nil {
 			return nil, err
 		}
@@ -274,21 +274,21 @@ func wabtInterpWasmVMValueTypes(kinds []string) ([]wasmir.ValueType, error) {
 	return types, nil
 }
 
-// wabtInterpWasmVMResultTypes returns the result type list for resultKind.
-func wabtInterpWasmVMResultTypes(resultKind string) ([]wasmir.ValueType, error) {
+// wabtWasmvmResultTypes returns the result type list for resultKind.
+func wabtWasmvmResultTypes(resultKind string) ([]wasmir.ValueType, error) {
 	if resultKind == "void" {
 		return nil, nil
 	}
-	vt, err := wabtInterpWasmVMValueType(resultKind)
+	vt, err := wabtWasmvmValueType(resultKind)
 	if err != nil {
 		return nil, err
 	}
 	return []wasmir.ValueType{vt}, nil
 }
 
-// wabtInterpWasmVMValueType converts one WABT value-kind string to a wasm value
+// wabtWasmvmValueType converts one WABT value-kind string to a wasm value
 // type.
-func wabtInterpWasmVMValueType(kind string) (wasmir.ValueType, error) {
+func wabtWasmvmValueType(kind string) (wasmir.ValueType, error) {
 	switch kind {
 	case "i32":
 		return wasmir.ValueTypeI32, nil
@@ -307,21 +307,21 @@ func wabtInterpWasmVMValueType(kind string) (wasmir.ValueType, error) {
 	}
 }
 
-// wabtInterpWasmVMZeroResults returns the zero host result for resultKind.
-func wabtInterpWasmVMZeroResults(resultKind string) ([]wasmvm.Value, error) {
+// wabtWasmvmZeroResults returns the zero host result for resultKind.
+func wabtWasmvmZeroResults(resultKind string) ([]wasmvm.Value, error) {
 	if resultKind == "void" {
 		return nil, nil
 	}
-	vt, err := wabtInterpWasmVMValueType(resultKind)
+	vt, err := wabtWasmvmValueType(resultKind)
 	if err != nil {
 		return nil, err
 	}
 	return []wasmvm.Value{{Type: vt}}, nil
 }
 
-// wabtInterpWasmVMResultValue formats wasmvm call results in the raw form
-// consumed by formatWABTInterpResult.
-func wabtInterpWasmVMResultValue(resultKind string, values []wasmvm.Value) (string, error) {
+// wabtWasmvmResultValue formats wasmvm call results in the raw form
+// consumed by formatWABTResult.
+func wabtWasmvmResultValue(resultKind string, values []wasmvm.Value) (string, error) {
 	if resultKind == "void" {
 		if len(values) != 0 {
 			return "", fmt.Errorf("got %d results, want 0", len(values))
@@ -356,9 +356,9 @@ func wabtInterpWasmVMResultValue(resultKind string, values []wasmvm.Value) (stri
 	}
 }
 
-// wabtInterpWasmVMHostPrintArg formats a host-print argument the same way as
+// wabtWasmvmHostPrintArg formats a host-print argument the same way as
 // the Node backend's host-print shim.
-func wabtInterpWasmVMHostPrintArg(v wasmvm.Value) string {
+func wabtWasmvmHostPrintArg(v wasmvm.Value) string {
 	switch v.Type.Kind {
 	case wasmir.ValueKindI64:
 		return "i64:" + strconv.FormatUint(uint64(v.I64), 10)
@@ -372,9 +372,9 @@ func wabtInterpWasmVMHostPrintArg(v wasmvm.Value) string {
 	}
 }
 
-// wabtInterpWasmVMFormatValueByKind formats a dummy-import argument according
+// wabtWasmvmFormatValueByKind formats a dummy-import argument according
 // to its declared type.
-func wabtInterpWasmVMFormatValueByKind(kind string, v wasmvm.Value) string {
+func wabtWasmvmFormatValueByKind(kind string, v wasmvm.Value) string {
 	switch kind {
 	case "i32":
 		return "i32:" + strconv.FormatUint(uint64(uint32(v.I32)), 10)
@@ -399,8 +399,8 @@ func wabtInterpWasmVMFormatValueByKind(kind string, v wasmvm.Value) string {
 	}
 }
 
-// wabtInterpMergeStdout interleaves host stdout and invocation result lines.
-func wabtInterpMergeStdout(stdout []string, results []wabtInterpResult) string {
+// wabtMergeStdout interleaves host stdout and invocation result lines.
+func wabtMergeStdout(stdout []string, results []wabtResult) string {
 	lines := make([]string, 0, len(stdout)+len(results))
 	nextStdout := 0
 	for _, result := range results {
@@ -408,7 +408,7 @@ func wabtInterpMergeStdout(stdout []string, results []wabtInterpResult) string {
 			lines = append(lines, stdout[nextStdout])
 			nextStdout++
 		}
-		line, err := formatWABTInterpResult(result)
+		line, err := formatWABTResult(result)
 		if err != nil {
 			lines = append(lines, "error: "+err.Error())
 			continue
@@ -419,9 +419,9 @@ func wabtInterpMergeStdout(stdout []string, results []wabtInterpResult) string {
 	return strings.Join(lines, "\n")
 }
 
-// normalizeWABTInterpWasmVMError maps wasmvm errors to WABT-style trap text
+// normalizeWABTWasmvmError maps wasmvm errors to WABT-style trap text
 // where the existing harness expects normalized wording.
-func normalizeWABTInterpWasmVMError(err error) string {
+func normalizeWABTWasmvmError(err error) string {
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "divide by zero"):

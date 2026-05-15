@@ -28,7 +28,7 @@ import (
 // module with watgo, runs it through a selected execution backend, and formats
 // observed results to match WABT's stdout conventions before comparing output.
 
-type wabtInterpCase struct {
+type wabtCase struct {
 	moduleWAT      string
 	expectedStdout string
 	expectedStderr string
@@ -36,14 +36,14 @@ type wabtInterpCase struct {
 	runArgs        []string
 }
 
-type wabtInterpExport struct {
+type wabtExport struct {
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"`
 	ResultKind string   `json:"resultKind"`
 	ParamKinds []string `json:"paramKinds"`
 }
 
-type wabtInterpResult struct {
+type wabtResult struct {
 	Name       string `json:"name"`
 	ResultKind string `json:"resultKind"`
 	ArgText    string `json:"argText"`
@@ -55,49 +55,49 @@ type wabtInterpResult struct {
 	StdoutCount int `json:"stdoutCount"`
 }
 
-type wabtInterpRunResult struct {
+type wabtRunResult struct {
 	Stdout   string
 	Stderr   string
 	ExitCode int
 }
 
-type wabtInterpInvocation struct {
-	ExportName string                    `json:"exportName"`
-	Args       []wabtInterpInvocationArg `json:"args"`
+type wabtInvocation struct {
+	ExportName string              `json:"exportName"`
+	Args       []wabtInvocationArg `json:"args"`
 }
 
-type wabtInterpInvocationArg struct {
+type wabtInvocationArg struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`
 }
 
-type wabtInterpImport struct {
+type wabtImport struct {
 	Module     string   `json:"module"`
 	Name       string   `json:"name"`
 	ResultKind string   `json:"resultKind"`
 	ParamKinds []string `json:"paramKinds"`
 }
 
-type wabtInterpCompiledFixture struct {
+type wabtCompiledFixture struct {
 	path      string
-	tc        wabtInterpCase
+	tc        wabtCase
 	m         *wasmir.Module
 	wasmBytes []byte
 }
 
-type wabtInterpBackend struct {
+type wabtBackend struct {
 	name                string
 	fixtures            []string
 	requiresIntegration bool
-	run                 func(t *testing.T, fixture wabtInterpCompiledFixture) (wabtInterpRunResult, error)
+	run                 func(t *testing.T, fixture wabtCompiledFixture) (wabtRunResult, error)
 }
 
-// wabtInterpSkippedFixtures lists WABT fixtures we keep in-tree but do not run
-// with this Node-backed harness.
-var wabtInterpSkippedFixtures = []string{
+// wabtSkippedFixtures lists WABT fixtures we keep in-tree but do not run
+// through this harness yet.
+var wabtSkippedFixtures = []string{
 	// basic-logging expects wabt's wat2wasm/wasm-interp verbose stderr, with
 	// section-size fixups and decoder callback logs. This harness only runs the
-	// compiled module under Node; it does not emulate wabt's tool logging.
+	// compiled module; it does not emulate wabt's tool logging.
 	"basic-logging.txt",
 
 	// basic-tracing expects wabt interpreter trace output including wabt-specific
@@ -116,8 +116,8 @@ var wabtInterpSkippedFixtures = []string{
 	"try-delegate.txt",
 
 	// custom-page-sizes is a run-interp-spec fixture for the custom-page-sizes
-	// proposal. This Node-backed harness only supports the simpler run-interp
-	// subset, and watgo does not implement custom page sizes in its main
+	// proposal. This harness only supports the simpler run-interp subset, and
+	// watgo does not implement custom page sizes in its main
 	// text/binary pipeline.
 	"custom-page-sizes.txt",
 
@@ -136,27 +136,27 @@ var wabtInterpSkippedFixtures = []string{
 	"atomic-store.txt",
 }
 
-func wabtInterpShouldSkipFixture(name string) bool {
-	return slices.Contains(wabtInterpSkippedFixtures, name)
+func wabtShouldSkipFixture(name string) bool {
+	return slices.Contains(wabtSkippedFixtures, name)
 }
 
-// TestWABTInterp runs WABT interp fixtures through the Node backend.
-func TestWABTInterp(t *testing.T) {
-	runWABTInterpBackend(t, wabtInterpNodeBackend())
+// TestWABTNode runs WABT interp fixtures through the Node backend.
+func TestWABTNode(t *testing.T) {
+	runWABTBackend(t, wabtNodeBackend())
 }
 
-// TestWABTInterpWasmVM runs the current WABT interp whitelist through wasmvm.
-func TestWABTInterpWasmVM(t *testing.T) {
-	runWABTInterpBackend(t, wabtInterpWasmVMBackend())
+// TestWABTWasmvm runs the current WABT interp whitelist through wasmvm.
+func TestWABTWasmvm(t *testing.T) {
+	runWABTBackend(t, wabtWasmvmBackend())
 }
 
-// TestWABTInterpPrintRoundTrip checks WABT interp fixture print stability.
-func TestWABTInterpPrintRoundTrip(t *testing.T) {
-	runWABTInterpFixturesWith(t, checkWABTInterpPrintRoundTrip)
+// TestWABTPrintRoundTrip checks WABT interp fixture print stability.
+func TestWABTPrintRoundTrip(t *testing.T) {
+	runWABTFixturesWith(t, checkWABTPrintRoundTrip)
 }
 
-// runWABTInterpBackend runs one execution backend against its fixture set.
-func runWABTInterpBackend(t *testing.T, backend wabtInterpBackend) {
+// runWABTBackend runs one execution backend against its fixture set.
+func runWABTBackend(t *testing.T, backend wabtBackend) {
 	t.Helper()
 
 	if backend.requiresIntegration && os.Getenv("WATGO_INTEGRATION") == "0" {
@@ -164,7 +164,7 @@ func runWABTInterpBackend(t *testing.T, backend wabtInterpBackend) {
 	}
 	files := backend.fixtures
 	if len(files) == 0 {
-		files = discoverWABTInterpFixtures(t)
+		files = discoverWABTFixtures(t)
 	}
 	if len(files) == 0 {
 		t.Fatal("no .txt fixtures found")
@@ -172,24 +172,24 @@ func runWABTInterpBackend(t *testing.T, backend wabtInterpBackend) {
 
 	for _, file := range files {
 		t.Run(strings.TrimSuffix(file, ".txt"), func(t *testing.T) {
-			if wabtInterpShouldSkipFixture(file) {
+			if wabtShouldSkipFixture(file) {
 				t.Skip("fixture is intentionally not covered by this harness")
 			}
 			if _, err := os.Stat(file); err != nil {
 				t.Fatalf("Stat %q failed: %v", file, err)
 			}
-			fixture := compileWABTInterpFixture(t, file)
+			fixture := compileWABTFixture(t, file)
 			got, err := backend.run(t, fixture)
 			if err != nil {
 				t.Fatalf("%s backend failed for %q: %v", backend.name, file, err)
 			}
-			checkWABTInterpRunResult(t, backend.name, fixture, got)
+			checkWABTRunResult(t, backend.name, fixture, got)
 		})
 	}
 }
 
-// discoverWABTInterpFixtures returns the sorted WABT interp fixture list.
-func discoverWABTInterpFixtures(t *testing.T) []string {
+// discoverWABTFixtures returns the sorted WABT interp fixture list.
+func discoverWABTFixtures(t *testing.T) []string {
 	t.Helper()
 
 	entries, err := os.ReadDir(".")
@@ -207,17 +207,17 @@ func discoverWABTInterpFixtures(t *testing.T) []string {
 	return files
 }
 
-// runWABTInterpFixturesWith runs fn over every supported WABT interp fixture.
-func runWABTInterpFixturesWith(t *testing.T, fn func(t *testing.T, path string)) {
+// runWABTFixturesWith runs fn over every supported WABT interp fixture.
+func runWABTFixturesWith(t *testing.T, fn func(t *testing.T, path string)) {
 	t.Helper()
 
-	files := discoverWABTInterpFixtures(t)
+	files := discoverWABTFixtures(t)
 	if len(files) == 0 {
 		t.Fatal("no .txt fixtures found")
 	}
 	for _, file := range files {
 		t.Run(strings.TrimSuffix(file, ".txt"), func(t *testing.T) {
-			if wabtInterpShouldSkipFixture(file) {
+			if wabtShouldSkipFixture(file) {
 				t.Skip("fixture is intentionally not covered by this harness")
 			}
 			fn(t, file)
@@ -225,9 +225,9 @@ func runWABTInterpFixturesWith(t *testing.T, fn func(t *testing.T, path string))
 	}
 }
 
-// compileWABTInterpFixture extracts, parses, validates, and encodes one WABT
+// compileWABTFixture extracts, parses, validates, and encodes one WABT
 // interp fixture's embedded module.
-func compileWABTInterpFixture(t *testing.T, path string) wabtInterpCompiledFixture {
+func compileWABTFixture(t *testing.T, path string) wabtCompiledFixture {
 	t.Helper()
 
 	src, err := os.ReadFile(path)
@@ -235,9 +235,9 @@ func compileWABTInterpFixture(t *testing.T, path string) wabtInterpCompiledFixtu
 		t.Fatalf("ReadFile %q failed: %v", path, err)
 	}
 
-	tc, err := extractWABTInterpCase(src)
+	tc, err := extractWABTCase(src)
 	if err != nil {
-		t.Fatalf("extractWABTInterpCase %q failed: %v", path, err)
+		t.Fatalf("extractWABTCase %q failed: %v", path, err)
 	}
 
 	m, err := watgo.ParseWAT([]byte(tc.moduleWAT))
@@ -253,7 +253,7 @@ func compileWABTInterpFixture(t *testing.T, path string) wabtInterpCompiledFixtu
 		t.Fatalf("EncodeWASM %q failed: %v", path, err)
 	}
 
-	return wabtInterpCompiledFixture{
+	return wabtCompiledFixture{
 		path:      path,
 		tc:        tc,
 		m:         m,
@@ -261,9 +261,9 @@ func compileWABTInterpFixture(t *testing.T, path string) wabtInterpCompiledFixtu
 	}
 }
 
-// checkWABTInterpRunResult compares backend output against the fixture
+// checkWABTRunResult compares backend output against the fixture
 // expectation.
-func checkWABTInterpRunResult(t *testing.T, backendName string, fixture wabtInterpCompiledFixture, got wabtInterpRunResult) {
+func checkWABTRunResult(t *testing.T, backendName string, fixture wabtCompiledFixture, got wabtRunResult) {
 	t.Helper()
 
 	tc := fixture.tc
@@ -271,7 +271,7 @@ func checkWABTInterpRunResult(t *testing.T, backendName string, fixture wabtInte
 	if got.ExitCode != tc.expectedError {
 		t.Fatalf("%s exit code mismatch for %q: got %d, want %d\nstdout:\n%s\nstderr:\n%s", backendName, path, got.ExitCode, tc.expectedError, got.Stdout, got.Stderr)
 	}
-	if !wabtInterpStdoutMatches(got.Stdout, tc.expectedStdout) {
+	if !wabtStdoutMatches(got.Stdout, tc.expectedStdout) {
 		t.Fatalf("%s stdout mismatch for %q:\n--- got ---\n%s\n--- want ---\n%s", backendName, path, got.Stdout, tc.expectedStdout)
 	}
 	if got.Stderr != tc.expectedStderr {
@@ -279,12 +279,12 @@ func checkWABTInterpRunResult(t *testing.T, backendName string, fixture wabtInte
 	}
 }
 
-// checkWABTInterpPrintRoundTrip verifies that printing and reparsing one WABT
+// checkWABTPrintRoundTrip verifies that printing and reparsing one WABT
 // interp fixture preserves the exact binary encoding of the compiled module.
-func checkWABTInterpPrintRoundTrip(t *testing.T, path string) {
+func checkWABTPrintRoundTrip(t *testing.T, path string) {
 	t.Helper()
 
-	fixture := compileWABTInterpFixture(t, path)
+	fixture := compileWABTFixture(t, path)
 	wasmBytes := fixture.wasmBytes
 
 	decoded, err := watgo.DecodeWASM(wasmBytes)
@@ -304,7 +304,7 @@ func checkWABTInterpPrintRoundTrip(t *testing.T, path string) {
 	}
 }
 
-// extractWABTInterpCase pulls the embedded module and expected STDOUT block out
+// extractWABTCase pulls the embedded module and expected STDOUT block out
 // of one WABT run-interp fixture.
 //
 // This is intentionally a very small extractor for the subset we use here. It
@@ -312,7 +312,7 @@ func checkWABTInterpPrintRoundTrip(t *testing.T, path string) {
 // the module body plus any final expected stdout/stderr payloads. Some
 // run-interp fixtures are still useful even without an explicit output block;
 // for those, the expected stdout/stderr simply stay empty.
-func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
+func extractWABTCase(src []byte) (wabtCase, error) {
 	text := string(src)
 	const stdoutStart = "(;; STDOUT ;;;"
 	const stdoutEnd = ";;; STDOUT ;;)"
@@ -321,7 +321,7 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 
 	moduleStart := strings.Index(text, "(module")
 	if moduleStart < 0 {
-		return wabtInterpCase{}, fmt.Errorf("missing module")
+		return wabtCase{}, fmt.Errorf("missing module")
 	}
 
 	metaLines := strings.Split(text[:moduleStart], "\n")
@@ -344,7 +344,7 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 		case "ERROR":
 			n, err := strconv.Atoi(value)
 			if err != nil {
-				return wabtInterpCase{}, fmt.Errorf("invalid ERROR value %q", value)
+				return wabtCase{}, fmt.Errorf("invalid ERROR value %q", value)
 			}
 			expectedError = n
 		}
@@ -355,7 +355,7 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 	if stdoutStartIdx := strings.Index(text, stdoutStart); stdoutStartIdx >= 0 {
 		stdoutEndIdx := strings.Index(text[stdoutStartIdx:], stdoutEnd)
 		if stdoutEndIdx < 0 {
-			return wabtInterpCase{}, fmt.Errorf("unterminated STDOUT block")
+			return wabtCase{}, fmt.Errorf("unterminated STDOUT block")
 		}
 		stdoutEndIdx += stdoutStartIdx
 		endIdx = min(endIdx, stdoutStartIdx)
@@ -368,7 +368,7 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 	if stderrStartIdx := strings.Index(text, stderrStart); stderrStartIdx >= 0 {
 		stderrEndIdx := strings.Index(text[stderrStartIdx:], stderrEnd)
 		if stderrEndIdx < 0 {
-			return wabtInterpCase{}, fmt.Errorf("unterminated STDERR block")
+			return wabtCase{}, fmt.Errorf("unterminated STDERR block")
 		}
 		stderrEndIdx += stderrStartIdx
 		endIdx = min(endIdx, stderrStartIdx)
@@ -379,7 +379,7 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 
 	moduleWAT := strings.TrimSpace(text[moduleStart:endIdx])
 
-	return wabtInterpCase{
+	return wabtCase{
 		moduleWAT:      moduleWAT,
 		expectedStdout: expectedStdout,
 		expectedStderr: expectedStderr,
@@ -388,23 +388,23 @@ func extractWABTInterpCase(src []byte) (wabtInterpCase, error) {
 	}, nil
 }
 
-// wabtInterpExports collects the exported functions that this harness will run.
+// wabtExports collects the exported functions that this harness will run.
 //
 // For now the harness models the subset used by binary.txt: exported
 // zero-argument functions with zero or one scalar result. The returned
 // metadata is passed to Node so it knows which exports to invoke and how to
 // report their results back.
-func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
-	var exports []wabtInterpExport
+func wabtExports(m *wasmir.Module) ([]wabtExport, error) {
+	var exports []wabtExport
 	for _, exp := range m.Exports {
-		exportInfo := wabtInterpExport{Name: exp.Name}
+		exportInfo := wabtExport{Name: exp.Name}
 		if exp.Kind != wasmir.ExternalKindFunction {
 			exportInfo.Kind = "nonfunc"
 			exports = append(exports, exportInfo)
 			continue
 		}
 		exportInfo.Kind = "func"
-		sig, err := wabtInterpFunctionType(m, exp.Index)
+		sig, err := wabtFunctionType(m, exp.Index)
 		if err != nil {
 			return nil, fmt.Errorf("export %q: %w", exp.Name, err)
 		}
@@ -412,7 +412,7 @@ func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
 			return nil, fmt.Errorf("export %q has %d results; only zero- or one-result exports are supported", exp.Name, len(sig.Results))
 		}
 		for _, param := range sig.Params {
-			kind, err := wabtInterpValueKind(param)
+			kind, err := wabtValueKind(param)
 			if err != nil {
 				return nil, fmt.Errorf("export %q has unsupported param type %v", exp.Name, param)
 			}
@@ -422,7 +422,7 @@ func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
 		resultKind := "void"
 		if len(sig.Results) == 1 {
 			var err error
-			resultKind, err = wabtInterpValueKind(sig.Results[0])
+			resultKind, err = wabtValueKind(sig.Results[0])
 			if err != nil {
 				return nil, fmt.Errorf("export %q has unsupported result type %v", exp.Name, sig.Results[0])
 			}
@@ -434,7 +434,7 @@ func wabtInterpExports(m *wasmir.Module) ([]wabtInterpExport, error) {
 	return exports, nil
 }
 
-func wabtInterpValueKind(vt wasmir.ValueType) (string, error) {
+func wabtValueKind(vt wasmir.ValueType) (string, error) {
 	switch vt.Kind {
 	case wasmir.ValueKindI32:
 		return "i32", nil
@@ -457,7 +457,7 @@ func wabtInterpValueKind(vt wasmir.ValueType) (string, error) {
 	return "", fmt.Errorf("unsupported value type %v", vt)
 }
 
-func wabtInterpHostPrintResultKind(m *wasmir.Module) (string, error) {
+func wabtHostPrintResultKind(m *wasmir.Module) (string, error) {
 	resultKind := ""
 	for _, imp := range m.Imports {
 		if imp.Kind != wasmir.ExternalKindFunction || imp.Module != "host" || imp.Name != "print" {
@@ -473,7 +473,7 @@ func wabtInterpHostPrintResultKind(m *wasmir.Module) (string, error) {
 		}
 		if len(sig.Results) == 1 {
 			var err error
-			kind, err = wabtInterpValueKind(sig.Results[0])
+			kind, err = wabtValueKind(sig.Results[0])
 			if err != nil {
 				return "", fmt.Errorf("unsupported host.print result type %v", sig.Results[0])
 			}
@@ -489,11 +489,11 @@ func wabtInterpHostPrintResultKind(m *wasmir.Module) (string, error) {
 	return resultKind, nil
 }
 
-// wabtInterpImports extracts imported function signatures for the small
+// wabtImports extracts imported function signatures for the small
 // run-interp flags that synthesize host functions in the harness, such as
 // `--dummy-import-func`.
-func wabtInterpImports(m *wasmir.Module) ([]wabtInterpImport, error) {
-	var imports []wabtInterpImport
+func wabtImports(m *wasmir.Module) ([]wabtImport, error) {
+	var imports []wabtImport
 	for _, imp := range m.Imports {
 		if imp.Kind != wasmir.ExternalKindFunction {
 			continue
@@ -506,20 +506,20 @@ func wabtInterpImports(m *wasmir.Module) ([]wabtInterpImport, error) {
 			return nil, fmt.Errorf("import %q.%q has %d results", imp.Module, imp.Name, len(sig.Results))
 		}
 
-		importInfo := wabtInterpImport{
+		importInfo := wabtImport{
 			Module:     imp.Module,
 			Name:       imp.Name,
 			ResultKind: "void",
 		}
 		for _, param := range sig.Params {
-			kind, err := wabtInterpValueKind(param)
+			kind, err := wabtValueKind(param)
 			if err != nil {
 				return nil, fmt.Errorf("import %q.%q has unsupported param type %v", imp.Module, imp.Name, param)
 			}
 			importInfo.ParamKinds = append(importInfo.ParamKinds, kind)
 		}
 		if len(sig.Results) == 1 {
-			kind, err := wabtInterpValueKind(sig.Results[0])
+			kind, err := wabtValueKind(sig.Results[0])
 			if err != nil {
 				return nil, fmt.Errorf("import %q.%q has unsupported result type %v", imp.Module, imp.Name, sig.Results[0])
 			}
@@ -530,9 +530,9 @@ func wabtInterpImports(m *wasmir.Module) ([]wabtInterpImport, error) {
 	return imports, nil
 }
 
-// wabtInterpFunctionType resolves a function index through the combined import
+// wabtFunctionType resolves a function index through the combined import
 // and defined-function index space and returns its signature from Module.Types.
-func wabtInterpFunctionType(m *wasmir.Module, funcIndex uint32) (wasmir.TypeDef, error) {
+func wabtFunctionType(m *wasmir.Module, funcIndex uint32) (wasmir.TypeDef, error) {
 	importedFuncs := uint32(0)
 	for _, imp := range m.Imports {
 		if imp.Kind != wasmir.ExternalKindFunction {
@@ -558,15 +558,15 @@ func wabtInterpFunctionType(m *wasmir.Module, funcIndex uint32) (wasmir.TypeDef,
 	return m.Types[typeIdx], nil
 }
 
-func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabtInterpInvocation, bool, bool, error) {
-	exportMap := make(map[string]wabtInterpExport, len(exports))
+func wabtInvocations(exports []wabtExport, runArgs []string) ([]wabtInvocation, bool, bool, error) {
+	exportMap := make(map[string]wabtExport, len(exports))
 	for _, exp := range exports {
 		exportMap[exp.Name] = exp
 	}
 
 	hostPrint := false
 	dummyImportFunc := false
-	var invocations []wabtInterpInvocation
+	var invocations []wabtInvocation
 	current := -1
 	for _, arg := range runArgs {
 		switch {
@@ -580,7 +580,7 @@ func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabt
 			// will fail later for a real compiler/runtime gap.
 		case strings.HasPrefix(arg, "--run-export="):
 			name := strings.TrimPrefix(arg, "--run-export=")
-			invocations = append(invocations, wabtInterpInvocation{ExportName: name, Args: []wabtInterpInvocationArg{}})
+			invocations = append(invocations, wabtInvocation{ExportName: name, Args: []wabtInvocationArg{}})
 			current = len(invocations) - 1
 		case strings.HasPrefix(arg, "--argument="):
 			if current < 0 {
@@ -591,7 +591,7 @@ func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabt
 			if !ok {
 				return nil, false, false, fmt.Errorf("invalid --argument value %q", spec)
 			}
-			invocations[current].Args = append(invocations[current].Args, wabtInterpInvocationArg{Kind: kind, Text: text})
+			invocations[current].Args = append(invocations[current].Args, wabtInvocationArg{Kind: kind, Text: text})
 		default:
 			return nil, false, false, fmt.Errorf("unsupported wabt interp arg %q", arg)
 		}
@@ -600,7 +600,7 @@ func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabt
 	if len(invocations) == 0 {
 		for _, exp := range exports {
 			if exp.Kind == "func" && len(exp.ParamKinds) == 0 {
-				invocations = append(invocations, wabtInterpInvocation{ExportName: exp.Name, Args: []wabtInterpInvocationArg{}})
+				invocations = append(invocations, wabtInvocation{ExportName: exp.Name, Args: []wabtInvocationArg{}})
 			}
 		}
 	}
@@ -613,11 +613,11 @@ func wabtInterpInvocations(exports []wabtInterpExport, runArgs []string) ([]wabt
 	return invocations, hostPrint, dummyImportFunc, nil
 }
 
-// wabtInterpValidateInvocations handles the run-interp command-shape errors
+// wabtValidateInvocations handles the run-interp command-shape errors
 // that WABT reports before module execution, for example a `--run-export`
 // invocation with the wrong number of `--argument=` values.
-func wabtInterpValidateInvocations(exports []wabtInterpExport, invocations []wabtInterpInvocation) (wabtInterpRunResult, bool) {
-	exportMap := make(map[string]wabtInterpExport, len(exports))
+func wabtValidateInvocations(exports []wabtExport, invocations []wabtInvocation) (wabtRunResult, bool) {
+	exportMap := make(map[string]wabtExport, len(exports))
 	for _, exp := range exports {
 		exportMap[exp.Name] = exp
 	}
@@ -629,17 +629,17 @@ func wabtInterpValidateInvocations(exports []wabtInterpExport, invocations []wab
 		if len(inv.Args) == len(exp.ParamKinds) {
 			continue
 		}
-		return wabtInterpRunResult{
+		return wabtRunResult{
 			Stdout:   fmt.Sprintf("Exported function '%s' expects %d arguments, but %d were provided", inv.ExportName, len(exp.ParamKinds), len(inv.Args)),
 			ExitCode: 1,
 		}, true
 	}
-	return wabtInterpRunResult{}, false
+	return wabtRunResult{}, false
 }
 
-// formatWABTInterpResult converts one JSON result record from Node into the
+// formatWABTResult converts one JSON result record from Node into the
 // exact line format expected by WABT's interp tests.
-func formatWABTInterpResult(result wabtInterpResult) (string, error) {
+func formatWABTResult(result wabtResult) (string, error) {
 	label := result.Name + "()"
 	if result.ArgText != "" {
 		label = fmt.Sprintf("%s(%s)", result.Name, result.ArgText)
@@ -657,7 +657,7 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	case "i32", "i64", "funcref", "externref":
 		formatted = result.Value
 	case "v128":
-		formattedValue, err := formatWABTInterpV128(result.Value)
+		formattedValue, err := formatWABTV128(result.Value)
 		if err != nil {
 			return "", fmt.Errorf("parse v128 words for %q: %w", result.Name, err)
 		}
@@ -683,7 +683,7 @@ func formatWABTInterpResult(result wabtInterpResult) (string, error) {
 	return fmt.Sprintf("%s => %s:%s", label, result.ResultKind, formatted), nil
 }
 
-func formatWABTInterpV128(wordsText string) (string, error) {
+func formatWABTV128(wordsText string) (string, error) {
 	parts := strings.Split(wordsText, ",")
 	if len(parts) != 4 {
 		return "", fmt.Errorf("want 4 words, got %d", len(parts))
@@ -699,7 +699,7 @@ func formatWABTInterpV128(wordsText string) (string, error) {
 	return fmt.Sprintf("i32x4:0x%08x 0x%08x 0x%08x 0x%08x", words[0], words[1], words[2], words[3]), nil
 }
 
-// wabtInterpStdoutMatches compares reconstructed output against WABT's
+// wabtStdoutMatches compares reconstructed output against WABT's
 // expected stdout.
 //
 // Most lines are compared byte-for-byte. The only special case is
@@ -713,7 +713,7 @@ func formatWABTInterpV128(wordsText string) (string, error) {
 // non-null and to preserve stable funcref identity within the module. For
 // those lines, the comparison keeps the export name and ref kind exact but
 // treats any two non-zero ids as equivalent.
-func wabtInterpStdoutMatches(got, want string) bool {
+func wabtStdoutMatches(got, want string) bool {
 	if got == want {
 		return true
 	}
@@ -727,17 +727,17 @@ func wabtInterpStdoutMatches(got, want string) bool {
 		if gotLines[i] == wantLines[i] {
 			continue
 		}
-		if wabtInterpV128LineMatches(gotLines[i], wantLines[i]) {
+		if wabtV128LineMatches(gotLines[i], wantLines[i]) {
 			continue
 		}
-		if !wabtInterpRefLineMatches(gotLines[i], wantLines[i]) {
+		if !wabtRefLineMatches(gotLines[i], wantLines[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-// wabtInterpRefLineMatches compares one reference-valued output line.
+// wabtRefLineMatches compares one reference-valued output line.
 //
 // Example:
 //
@@ -749,7 +749,7 @@ func wabtInterpStdoutMatches(got, want string) bool {
 //
 //	funcref:0 only matches funcref:0
 //	externref:0 only matches externref:0
-func wabtInterpRefLineMatches(got, want string) bool {
+func wabtRefLineMatches(got, want string) bool {
 	gotName, gotKind, gotValue, ok := splitWABTRefLine(got)
 	if !ok {
 		return false
@@ -791,7 +791,7 @@ func splitWABTRefLine(line string) (name, kind, value string, ok bool) {
 	return prefix, kind, value, true
 }
 
-func wabtInterpV128LineMatches(got, want string) bool {
+func wabtV128LineMatches(got, want string) bool {
 	gotName, gotWords, ok := splitWABTV128Line(got)
 	if !ok {
 		return false
