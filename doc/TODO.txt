@@ -3,8 +3,7 @@ Immediate TODOs
 
 vm:
 
-* 
-* update upstream tests at some point
+* wabt fixture: rename stuff
 
 Longer-term plans
 -----------------
