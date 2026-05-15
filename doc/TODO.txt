@@ -3,7 +3,7 @@ Immediate TODOs
 
 vm:
 
-* really need the special resolver for const expr now?!
+* 
 * update upstream tests at some point
 
 Longer-term plans
