@@ -1,68 +1,55 @@
-// Package vm contains the private execution representation used by wasmvm.
+// Package vm contains the private execution engine used by wasmvm.
 //
-//   - The public wasmvm package owns the user-facing runtime: module
-//     instantiation, imports, exports, host callbacks, and the WebAssembly
-//     function index space.
-//   - This package owns the runtime form of module-defined functions.
-//     CompileFunction lowers wasmir.Function into Function, and ExecuteFunction
-//     interprets compiled Function values.
+// The public wasmvm package owns the user-facing API: imports, exports, host
+// callbacks, and the public function-call surface. This package owns the
+// execution state that is opaque to host code: compiled module-defined
+// functions, globals, memories, tables, data segments, element segments, and
+// instruction semantics.
 //
-// The package API is intentionally small:
+// The package API is intentionally narrow:
 //
 //   - Value is the runtime value representation. wasmvm re-exports it as
 //     wasmvm.Value.
-//   - Function is an opaque compiled module-defined function.
-//   - CompileFunction builds a Function from a wasmir.Function at instantiation
-//     time.
-//   - ExecuteFunction runs a Function when wasmvm dispatches to module-defined
-//     code.
-//   - EvalConstExpr evaluates lowered module-level constant expressions into
-//     runtime Values during instantiation.
-//   - Resolver is implemented by the package that owns the instantiated
-//     module environment. ExecuteFunction and EvalConstExpr use it for
-//     operations that may cross into host-visible state, such as function
-//     calls, indirect-call type checks, global access, memory access, and
-//     table access, without knowing about module instances or host imports.
-//   - CheckArgs and CheckResults are shared signature checks used at call
-//     boundaries.
+//   - Instantiate builds an Instance from a validated wasmir.Module.
+//   - Instance owns the module's executable state.
+//   - Instance.CallFunc dispatches a function-index call, whether the callee is
+//     module-defined or imported.
+//   - Instance.FuncType exposes function signatures so wasmvm can validate
+//     function exports and public calls.
+//   - Resolver is the only bridge back to wasmvm. It is used when Instance
+//     dispatches an imported function index; globals, memories, tables, data
+//     segments, element segments, and lowered instructions all stay inside
+//     this package.
 //
 // Function compilation is deliberately separate from wasmir. wasmir is the
 // semantic representation of a module, but it is not optimized for repeated
-// execution. Function stores a linear instruction stream with execution-focused
-// immediates, including precomputed structured-control targets. Each
-// module-defined function is compiled once during wasmvm instantiation and then
-// reused for every call.
+// execution. During Instantiate, each module-defined function is lowered once
+// into a linear instruction stream with execution-focused immediates, including
+// precomputed structured-control targets. Calls then reuse that lowered form.
 //
 // The life of a simple exported function call is:
 //
-//   - wasmvm.Func.Call enters wasmvm.ModuleInstance's function dispatcher with
-//     a WebAssembly function index.
-//   - The dispatcher checks the callee signature. Imported host functions are
-//     invoked directly through their Go callback; module-defined functions are
-//     passed to ExecuteFunction.
-//   - ExecuteFunction runs the compiled instruction stream with its own operand
-//     stack and locals, using Resolver when the instruction stream calls a
-//     function or reads/writes instance globals, memories, or tables.
-//   - When ExecuteFunction reaches a wasm call instruction, it pops the
-//     callee's arguments, asks Resolver for the callee's signature, and invokes
-//     Resolver.CallFunc.
-//   - wasmvm's Resolver implementation re-enters the same function dispatcher,
-//     so a wasm function calling another wasm function creates a
-//     new ExecuteFunction frame, while a wasm function calling an import
-//     reaches the host callback.
-//   - Results return back through the same chain of dispatcher and
-//     ExecuteFunction frames.
+//   - wasmvm.Func.Call passes the exported function index to Instance.CallFunc.
+//   - Instance.CallFunc checks the callee signature. Imported function indices
+//     are sent to Resolver.CallFunc; module-defined function indices enter a
+//     new executor frame.
+//   - The executor runs the lowered instruction stream with its own operand
+//     stack and locals, reading and writing Instance-owned globals, memories,
+//     tables, data segments, and element segments directly.
+//   - When the executor reaches a wasm call instruction, it pops the callee's
+//     arguments and re-enters Instance.CallFunc with the target function index.
+//   - Results return back through the same chain of Instance.CallFunc and
+//     executor frames.
 //
 // For example, if exported wasm function A calls wasm function B, and B calls a
 // host import, the control path is:
 //
-//	Func.Call(A)
-//	  -> wasmvm dispatcher(A)
-//	  -> ExecuteFunction(A)
-//	  -> Resolver.CallFunc(B)
-//	  -> wasmvm dispatcher(B)
-//	  -> ExecuteFunction(B)
-//	  -> Resolver.CallFunc(host)
-//	  -> wasmvm dispatcher(host)
-//	  -> HostFunc callback
+//	wasmvm.Func.Call(A)
+//	  -> Instance.CallFunc(A)
+//	  -> executeFunction(A)
+//	  -> Instance.CallFunc(B)
+//	  -> executeFunction(B)
+//	  -> Instance.CallFunc(import)
+//	  -> Resolver.CallFunc(import)
+//	  -> wasmvm HostFunc callback
 package vm

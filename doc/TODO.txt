@@ -3,7 +3,7 @@ Immediate TODOs
 
 vm:
 
-* Resolver interface becoming very big; any recourse?
+* really need the special resolver for const expr now?!
 * update upstream tests at some point
 
 Longer-term plans

@@ -48,10 +48,13 @@ type instructionError struct {
 	err  error
 }
 
+// Error returns the execution error annotated with program counter and opcode.
 func (e instructionError) Error() string {
 	return fmt.Sprintf("pc %d %s: %v", e.pc, instrName(e.kind), e.err)
 }
 
+// Unwrap returns the low-level error that occurred while executing the
+// instruction.
 func (e instructionError) Unwrap() error {
 	return e.err
 }
@@ -103,90 +106,15 @@ type Reference struct {
 	FuncIndex uint32
 }
 
-// Resolver is the VM's view of the instantiated module environment.
-//
-// The VM owns execution mechanics for compiled module-defined functions, but
-// it does not own host-visible instance state. Any instruction that may cross
-// that boundary, such as calls, global access, or memory access, goes through
-// Resolver.
+// Resolver is the VM's narrow bridge to host-owned function imports.
 type Resolver interface {
-	// FuncType returns the signature of the function at index.
-	FuncType(index uint32) (wasmir.TypeDef, error)
-
-	// CallType returns the function type referenced by an indirect call type
-	// immediate.
-	CallType(index uint32) (wasmir.TypeDef, error)
-
-	// CallFunc invokes the function at index with already popped arguments in
-	// parameter order.
+	// CallFunc invokes an imported host function at index with already checked
+	// arguments in parameter order.
 	CallFunc(index uint32, args []Value) ([]Value, error)
-
-	// GlobalGet returns the current value of the global at index.
-	GlobalGet(index uint32) (Value, error)
-
-	// GlobalSet updates the global at index with value.
-	GlobalSet(index uint32, value Value) error
-
-	// MemoryLoad reads size bytes from memory at address and returns them as a
-	// little-endian integer in the low bits.
-	MemoryLoad(index uint32, address uint64, size uint32) (uint64, error)
-
-	// MemoryStore writes size low-order bytes of value to memory at address in
-	// little-endian order.
-	MemoryStore(index uint32, address uint64, size uint32, value uint64) error
-
-	// MemorySize returns the current memory size in WebAssembly pages.
-	MemorySize(index uint32) (uint64, error)
-
-	// MemoryGrow grows memory by delta pages. It returns the old memory size in
-	// pages when growth succeeds, and ok=false when growth is rejected.
-	MemoryGrow(index uint32, delta uint64) (oldPages uint64, ok bool, err error)
-
-	// MemoryCopy copies size bytes between instantiated memories. The copy must
-	// have memmove semantics when the source and destination overlap.
-	MemoryCopy(dstIndex uint32, dstAddress uint64, srcIndex uint32, srcAddress uint64, size uint64) error
-
-	// MemoryFill writes value to size bytes of an instantiated memory.
-	MemoryFill(index uint32, address uint64, size uint64, value byte) error
-
-	// MemoryInit copies size bytes from a passive data segment into memory.
-	MemoryInit(memoryIndex uint32, dataIndex uint32, dstAddress uint64, srcOffset uint64, size uint64) error
-
-	// DataDrop marks a passive data segment unavailable for future memory.init
-	// operations.
-	DataDrop(index uint32) error
-
-	// TableGet returns the reference at elemIndex in table index.
-	TableGet(index uint32, elemIndex uint64) (Value, error)
-
-	// TableSet updates the reference at elemIndex in table index.
-	TableSet(index uint32, elemIndex uint64, value Value) error
-
-	// TableSize returns the current table size in elements.
-	TableSize(index uint32) (uint64, error)
-
-	// TableGrow grows a table by delta elements, initializing new slots with
-	// init. It returns the old table size when growth succeeds, and ok=false
-	// when growth is rejected.
-	TableGrow(index uint32, init Value, delta uint64) (oldSize uint64, ok bool, err error)
-
-	// TableFill writes value to size elements of an instantiated table.
-	TableFill(index uint32, elemIndex uint64, size uint64, value Value) error
-
-	// TableCopy copies size elements between instantiated tables. The copy must
-	// have memmove semantics when the source and destination overlap.
-	TableCopy(dstIndex uint32, dstElemIndex uint64, srcIndex uint32, srcElemIndex uint64, size uint64) error
-
-	// TableInit copies size elements from an element segment into a table.
-	TableInit(tableIndex uint32, elemIndex uint32, dstElemIndex uint64, srcOffset uint64, size uint64) error
-
-	// ElemDrop marks an element segment unavailable for future table.init
-	// operations.
-	ElemDrop(index uint32) error
 }
 
-// CheckArgs verifies call argument count and value types.
-func CheckArgs(params []wasmir.ValueType, args []Value) error {
+// checkArgs verifies call argument count and value types.
+func checkArgs(params []wasmir.ValueType, args []Value) error {
 	if len(args) != len(params) {
 		return fmt.Errorf("got %d arguments, want %d", len(args), len(params))
 	}
@@ -198,8 +126,8 @@ func CheckArgs(params []wasmir.ValueType, args []Value) error {
 	return nil
 }
 
-// CheckResults verifies result count and value types.
-func CheckResults(want []wasmir.ValueType, got []Value) error {
+// checkResults verifies result count and value types.
+func checkResults(want []wasmir.ValueType, got []Value) error {
 	if len(got) != len(want) {
 		return fmt.Errorf("got %d results, want %d", len(got), len(want))
 	}
@@ -223,15 +151,13 @@ func runtimeTypeMatches(got, want wasmir.ValueType) bool {
 // executor is one active module-defined function frame.
 type executor struct {
 	// fn is the compiled function being interpreted by this frame.
-	fn *Function
+	fn *function
 
 	// ft is fn's validated WebAssembly signature.
 	ft wasmir.TypeDef
 
-	// resolver connects this VM frame to the instantiated module environment:
-	// function index space, globals, memories, and eventually other
-	// host-visible state such as tables.
-	resolver Resolver
+	// inst is the VM-owned instantiated module state used by this frame.
+	inst *Instance
 
 	// pc is the current instruction index in fn.code. It is stored on the frame
 	// so error wrapping and control-flow instructions can share the same
@@ -246,17 +172,17 @@ type executor struct {
 	stack []Value
 }
 
-// ExecuteFunction interprets one compiled module-defined function body.
-func ExecuteFunction(fn *Function, ft wasmir.TypeDef, args []Value, resolver Resolver) ([]Value, error) {
+// executeFunction interprets one compiled module-defined function body.
+func executeFunction(fn *function, ft wasmir.TypeDef, args []Value, inst *Instance) ([]Value, error) {
 	if fn == nil {
 		return nil, fmt.Errorf("defined function has no compiled code")
 	}
 
 	e := executor{
-		fn:       fn,
-		ft:       ft,
-		resolver: resolver,
-		stack:    make([]Value, 0),
+		fn:    fn,
+		ft:    ft,
+		inst:  inst,
+		stack: make([]Value, 0),
 	}
 	if err := e.initLocals(args); err != nil {
 		return nil, err
@@ -334,31 +260,31 @@ func (e *executor) run() ([]Value, error) {
 			e.locals[ins.index] = v
 			e.push(v)
 		case wasmir.InstrGlobalGet:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			v, err := e.resolver.GlobalGet(ins.index)
+			v, err := e.inst.globalGetValue(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(v)
 		case wasmir.InstrGlobalSet:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			v, err := e.pop()
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.GlobalSet(ins.index, v); err != nil {
+			if err := e.inst.globalSet(ins.index, v); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Const:
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(ins.bits)})
 		case wasmir.InstrI32Load, wasmir.InstrI32Load8S, wasmir.InstrI32Load8U,
 			wasmir.InstrI32Load16S, wasmir.InstrI32Load16U:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			addr, err := e.popI32()
 			if err != nil {
@@ -369,14 +295,14 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			size := memoryAccessSize(ins.kind)
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, size)
+			raw, err := e.inst.memoryLoad(ins.index, effective, size)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: extendI32Load(ins.kind, raw)})
 		case wasmir.InstrI32Store, wasmir.InstrI32Store8, wasmir.InstrI32Store16:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			value, err := e.popI32()
 			if err != nil {
@@ -390,14 +316,14 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, memoryAccessSize(ins.kind), uint64(uint32(value))); err != nil {
+			if err := e.inst.memoryStore(ins.index, effective, memoryAccessSize(ins.kind), uint64(uint32(value))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI64Load, wasmir.InstrI64Load8S, wasmir.InstrI64Load8U,
 			wasmir.InstrI64Load16S, wasmir.InstrI64Load16U,
 			wasmir.InstrI64Load32S, wasmir.InstrI64Load32U:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			addr, err := e.popI32()
 			if err != nil {
@@ -408,14 +334,14 @@ func (e *executor) run() ([]Value, error) {
 				return nil, e.instructionError(err)
 			}
 			size := memoryAccessSize(ins.kind)
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, size)
+			raw, err := e.inst.memoryLoad(ins.index, effective, size)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI64, I64: extendI64Load(ins.kind, raw)})
 		case wasmir.InstrI64Store, wasmir.InstrI64Store8, wasmir.InstrI64Store16, wasmir.InstrI64Store32:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			value, err := e.popI64()
 			if err != nil {
@@ -429,12 +355,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, memoryAccessSize(ins.kind), uint64(value)); err != nil {
+			if err := e.inst.memoryStore(ins.index, effective, memoryAccessSize(ins.kind), uint64(value)); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrF32Load:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			addr, err := e.popI32()
 			if err != nil {
@@ -444,14 +370,14 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, 4)
+			raw, err := e.inst.memoryLoad(ins.index, effective, 4)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeF32, F32: math.Float32frombits(uint32(raw))})
 		case wasmir.InstrF32Store:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			value, err := e.popF32()
 			if err != nil {
@@ -465,12 +391,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, 4, uint64(math.Float32bits(value))); err != nil {
+			if err := e.inst.memoryStore(ins.index, effective, 4, uint64(math.Float32bits(value))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrF64Load:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			addr, err := e.popI32()
 			if err != nil {
@@ -480,14 +406,14 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			raw, err := e.resolver.MemoryLoad(ins.index, effective, 8)
+			raw, err := e.inst.memoryLoad(ins.index, effective, 8)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeF64, F64: math.Float64frombits(raw)})
 		case wasmir.InstrF64Store:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			value, err := e.popF64()
 			if err != nil {
@@ -501,27 +427,27 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryStore(ins.index, effective, 8, math.Float64bits(value)); err != nil {
+			if err := e.inst.memoryStore(ins.index, effective, 8, math.Float64bits(value)); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrMemorySize:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			pages, err := e.resolver.MemorySize(ins.index)
+			pages, err := e.inst.memorySize(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(pages))})
 		case wasmir.InstrMemoryGrow:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			delta, err := e.popI32()
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			oldPages, ok, err := e.resolver.MemoryGrow(ins.index, uint64(uint32(delta)))
+			oldPages, ok, err := e.inst.memoryGrow(ins.index, uint64(uint32(delta)))
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
@@ -531,8 +457,8 @@ func (e *executor) run() ([]Value, error) {
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(oldPages))})
 		case wasmir.InstrMemoryCopy:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -546,12 +472,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+			if err := e.inst.memoryCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrMemoryFill:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -565,12 +491,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), byte(value)); err != nil {
+			if err := e.inst.memoryFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), byte(value)); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrMemoryInit:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -584,41 +510,41 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.MemoryInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+			if err := e.inst.memoryInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrDataDrop:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			if err := e.resolver.DataDrop(ins.index); err != nil {
+			if err := e.inst.dataDrop(ins.index); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrTableSize:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			size, err := e.resolver.TableSize(ins.index)
+			size, err := e.inst.tableSize(ins.index)
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(size))})
 		case wasmir.InstrTableGet:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			elemIndex, err := e.popI32()
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			v, err := e.resolver.TableGet(ins.index, uint64(uint32(elemIndex)))
+			v, err := e.inst.tableGet(ins.index, uint64(uint32(elemIndex)))
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(v)
 		case wasmir.InstrTableSet:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			v, err := e.pop()
 			if err != nil {
@@ -628,12 +554,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.TableSet(ins.index, uint64(uint32(elemIndex)), v); err != nil {
+			if err := e.inst.tableSet(ins.index, uint64(uint32(elemIndex)), v); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrTableGrow:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			delta, err := e.popI32()
 			if err != nil {
@@ -643,7 +569,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			oldSize, ok, err := e.resolver.TableGrow(ins.index, init, uint64(uint32(delta)))
+			oldSize, ok, err := e.inst.tableGrow(ins.index, init, uint64(uint32(delta)))
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
@@ -653,8 +579,8 @@ func (e *executor) run() ([]Value, error) {
 			}
 			e.push(Value{Type: wasmir.ValueTypeI32, I32: int32(uint32(oldSize))})
 		case wasmir.InstrTableFill:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -668,12 +594,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.TableFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), value); err != nil {
+			if err := e.inst.tableFill(ins.index, uint64(uint32(dst)), uint64(uint32(size)), value); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrTableCopy:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -687,12 +613,12 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.TableCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+			if err := e.inst.tableCopy(ins.index, uint64(uint32(dst)), uint32(ins.bits), uint64(uint32(src)), uint64(uint32(size))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrTableInit:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
 			size, err := e.popI32()
 			if err != nil {
@@ -706,14 +632,14 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := e.resolver.TableInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
+			if err := e.inst.tableInit(ins.index, uint32(ins.bits), uint64(uint32(dst)), uint64(uint32(src)), uint64(uint32(size))); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrElemDrop:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			if err := e.resolver.ElemDrop(ins.index); err != nil {
+			if err := e.inst.elemDrop(ins.index); err != nil {
 				return nil, e.instructionError(err)
 			}
 		case wasmir.InstrI32Add, wasmir.InstrI32Sub, wasmir.InstrI32Mul,
@@ -884,10 +810,10 @@ func (e *executor) run() ([]Value, error) {
 			}
 			e.push(Value{Type: e.fn.refTypes[refTypeIndex], Ref: Reference{Kind: RefKindNull}})
 		case wasmir.InstrRefFunc:
-			if e.resolver == nil {
-				return nil, e.instructionError(fmt.Errorf("resolver is nil"))
+			if e.inst == nil {
+				return nil, e.instructionError(fmt.Errorf("instance is nil"))
 			}
-			if _, err := e.resolver.FuncType(ins.index); err != nil {
+			if _, err := e.inst.FuncType(ins.index); err != nil {
 				return nil, e.instructionError(err)
 			}
 			e.push(Value{Type: wasmir.RefTypeFunc(false), Ref: Reference{Kind: RefKindFunc, FuncIndex: ins.index}})
@@ -969,7 +895,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := CheckResults(e.ft.Results, results); err != nil {
+			if err := checkResults(e.ft.Results, results); err != nil {
 				return nil, e.instructionError(err)
 			}
 			return results, nil
@@ -978,7 +904,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := CheckResults(e.ft.Results, results); err != nil {
+			if err := checkResults(e.ft.Results, results); err != nil {
 				return nil, e.instructionError(err)
 			}
 			return results, nil
@@ -987,7 +913,7 @@ func (e *executor) run() ([]Value, error) {
 			if err != nil {
 				return nil, e.instructionError(err)
 			}
-			if err := CheckResults(e.ft.Results, results); err != nil {
+			if err := checkResults(e.ft.Results, results); err != nil {
 				return nil, e.instructionError(err)
 			}
 			return results, nil
@@ -1121,12 +1047,12 @@ func (e *executor) pop() (Value, error) {
 }
 
 // callFunction pops arguments for the target function and invokes it through
-// the resolver.
+// the instance dispatcher.
 func (e *executor) callFunction(index uint32) ([]Value, error) {
-	if e.resolver == nil {
-		return nil, fmt.Errorf("resolver is nil")
+	if e.inst == nil {
+		return nil, fmt.Errorf("instance is nil")
 	}
-	calleeType, err := e.resolver.FuncType(index)
+	calleeType, err := e.inst.FuncType(index)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,20 +1060,20 @@ func (e *executor) callFunction(index uint32) ([]Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	return e.resolver.CallFunc(index, callArgs)
+	return e.inst.CallFunc(index, callArgs)
 }
 
 // callIndirectFunction resolves a table element to a function reference,
 // checks that its runtime type matches callTypeIndex, and invokes it.
 func (e *executor) callIndirectFunction(tableIndex uint32, callTypeIndex uint32) ([]Value, error) {
-	if e.resolver == nil {
-		return nil, fmt.Errorf("resolver is nil")
+	if e.inst == nil {
+		return nil, fmt.Errorf("instance is nil")
 	}
 	elemIndex, err := e.popI32()
 	if err != nil {
 		return nil, err
 	}
-	ref, err := e.resolver.TableGet(tableIndex, uint64(uint32(elemIndex)))
+	ref, err := e.inst.tableGet(tableIndex, uint64(uint32(elemIndex)))
 	if err != nil {
 		return nil, err
 	}
@@ -1169,8 +1095,8 @@ func (e *executor) callIndirectFunction(tableIndex uint32, callTypeIndex uint32)
 // callRefFunction pops a function reference operand, checks its runtime type,
 // and invokes it.
 func (e *executor) callRefFunction(callTypeIndex uint32) ([]Value, error) {
-	if e.resolver == nil {
-		return nil, fmt.Errorf("resolver is nil")
+	if e.inst == nil {
+		return nil, fmt.Errorf("instance is nil")
 	}
 	ref, err := e.pop()
 	if err != nil {
@@ -1194,14 +1120,14 @@ func (e *executor) callRefFunction(callTypeIndex uint32) ([]Value, error) {
 // checkFunctionReferenceType verifies the runtime type check for a resolved
 // function reference.
 func (e *executor) checkFunctionReferenceType(funcIndex uint32, callTypeIndex uint32) error {
-	want, err := e.resolver.CallType(callTypeIndex)
+	want, err := e.inst.callType(callTypeIndex)
 	if err != nil {
 		return err
 	}
 	if want.Kind != wasmir.TypeDefKindFunc {
 		return fmt.Errorf("type index %d is not a function type", callTypeIndex)
 	}
-	got, err := e.resolver.FuncType(funcIndex)
+	got, err := e.inst.FuncType(funcIndex)
 	if err != nil {
 		return err
 	}
@@ -2029,7 +1955,7 @@ func (e *executor) popArgs(params []wasmir.ValueType) ([]Value, error) {
 	base := len(e.stack) - len(params)
 	args := e.stack[base:]
 	e.stack = e.stack[:base]
-	if err := CheckArgs(params, args); err != nil {
+	if err := checkArgs(params, args); err != nil {
 		return nil, err
 	}
 	return args, nil
@@ -2044,7 +1970,7 @@ func (e *executor) popResults(results []wasmir.ValueType) ([]Value, error) {
 	base := len(e.stack) - len(results)
 	out := e.stack[base:]
 	e.stack = e.stack[:base]
-	if err := CheckResults(results, out); err != nil {
+	if err := checkResults(results, out); err != nil {
 		return nil, err
 	}
 	return out, nil

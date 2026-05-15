@@ -10,14 +10,14 @@ import (
 
 const maxInt64Uint = uint64(1<<63 - 1)
 
-// Function is the VM's execution form for a module-defined function.
-type Function struct {
+// function is the VM's execution form for a module-defined function.
+type function struct {
 	// locals contains the non-parameter locals declared by the function. At
-	// call time ExecuteFunction builds its local array as args followed by
+	// call time executeFunction builds its local array as args followed by
 	// these zero-initialized locals.
 	locals []wasmir.ValueType
 
-	// code is the linear instruction stream consumed by ExecuteFunction. It has
+	// code is the linear instruction stream consumed by executeFunction. It has
 	// the same instruction order as wasmir.Function.Body, but immediate fields
 	// have been normalized for execution.
 	code []instr
@@ -74,14 +74,14 @@ type instr struct {
 	bits int64
 }
 
-// CompileFunction compiles a semantic function body into the VM's execution form.
-func CompileFunction(fn *wasmir.Function) (*Function, error) {
+// compileFunction compiles a semantic function body into the VM's execution form.
+func compileFunction(fn *wasmir.Function) (*function, error) {
 	ctrl, err := analyzeControl(fn.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	out := &Function{
+	out := &function{
 		locals: slices.Clone(fn.Locals),
 		code:   make([]instr, len(fn.Body)),
 	}

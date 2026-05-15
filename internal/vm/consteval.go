@@ -7,14 +7,20 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
-// EvalConstExpr evaluates a lowered WebAssembly constant expression.
+// constExpressionResolver supplies the instance state visible to constant
+// expression evaluation.
+type constExpressionResolver interface {
+	funcType(index uint32) (wasmir.TypeDef, error)
+	globalGetValue(index uint32) (Value, error)
+}
+
+// evalConstExpr evaluates a lowered WebAssembly constant expression.
 //
 // The input is the flat wasmir instruction sequence used by module-level
-// initializers. resolver is used for global.get instructions; callers own the
-// policy for which globals are visible in a specific const-expression context.
-// For example, wasmvm uses this to allow only earlier immutable globals while
-// instantiating module-defined globals.
-func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) {
+// initializers. resolver is used for global.get and ref.func instructions;
+// callers own the policy for which globals are visible in a specific
+// const-expression context.
+func evalConstExpr(init []wasmir.Instruction, resolver constExpressionResolver) (Value, error) {
 	stack := make([]Value, 0, 1)
 	for pc, ins := range init {
 		switch ins.Kind {
@@ -32,7 +38,7 @@ func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) 
 			if resolver == nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: resolver is nil", pc)
 			}
-			if _, err := resolver.FuncType(ins.FuncIndex); err != nil {
+			if _, err := resolver.funcType(ins.FuncIndex); err != nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
 			}
 			stack = append(stack, Value{Type: wasmir.RefTypeFunc(false), Ref: Reference{Kind: RefKindFunc, FuncIndex: ins.FuncIndex}})
@@ -40,7 +46,7 @@ func EvalConstExpr(init []wasmir.Instruction, resolver Resolver) (Value, error) 
 			if resolver == nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: resolver is nil", pc)
 			}
-			v, err := resolver.GlobalGet(ins.GlobalIndex)
+			v, err := resolver.globalGetValue(ins.GlobalIndex)
 			if err != nil {
 				return Value{}, fmt.Errorf("initializer instruction %d: %w", pc, err)
 			}
