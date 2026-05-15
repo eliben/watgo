@@ -431,31 +431,6 @@ func (inst *Instance) elementSegmentValues(seg wasmir.ElementSegment) ([]Value, 
 	return values, nil
 }
 
-// evalConstExpr evaluates init against this instance's const-expression state.
-func (inst *Instance) evalConstExpr(init []wasmir.Instruction, constExpr bool) (Value, error) {
-	return evalConstExpr(init, constExprResolver{inst: inst, constExpr: constExpr})
-}
-
-type constExprResolver struct {
-	// inst is the partially built instance whose functions and globals are
-	// visible to the constant expression.
-	inst *Instance
-
-	// constExpr reports whether mutable globals must be rejected, as required
-	// by module-level constant-expression contexts.
-	constExpr bool
-}
-
-// funcType returns the signature of the function at index.
-func (r constExprResolver) funcType(index uint32) (wasmir.TypeDef, error) {
-	return r.inst.FuncType(index)
-}
-
-// globalGetValue returns the current value of the global at index.
-func (r constExprResolver) globalGetValue(index uint32) (Value, error) {
-	return r.inst.globalGet(index, r.constExpr)
-}
-
 // globalGetValue returns the current value of the global at index.
 func (inst *Instance) globalGetValue(index uint32) (Value, error) {
 	return inst.globalGet(index, false)
