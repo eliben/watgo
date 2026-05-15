@@ -15,8 +15,54 @@ import (
 // its instruction support is still growing.
 var wabtWasmvmFixtures = []string{
 	"basic.txt",
+	"binary.txt",
+	"block-multi.txt",
+	"br.txt",
+	"brif-loop.txt",
+	"brif.txt",
+	"brtable.txt",
+	"call-dummy-import.txt",
+	"call-multi-result.txt",
+	"call-zero-args.txt",
 	"call.txt",
 	"callimport-zero-args.txt",
+	"callindirect.txt",
+	"cast.txt",
+	"compare.txt",
+	"convert-sat.txt",
+	"convert.txt",
+	"empty.txt",
+	"expr-block.txt",
+	"expr-br.txt",
+	"expr-brif.txt",
+	"expr-if.txt",
+	"if-multi.txt",
+	"if.txt",
+	"load.txt",
+	"loop-multi.txt",
+	"loop.txt",
+	"memory-empty-segment.txt",
+	"nested-if.txt",
+	"return-call-import.txt",
+	"return-call-indirect-import.txt",
+	"return-call-indirect.txt",
+	"return-call-local-set.txt",
+	"return-call.txt",
+	"return-void.txt",
+	"return.txt",
+	"run-export-as-global.txt",
+	"run-export-with-argument.txt",
+	"run-export-with-invalid-arguments-size.txt",
+	"run-non-func-export.txt",
+	"select-ref.txt",
+	"select.txt",
+	"start-failure.txt",
+	"start.txt",
+	"store.txt",
+	"trap-with-callstack.txt",
+	"unary-extend.txt",
+	"unary.txt",
+	"unreachable.txt",
 }
 
 // wabtWasmvmBackend returns the wasmvm-backed WABT interp execution
@@ -71,7 +117,7 @@ func runWABTWasmvm(m *wasmir.Module, exports []wabtExport, imports []wabtImport,
 	rt := wasmvm.NewRuntime()
 	inst, err := rt.Instantiate(m, vmImports)
 	if err != nil {
-		return wabtRunResult{Stderr: normalizeWABTWasmvmError(err), ExitCode: 1}, nil
+		return wabtRunResult{Stderr: normalizeWABTWasmvmInstantiateError(err), ExitCode: 1}, nil
 	}
 
 	exportMap := make(map[string]wabtExport, len(exports))
@@ -422,7 +468,12 @@ func wabtMergeStdout(stdout []string, results []wabtResult) string {
 // normalizeWABTWasmvmError maps wasmvm errors to WABT-style trap text
 // where the existing harness expects normalized wording.
 func normalizeWABTWasmvmError(err error) string {
-	message := err.Error()
+	return normalizeWABTWasmvmMessage(err.Error())
+}
+
+// normalizeWABTWasmvmMessage maps a wasmvm error message to WABT-style trap
+// text.
+func normalizeWABTWasmvmMessage(message string) string {
 	switch {
 	case strings.Contains(message, "divide by zero"):
 		return "integer divide by zero"
@@ -435,4 +486,14 @@ func normalizeWABTWasmvmError(err error) string {
 	default:
 		return message
 	}
+}
+
+// normalizeWABTWasmvmInstantiateError maps instantiation failures to
+// WABT-style stderr.
+func normalizeWABTWasmvmInstantiateError(err error) string {
+	message := err.Error()
+	if strings.HasPrefix(message, "start function: ") {
+		return "error initializing module: " + normalizeWABTWasmvmMessage(strings.TrimPrefix(message, "start function: "))
+	}
+	return normalizeWABTWasmvmMessage(message)
 }

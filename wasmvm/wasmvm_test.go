@@ -2364,6 +2364,55 @@ func TestInstantiateRejectsOutOfBoundsDataSegment(t *testing.T) {
 	}
 }
 
+// TestStartFunctionRunsDuringInstantiate checks that instantiation executes
+// the module's start function before exported functions are called.
+func TestStartFunctionRunsDuringInstantiate(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	inst, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(memory 1)
+			(global $g (mut i32) (i32.const 0))
+			(func $start
+				i32.const 0
+				i32.const 42
+				i32.store
+				i32.const 7
+				global.set $g)
+			(start $start)
+			(func (export "get_mem") (result i32)
+				i32.const 0
+				i32.load)
+			(func (export "get_global") (result i32)
+				global.get $g))
+	`), nil)
+	if err != nil {
+		t.Fatalf("Instantiate failed: %v", err)
+	}
+	if got, want := callExport(t, inst, "get_mem")[0].I32, int32(42); got != want {
+		t.Fatalf("get_mem() = %d, want %d", got, want)
+	}
+	if got, want := callExport(t, inst, "get_global")[0].I32, int32(7); got != want {
+		t.Fatalf("get_global() = %d, want %d", got, want)
+	}
+}
+
+// TestStartFunctionTrapFailsInstantiate checks that a trap in the module's
+// start function fails instantiation.
+func TestStartFunctionTrapFailsInstantiate(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	_, err := rt.Instantiate(parseWAT(t, `
+		(module
+			(func $start unreachable)
+			(start $start))
+	`), nil)
+	if err == nil {
+		t.Fatal("Instantiate succeeded unexpectedly")
+	}
+	if got, want := err.Error(), "start function: pc 0 unreachable: unreachable executed"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
 // TestExecutionErrorMemoryFillOutOfBoundsContext checks that memory.fill traps
 // include the failing instruction location.
 func TestExecutionErrorMemoryFillOutOfBoundsContext(t *testing.T) {

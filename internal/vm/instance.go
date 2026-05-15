@@ -131,7 +131,22 @@ func Instantiate(m *wasmir.Module, resolver Resolver) (*Instance, error) {
 	if err := inst.applyElementSegments(); err != nil {
 		return nil, err
 	}
+	if err := inst.executeStartFunction(); err != nil {
+		return nil, err
+	}
 	return inst, nil
+}
+
+// executeStartFunction runs the module's optional start function after
+// instance initialization finishes.
+func (inst *Instance) executeStartFunction() error {
+	if inst.m.StartFuncIndex == nil {
+		return nil
+	}
+	if _, err := inst.CallFunc(*inst.m.StartFuncIndex, nil); err != nil {
+		return fmt.Errorf("start function: %w", err)
+	}
+	return nil
 }
 
 // CallFunc dispatches a function-index call.
