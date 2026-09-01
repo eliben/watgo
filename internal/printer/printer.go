@@ -546,15 +546,15 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrElse, wasmir.InstrEnd:
 		return name, nil
 	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
-		return fmt.Sprintf("%s %s", name, p.localRefText(fn, ins.LocalIndex)), nil
+		return name + " " + p.localRefText(fn, ins.LocalIndex), nil
 	case wasmir.InstrCall, wasmir.InstrReturnCall:
-		return fmt.Sprintf("%s %s", name, p.funcRefText(ins.FuncIndex)), nil
+		return name + " " + p.funcRefText(ins.FuncIndex), nil
 	case wasmir.InstrCallRef, wasmir.InstrReturnCallRef:
-		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.CallTypeIndex)), nil
+		return name + " " + p.typeRefText(ins.CallTypeIndex), nil
 	case wasmir.InstrThrow:
-		return fmt.Sprintf("%s %s", name, p.tagRefText(ins.TagIndex)), nil
+		return name + " " + p.tagRefText(ins.TagIndex), nil
 	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
-		return fmt.Sprintf("%s %d", name, ins.BranchDepth), nil
+		return name + " " + strconv.FormatInt(int64(ins.BranchDepth), 10), nil
 	case wasmir.InstrBrTable:
 		var b strings.Builder
 		b.WriteString(name)
@@ -566,13 +566,13 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		b.WriteString(strconv.FormatUint(uint64(ins.BranchDefault), 10))
 		return b.String(), nil
 	case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
-		return fmt.Sprintf("%s %s", name, p.globalRefText(ins.GlobalIndex)), nil
+		return name + " " + p.globalRefText(ins.GlobalIndex), nil
 	case wasmir.InstrRefFunc:
-		return fmt.Sprintf("%s %s", name, p.funcRefText(ins.FuncIndex)), nil
+		return name + " " + p.funcRefText(ins.FuncIndex), nil
 	case wasmir.InstrRefNull:
-		return fmt.Sprintf("%s %s", name, p.heapTypeText(ins.RefType.HeapType)), nil
+		return name + " " + p.heapTypeText(ins.RefType.HeapType), nil
 	case wasmir.InstrRefTest, wasmir.InstrRefCast:
-		return fmt.Sprintf("%s %s", name, p.valueTypeText(ins.RefType)), nil
+		return name + " " + p.valueTypeText(ins.RefType), nil
 	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
 		return fmt.Sprintf("%s %d %s %s", name, ins.BranchDepth, p.valueTypeText(ins.SourceRefType), p.valueTypeText(ins.RefType)), nil
 	case wasmir.InstrSelect:
@@ -590,20 +590,20 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		b.WriteString(p.typeUseText(ins.CallTypeIndex))
 		return b.String(), nil
 	case wasmir.InstrI32Const:
-		return fmt.Sprintf("%s %d", name, ins.I32Const), nil
+		return name + " " + strconv.FormatInt(int64(ins.I32Const), 10), nil
 	case wasmir.InstrI64Const:
-		return fmt.Sprintf("%s %d", name, ins.I64Const), nil
+		return name + " " + strconv.FormatInt(int64(ins.I64Const), 10), nil
 	case wasmir.InstrF32Const:
-		return fmt.Sprintf("%s %s", name, formatF32(ins.F32Const)), nil
+		return name + " " + formatF32(ins.F32Const), nil
 	case wasmir.InstrF64Const:
-		return fmt.Sprintf("%s %s", name, formatF64(ins.F64Const)), nil
+		return name + " " + formatF64(ins.F64Const), nil
 	case wasmir.InstrV128Const:
 		return fmt.Sprintf("%s i8x16 %s", name, formatV128(ins.V128Const)), nil
 	case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
 		if ins.MemoryIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.MemoryIndex), nil
+		return name + " " + strconv.FormatInt(int64(ins.MemoryIndex), 10), nil
 	case wasmir.InstrMemoryCopy:
 		if ins.MemoryIndex == 0 && ins.SourceMemoryIndex == 0 {
 			return name, nil
@@ -611,16 +611,16 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.SourceMemoryIndex), nil
 	case wasmir.InstrMemoryInit:
 		if ins.MemoryIndex == 0 {
-			return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
+			return name + " " + strconv.FormatInt(int64(ins.DataIndex), 10), nil
 		}
 		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.DataIndex), nil
 	case wasmir.InstrDataDrop:
-		return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
+		return name + " " + strconv.FormatInt(int64(ins.DataIndex), 10), nil
 	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
 		if ins.TableIndex == 0 {
 			return name, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.TableIndex), nil
+		return name + " " + strconv.FormatInt(int64(ins.TableIndex), 10), nil
 	case wasmir.InstrTableCopy:
 		if ins.TableIndex == 0 && ins.SourceTableIndex == 0 {
 			return name, nil
@@ -628,11 +628,11 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.SourceTableIndex), nil
 	case wasmir.InstrTableInit:
 		if ins.TableIndex == 0 {
-			return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
+			return name + " " + strconv.FormatInt(int64(ins.ElemIndex), 10), nil
 		}
 		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.ElemIndex), nil
 	case wasmir.InstrElemDrop:
-		return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
+		return name + " " + strconv.FormatInt(int64(ins.ElemIndex), 10), nil
 	}
 
 	switch ins.Kind {
@@ -642,7 +642,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew,
 		wasmir.InstrArrayNewDefault, wasmir.InstrArrayGet, wasmir.InstrArrayGetS, wasmir.InstrArrayGetU,
 		wasmir.InstrArraySet, wasmir.InstrArrayFill:
-		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.TypeIndex)), nil
+		return name + " " + p.typeRefText(ins.TypeIndex), nil
 	case wasmir.InstrStructGet, wasmir.InstrStructGetS, wasmir.InstrStructGetU, wasmir.InstrStructSet:
 		return fmt.Sprintf("%s %s %s", name, p.typeRefText(ins.TypeIndex), p.fieldRefText(ins.TypeIndex, ins.FieldIndex)), nil
 	case wasmir.InstrArrayNewData, wasmir.InstrArrayInitData:
@@ -654,13 +654,13 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 	case wasmir.InstrArrayCopy:
 		return fmt.Sprintf("%s %s %s", name, p.typeRefText(ins.TypeIndex), p.typeRefText(ins.SourceTypeIndex)), nil
 	case wasmir.InstrI8x16Shuffle:
-		return fmt.Sprintf("%s %s", name, formatShuffleLanes(ins.ShuffleLanes)), nil
+		return name + " " + formatShuffleLanes(ins.ShuffleLanes), nil
 	case wasmir.InstrI8x16ExtractLaneS, wasmir.InstrI8x16ExtractLaneU, wasmir.InstrI8x16ReplaceLane,
 		wasmir.InstrI16x8ExtractLaneS, wasmir.InstrI16x8ExtractLaneU, wasmir.InstrI16x8ReplaceLane,
 		wasmir.InstrI32x4ExtractLane, wasmir.InstrI32x4ReplaceLane, wasmir.InstrI64x2ExtractLane,
 		wasmir.InstrI64x2ReplaceLane, wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
 		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
-		return fmt.Sprintf("%s %d", name, ins.LaneIndex), nil
+		return name + " " + strconv.FormatInt(int64(ins.LaneIndex), 10), nil
 	}
 
 	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {

@@ -499,3 +499,21 @@ func compileWATToWASM(src []byte) ([]byte, error) {
 func decodeWASM(src []byte) (*wasmir.Module, error) {
 	return binaryformat.DecodeModule(src)
 }
+
+func BenchmarkPrintFlatBody(b *testing.B) {
+	body := make([]wasmir.Instruction, 0, 100_001)
+	for range 100_000 {
+		body = append(body, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: 3})
+	}
+	body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd})
+	m := &wasmir.Module{
+		Types: []wasmir.TypeDef{{Kind: wasmir.TypeDefKindFunc}},
+		Funcs: []wasmir.Function{{Body: body}},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := PrintModule(m); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
