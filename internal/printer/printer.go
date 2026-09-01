@@ -515,11 +515,13 @@ func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function
 			}
 		}
 		p.writeIndent(indent)
-		text, err := p.instructionText(ins, fn)
+		// appendInstrText renders into the buffer's own spare capacity, so it
+		// must not write to p.buf while holding that slice.
+		text, err := p.appendInstrText(p.buf.AvailableBuffer(), ins, fn)
 		if err != nil {
 			return err
 		}
-		p.buf.WriteString(text)
+		p.buf.Write(text)
 		p.buf.WriteByte('\n')
 		switch ins.Kind {
 		case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf, wasmir.InstrTryTable:
@@ -533,177 +535,202 @@ func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function
 
 // instructionText formats a single instruction in linear WAT syntax.
 func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Function) (string, error) {
+	text, err := p.appendInstrText(nil, ins, fn)
+	if err != nil {
+		return "", err
+	}
+	return string(text), nil
+}
+
+// appendInstrText formats a single instruction in linear WAT syntax. On error
+// the contents of the returned slice are unspecified.
+func (p *modulePrinter) appendInstrText(dst []byte, ins wasmir.Instruction, fn *wasmir.Function) ([]byte, error) {
 	def, ok := instrdef.LookupInstructionByKind(ins.Kind)
 	if !ok {
-		return "", fmt.Errorf("unsupported instruction kind %d", ins.Kind)
+		return dst, fmt.Errorf("unsupported instruction kind %d", ins.Kind)
 	}
 	name := def.TextName
 	switch ins.Kind {
 	case wasmir.InstrBlock, wasmir.InstrLoop, wasmir.InstrIf:
-		return name + p.blockTypeText(ins), nil
+		return p.appendBlockType(append(dst, name...), ins), nil
 	case wasmir.InstrTryTable:
-		return p.tryTableText(name, ins)
+		return p.appendTryTable(dst, name, ins)
 	case wasmir.InstrElse, wasmir.InstrEnd:
-		return name, nil
+		return append(dst, name...), nil
 	case wasmir.InstrLocalGet, wasmir.InstrLocalSet, wasmir.InstrLocalTee:
-		return fmt.Sprintf("%s %s", name, p.localRefText(fn, ins.LocalIndex)), nil
-	case wasmir.InstrCall, wasmir.InstrReturnCall:
-		return fmt.Sprintf("%s %s", name, p.funcRefText(ins.FuncIndex)), nil
+		return p.appendLocalRef(appendNameSpace(dst, name), fn, ins.LocalIndex), nil
+	case wasmir.InstrCall, wasmir.InstrReturnCall, wasmir.InstrRefFunc:
+		return p.appendFuncRef(appendNameSpace(dst, name), ins.FuncIndex), nil
 	case wasmir.InstrCallRef, wasmir.InstrReturnCallRef:
-		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.CallTypeIndex)), nil
+		return p.appendTypeRef(appendNameSpace(dst, name), ins.CallTypeIndex), nil
 	case wasmir.InstrThrow:
-		return fmt.Sprintf("%s %s", name, p.tagRefText(ins.TagIndex)), nil
+		return p.appendTagRef(appendNameSpace(dst, name), ins.TagIndex), nil
 	case wasmir.InstrBr, wasmir.InstrBrIf, wasmir.InstrBrOnNull, wasmir.InstrBrOnNonNull:
-		return fmt.Sprintf("%s %d", name, ins.BranchDepth), nil
+		return appendNameU(dst, name, uint64(ins.BranchDepth)), nil
 	case wasmir.InstrBrTable:
-		var b strings.Builder
-		b.WriteString(name)
+		dst = append(dst, name...)
 		for _, depth := range ins.BranchTable {
-			b.WriteByte(' ')
-			b.WriteString(strconv.FormatUint(uint64(depth), 10))
+			dst = appendSpaceU(dst, uint64(depth))
 		}
-		b.WriteByte(' ')
-		b.WriteString(strconv.FormatUint(uint64(ins.BranchDefault), 10))
-		return b.String(), nil
+		return appendSpaceU(dst, uint64(ins.BranchDefault)), nil
 	case wasmir.InstrGlobalGet, wasmir.InstrGlobalSet:
-		return fmt.Sprintf("%s %s", name, p.globalRefText(ins.GlobalIndex)), nil
-	case wasmir.InstrRefFunc:
-		return fmt.Sprintf("%s %s", name, p.funcRefText(ins.FuncIndex)), nil
+		return p.appendGlobalRef(appendNameSpace(dst, name), ins.GlobalIndex), nil
 	case wasmir.InstrRefNull:
-		return fmt.Sprintf("%s %s", name, p.heapTypeText(ins.RefType.HeapType)), nil
+		return append(appendNameSpace(dst, name), p.heapTypeText(ins.RefType.HeapType)...), nil
 	case wasmir.InstrRefTest, wasmir.InstrRefCast:
-		return fmt.Sprintf("%s %s", name, p.valueTypeText(ins.RefType)), nil
+		return append(appendNameSpace(dst, name), p.valueTypeText(ins.RefType)...), nil
 	case wasmir.InstrBrOnCast, wasmir.InstrBrOnCastFail:
-		return fmt.Sprintf("%s %d %s %s", name, ins.BranchDepth, p.valueTypeText(ins.SourceRefType), p.valueTypeText(ins.RefType)), nil
+		dst = appendNameU(dst, name, uint64(ins.BranchDepth))
+		dst = append(append(dst, ' '), p.valueTypeText(ins.SourceRefType)...)
+		return append(append(dst, ' '), p.valueTypeText(ins.RefType)...), nil
 	case wasmir.InstrSelect:
+		dst = append(dst, name...)
 		if ins.SelectType == nil {
-			return name, nil
+			return dst, nil
 		}
-		return fmt.Sprintf("%s (result %s)", name, p.valueTypeText(*ins.SelectType)), nil
+		dst = append(dst, " (result "...)
+		return append(append(dst, p.valueTypeText(*ins.SelectType)...), ')'), nil
 	case wasmir.InstrCallIndirect, wasmir.InstrReturnCallIndirect:
-		var b strings.Builder
-		b.WriteString(name)
+		dst = append(dst, name...)
 		if ins.TableIndex != 0 {
-			b.WriteByte(' ')
-			b.WriteString(strconv.FormatUint(uint64(ins.TableIndex), 10))
+			dst = appendSpaceU(dst, uint64(ins.TableIndex))
 		}
-		b.WriteString(p.typeUseText(ins.CallTypeIndex))
-		return b.String(), nil
+		return p.appendTypeUse(dst, ins.CallTypeIndex), nil
 	case wasmir.InstrI32Const:
-		return fmt.Sprintf("%s %d", name, ins.I32Const), nil
+		return strconv.AppendInt(appendNameSpace(dst, name), int64(ins.I32Const), 10), nil
 	case wasmir.InstrI64Const:
-		return fmt.Sprintf("%s %d", name, ins.I64Const), nil
+		return strconv.AppendInt(appendNameSpace(dst, name), ins.I64Const, 10), nil
 	case wasmir.InstrF32Const:
-		return fmt.Sprintf("%s %s", name, formatF32(ins.F32Const)), nil
+		return append(appendNameSpace(dst, name), formatF32(ins.F32Const)...), nil
 	case wasmir.InstrF64Const:
-		return fmt.Sprintf("%s %s", name, formatF64(ins.F64Const)), nil
+		return append(appendNameSpace(dst, name), formatF64(ins.F64Const)...), nil
 	case wasmir.InstrV128Const:
-		return fmt.Sprintf("%s i8x16 %s", name, formatV128(ins.V128Const)), nil
+		dst = append(dst, name...)
+		dst = append(dst, " i8x16 "...)
+		return append(dst, formatV128(ins.V128Const)...), nil
 	case wasmir.InstrMemorySize, wasmir.InstrMemoryGrow, wasmir.InstrMemoryFill:
+		dst = append(dst, name...)
 		if ins.MemoryIndex == 0 {
-			return name, nil
+			return dst, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.MemoryIndex), nil
+		return appendSpaceU(dst, uint64(ins.MemoryIndex)), nil
 	case wasmir.InstrMemoryCopy:
+		dst = append(dst, name...)
 		if ins.MemoryIndex == 0 && ins.SourceMemoryIndex == 0 {
-			return name, nil
+			return dst, nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.SourceMemoryIndex), nil
+		dst = appendSpaceU(dst, uint64(ins.MemoryIndex))
+		return appendSpaceU(dst, uint64(ins.SourceMemoryIndex)), nil
 	case wasmir.InstrMemoryInit:
-		if ins.MemoryIndex == 0 {
-			return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
+		dst = append(dst, name...)
+		if ins.MemoryIndex != 0 {
+			dst = appendSpaceU(dst, uint64(ins.MemoryIndex))
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.MemoryIndex, ins.DataIndex), nil
+		return appendSpaceU(dst, uint64(ins.DataIndex)), nil
 	case wasmir.InstrDataDrop:
-		return fmt.Sprintf("%s %d", name, ins.DataIndex), nil
+		return appendNameU(dst, name, uint64(ins.DataIndex)), nil
 	case wasmir.InstrTableGet, wasmir.InstrTableSet, wasmir.InstrTableGrow, wasmir.InstrTableSize, wasmir.InstrTableFill:
+		dst = append(dst, name...)
 		if ins.TableIndex == 0 {
-			return name, nil
+			return dst, nil
 		}
-		return fmt.Sprintf("%s %d", name, ins.TableIndex), nil
+		return appendSpaceU(dst, uint64(ins.TableIndex)), nil
 	case wasmir.InstrTableCopy:
+		dst = append(dst, name...)
 		if ins.TableIndex == 0 && ins.SourceTableIndex == 0 {
-			return name, nil
+			return dst, nil
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.SourceTableIndex), nil
+		dst = appendSpaceU(dst, uint64(ins.TableIndex))
+		return appendSpaceU(dst, uint64(ins.SourceTableIndex)), nil
 	case wasmir.InstrTableInit:
-		if ins.TableIndex == 0 {
-			return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
+		dst = append(dst, name...)
+		if ins.TableIndex != 0 {
+			dst = appendSpaceU(dst, uint64(ins.TableIndex))
 		}
-		return fmt.Sprintf("%s %d %d", name, ins.TableIndex, ins.ElemIndex), nil
+		return appendSpaceU(dst, uint64(ins.ElemIndex)), nil
 	case wasmir.InstrElemDrop:
-		return fmt.Sprintf("%s %d", name, ins.ElemIndex), nil
+		return appendNameU(dst, name, uint64(ins.ElemIndex)), nil
 	}
 
 	switch ins.Kind {
 	case wasmir.InstrV128Load8Lane, wasmir.InstrV128Load16Lane, wasmir.InstrV128Load32Lane, wasmir.InstrV128Load64Lane,
 		wasmir.InstrV128Store8Lane, wasmir.InstrV128Store16Lane, wasmir.InstrV128Store32Lane, wasmir.InstrV128Store64Lane:
-		return memoryInstrText(name, ins) + " " + strconv.FormatUint(uint64(ins.LaneIndex), 10), nil
+		return appendSpaceU(appendMemoryInstr(dst, name, ins), uint64(ins.LaneIndex)), nil
 	case wasmir.InstrStructNew, wasmir.InstrStructNewDefault, wasmir.InstrArrayNew,
 		wasmir.InstrArrayNewDefault, wasmir.InstrArrayGet, wasmir.InstrArrayGetS, wasmir.InstrArrayGetU,
 		wasmir.InstrArraySet, wasmir.InstrArrayFill:
-		return fmt.Sprintf("%s %s", name, p.typeRefText(ins.TypeIndex)), nil
+		return p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex), nil
 	case wasmir.InstrStructGet, wasmir.InstrStructGetS, wasmir.InstrStructGetU, wasmir.InstrStructSet:
-		return fmt.Sprintf("%s %s %s", name, p.typeRefText(ins.TypeIndex), p.fieldRefText(ins.TypeIndex, ins.FieldIndex)), nil
+		dst = p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex)
+		return p.appendFieldRef(append(dst, ' '), ins.TypeIndex, ins.FieldIndex), nil
 	case wasmir.InstrArrayNewData, wasmir.InstrArrayInitData:
-		return fmt.Sprintf("%s %s %d", name, p.typeRefText(ins.TypeIndex), ins.DataIndex), nil
+		dst = p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex)
+		return appendSpaceU(dst, uint64(ins.DataIndex)), nil
 	case wasmir.InstrArrayNewElem, wasmir.InstrArrayInitElem:
-		return fmt.Sprintf("%s %s %d", name, p.typeRefText(ins.TypeIndex), ins.ElemIndex), nil
+		dst = p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex)
+		return appendSpaceU(dst, uint64(ins.ElemIndex)), nil
 	case wasmir.InstrArrayNewFixed:
-		return fmt.Sprintf("%s %s %d", name, p.typeRefText(ins.TypeIndex), ins.FixedCount), nil
+		dst = p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex)
+		return appendSpaceU(dst, uint64(ins.FixedCount)), nil
 	case wasmir.InstrArrayCopy:
-		return fmt.Sprintf("%s %s %s", name, p.typeRefText(ins.TypeIndex), p.typeRefText(ins.SourceTypeIndex)), nil
+		dst = p.appendTypeRef(appendNameSpace(dst, name), ins.TypeIndex)
+		return p.appendTypeRef(append(dst, ' '), ins.SourceTypeIndex), nil
 	case wasmir.InstrI8x16Shuffle:
-		return fmt.Sprintf("%s %s", name, formatShuffleLanes(ins.ShuffleLanes)), nil
+		return append(appendNameSpace(dst, name), formatShuffleLanes(ins.ShuffleLanes)...), nil
 	case wasmir.InstrI8x16ExtractLaneS, wasmir.InstrI8x16ExtractLaneU, wasmir.InstrI8x16ReplaceLane,
 		wasmir.InstrI16x8ExtractLaneS, wasmir.InstrI16x8ExtractLaneU, wasmir.InstrI16x8ReplaceLane,
 		wasmir.InstrI32x4ExtractLane, wasmir.InstrI32x4ReplaceLane, wasmir.InstrI64x2ExtractLane,
 		wasmir.InstrI64x2ReplaceLane, wasmir.InstrF32x4ExtractLane, wasmir.InstrF32x4ReplaceLane,
 		wasmir.InstrF64x2ExtractLane, wasmir.InstrF64x2ReplaceLane:
-		return fmt.Sprintf("%s %d", name, ins.LaneIndex), nil
+		return appendNameU(dst, name, uint64(ins.LaneIndex)), nil
 	}
 
-	if def.Text.SyntaxClass == instrdef.InstrSyntaxMemory {
-		return memoryInstrText(name, ins), nil
+	switch def.Text.SyntaxClass {
+	case instrdef.InstrSyntaxMemory:
+		return appendMemoryInstr(dst, name, ins), nil
+	case instrdef.InstrSyntaxPlain:
+		return append(dst, name...), nil
 	}
-
-	if def.Text.SyntaxClass == instrdef.InstrSyntaxPlain {
-		return name, nil
-	}
-	return "", fmt.Errorf("printing %s is not implemented yet", name)
+	return dst, fmt.Errorf("printing %s is not implemented yet", name)
 }
 
-// tryTableText formats a flat try_table header including its catch clauses.
-func (p *modulePrinter) tryTableText(name string, ins wasmir.Instruction) (string, error) {
-	var b strings.Builder
-	b.WriteString(name)
-	b.WriteString(p.blockTypeText(ins))
+// appendTryTable formats a flat try_table header including its catch clauses.
+func (p *modulePrinter) appendTryTable(dst []byte, name string, ins wasmir.Instruction) ([]byte, error) {
+	dst = p.appendBlockType(append(dst, name...), ins)
 	for _, catch := range ins.TryTableCatches {
-		catchText, err := p.tryTableCatchText(catch)
-		if err != nil {
-			return "", err
+		label := uint64(catch.LabelDepth)
+		dst = append(dst, ' ')
+		switch catch.Kind {
+		case wasmir.TryTableCatchKindTag:
+			dst = append(dst, "(catch "...)
+			dst = p.appendTagRef(dst, catch.TagIndex)
+		case wasmir.TryTableCatchKindTagRef:
+			dst = append(dst, "(catch_ref "...)
+			dst = p.appendTagRef(dst, catch.TagIndex)
+		case wasmir.TryTableCatchKindAll:
+			dst = append(dst, "(catch_all"...)
+		case wasmir.TryTableCatchKindAllRef:
+			dst = append(dst, "(catch_all_ref"...)
+		default:
+			return dst, fmt.Errorf("unsupported try_table catch kind %d", catch.Kind)
 		}
-		b.WriteByte(' ')
-		b.WriteString(catchText)
+		dst = appendSpaceU(dst, label)
+		dst = append(dst, ')')
 	}
-	return b.String(), nil
+	return dst, nil
 }
 
-// tryTableCatchText formats one try_table catch clause.
-func (p *modulePrinter) tryTableCatchText(catch wasmir.TryTableCatch) (string, error) {
-	label := strconv.FormatUint(uint64(catch.LabelDepth), 10)
-	switch catch.Kind {
-	case wasmir.TryTableCatchKindTag:
-		return fmt.Sprintf("(catch %s %s)", p.tagRefText(catch.TagIndex), label), nil
-	case wasmir.TryTableCatchKindTagRef:
-		return fmt.Sprintf("(catch_ref %s %s)", p.tagRefText(catch.TagIndex), label), nil
-	case wasmir.TryTableCatchKindAll:
-		return fmt.Sprintf("(catch_all %s)", label), nil
-	case wasmir.TryTableCatchKindAllRef:
-		return fmt.Sprintf("(catch_all_ref %s)", label), nil
-	default:
-		return "", fmt.Errorf("unsupported try_table catch kind %d", catch.Kind)
+// appendBlockType appends the optional block type annotation for structured
+// control instructions.
+func (p *modulePrinter) appendBlockType(dst []byte, ins wasmir.Instruction) []byte {
+	if ins.BlockTypeUsesIndex {
+		return p.appendTypeUse(dst, ins.BlockTypeIndex)
 	}
+	if ins.BlockType == nil {
+		return dst
+	}
+	dst = append(dst, " (result "...)
+	return append(append(dst, p.valueTypeText(*ins.BlockType)...), ')')
 }
 
 // funcType resolves a function type index and verifies that it names a func
@@ -825,19 +852,13 @@ func (p *modulePrinter) fieldTypeText(ft wasmir.FieldType) string {
 
 // typeUseText formats a type use.
 func (p *modulePrinter) typeUseText(typeIdx uint32) string {
-	return " (type " + p.typeRefText(typeIdx) + ")"
+	return string(p.appendTypeUse(nil, typeIdx))
 }
 
-// blockTypeText formats the optional block type annotation for structured
-// control instructions.
-func (p *modulePrinter) blockTypeText(ins wasmir.Instruction) string {
-	if ins.BlockTypeUsesIndex {
-		return p.typeUseText(ins.BlockTypeIndex)
-	}
-	if ins.BlockType == nil {
-		return ""
-	}
-	return " (result " + p.valueTypeText(*ins.BlockType) + ")"
+// appendTypeUse appends a type use.
+func (p *modulePrinter) appendTypeUse(dst []byte, typeIdx uint32) []byte {
+	dst = append(dst, " (type "...)
+	return append(p.appendTypeRef(dst, typeIdx), ')')
 }
 
 // valueTypeText returns the textual name of a value type.
@@ -943,13 +964,17 @@ func (p *modulePrinter) heapTypeText(ht wasmir.HeapType) string {
 // typeRefText formats a type reference using the type's name when available,
 // or its numeric index otherwise.
 func (p *modulePrinter) typeRefText(typeIdx uint32) string {
+	return string(p.appendTypeRef(nil, typeIdx))
+}
+
+func (p *modulePrinter) appendTypeRef(dst []byte, typeIdx uint32) []byte {
 	if p.m != nil && int(typeIdx) < len(p.m.Types) && p.m.Types[typeIdx].Name != "" {
-		return formatID(p.m.Types[typeIdx].Name)
+		return append(dst, formatID(p.m.Types[typeIdx].Name)...)
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("type", typeIdx)
+		return append(dst, syntheticName("type", typeIdx)...)
 	}
-	return strconv.FormatUint(uint64(typeIdx), 10)
+	return strconv.AppendUint(dst, uint64(typeIdx), 10)
 }
 
 // typeDeclName returns the optional printed name for a type declaration.
@@ -966,17 +991,21 @@ func (p *modulePrinter) typeDeclName(typeIdx int) string {
 // funcRefText formats a function reference using the function's name when it
 // is available on a defined function, or the numeric index otherwise.
 func (p *modulePrinter) funcRefText(funcIdx uint32) string {
+	return string(p.appendFuncRef(nil, funcIdx))
+}
+
+func (p *modulePrinter) appendFuncRef(dst []byte, funcIdx uint32) []byte {
 	importedFuncs := p.importedFunctionCount()
 	if funcIdx >= importedFuncs {
 		definedIdx := funcIdx - importedFuncs
 		if p.m != nil && int(definedIdx) < len(p.m.Funcs) && p.m.Funcs[definedIdx].Name != "" {
-			return formatID(p.m.Funcs[definedIdx].Name)
+			return append(dst, formatID(p.m.Funcs[definedIdx].Name)...)
 		}
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("func", funcIdx)
+		return append(dst, syntheticName("func", funcIdx)...)
 	}
-	return strconv.FormatUint(uint64(funcIdx), 10)
+	return strconv.AppendUint(dst, uint64(funcIdx), 10)
 }
 
 // funcDeclName returns the optional printed name for a function declaration.
@@ -997,13 +1026,17 @@ func (p *modulePrinter) funcDeclName(funcIdx uint32) string {
 // globalRefText formats a global reference using the global's name when it is
 // available, or the numeric index otherwise.
 func (p *modulePrinter) globalRefText(globalIdx uint32) string {
+	return string(p.appendGlobalRef(nil, globalIdx))
+}
+
+func (p *modulePrinter) appendGlobalRef(dst []byte, globalIdx uint32) []byte {
 	if p.m != nil && int(globalIdx) < len(p.m.Globals) && p.m.Globals[globalIdx].Name != "" {
-		return formatID(p.m.Globals[globalIdx].Name)
+		return append(dst, formatID(p.m.Globals[globalIdx].Name)...)
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("global", globalIdx)
+		return append(dst, syntheticName("global", globalIdx)...)
 	}
-	return strconv.FormatUint(uint64(globalIdx), 10)
+	return strconv.AppendUint(dst, uint64(globalIdx), 10)
 }
 
 // globalDeclName returns the optional printed name for a global declaration.
@@ -1020,17 +1053,21 @@ func (p *modulePrinter) globalDeclName(globalIdx uint32) string {
 // tagRefText formats a tag reference using the tag's name when it is
 // available on a defined tag, or the numeric index otherwise.
 func (p *modulePrinter) tagRefText(tagIdx uint32) string {
+	return string(p.appendTagRef(nil, tagIdx))
+}
+
+func (p *modulePrinter) appendTagRef(dst []byte, tagIdx uint32) []byte {
 	importedTags := p.importedTagCount()
 	if tagIdx >= importedTags {
 		definedIdx := tagIdx - importedTags
 		if p.m != nil && int(definedIdx) < len(p.m.Tags) && p.m.Tags[definedIdx].Name != "" {
-			return formatID(p.m.Tags[definedIdx].Name)
+			return append(dst, formatID(p.m.Tags[definedIdx].Name)...)
 		}
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("tag", tagIdx)
+		return append(dst, syntheticName("tag", tagIdx)...)
 	}
-	return strconv.FormatUint(uint64(tagIdx), 10)
+	return strconv.AppendUint(dst, uint64(tagIdx), 10)
 }
 
 // tagDeclName returns the optional printed name for a tag declaration.
@@ -1051,16 +1088,20 @@ func (p *modulePrinter) tagDeclName(tagIdx uint32) string {
 // fieldRefText formats a struct field reference using the field's name when it
 // is available, or the numeric field index otherwise.
 func (p *modulePrinter) fieldRefText(typeIdx uint32, fieldIdx uint32) string {
+	return string(p.appendFieldRef(nil, typeIdx, fieldIdx))
+}
+
+func (p *modulePrinter) appendFieldRef(dst []byte, typeIdx uint32, fieldIdx uint32) []byte {
 	if p.m != nil && int(typeIdx) < len(p.m.Types) {
 		td := p.m.Types[typeIdx]
 		if int(fieldIdx) < len(td.Fields) && td.Fields[fieldIdx].Name != "" {
-			return formatID(td.Fields[fieldIdx].Name)
+			return append(dst, formatID(td.Fields[fieldIdx].Name)...)
 		}
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("field", fieldIdx)
+		return append(dst, syntheticName("field", fieldIdx)...)
 	}
-	return strconv.FormatUint(uint64(fieldIdx), 10)
+	return strconv.AppendUint(dst, uint64(fieldIdx), 10)
 }
 
 // fieldDeclName returns the optional printed name for a struct field declaration.
@@ -1193,7 +1234,7 @@ func (p *modulePrinter) formatElemItemExpr(expr []wasmir.Instruction) (string, e
 func (p *modulePrinter) formatConstExprInstructions(expr []wasmir.Instruction) (string, error) {
 	parts := make([]string, 0, len(expr))
 	for _, ins := range expr {
-		text, err := p.instructionTextNoContext(ins)
+		text, err := p.instructionText(ins, nil)
 		if err != nil {
 			return "", err
 		}
@@ -1202,55 +1243,63 @@ func (p *modulePrinter) formatConstExprInstructions(expr []wasmir.Instruction) (
 	return strings.Join(parts, " "), nil
 }
 
-// instructionTextNoContext formats an instruction outside a function body, so
-// only module-level name resolution is available.
-func (p *modulePrinter) instructionTextNoContext(ins wasmir.Instruction) (string, error) {
-	return p.instructionText(ins, nil)
-}
-
-// memoryInstrText formats a memory instruction including optional memory index,
-// offset, and alignment immediates.
-func memoryInstrText(name string, ins wasmir.Instruction) string {
-	var b strings.Builder
-	b.WriteString(name)
+// appendMemoryInstr appends a memory instruction with its optional memory
+// index, offset, and alignment immediates.
+func appendMemoryInstr(dst []byte, name string, ins wasmir.Instruction) []byte {
+	dst = append(dst, name...)
 	if ins.MemoryIndex != 0 {
-		b.WriteByte(' ')
-		b.WriteString(strconv.FormatUint(uint64(ins.MemoryIndex), 10))
+		dst = appendSpaceU(dst, uint64(ins.MemoryIndex))
 	}
 	if ins.MemoryOffset != 0 {
-		b.WriteString(" offset=")
-		b.WriteString(strconv.FormatUint(ins.MemoryOffset, 10))
+		dst = append(dst, " offset="...)
+		dst = strconv.AppendUint(dst, ins.MemoryOffset, 10)
 	}
 	if ins.MemoryAlign != 0 {
-		b.WriteString(" align=")
-		b.WriteString(strconv.FormatUint(uint64(1)<<ins.MemoryAlign, 10))
+		dst = append(dst, " align="...)
+		dst = strconv.AppendUint(dst, uint64(1)<<ins.MemoryAlign, 10)
 	}
-	return b.String()
+	return dst
+}
+
+// appendNameSpace appends an instruction name and the space before its first
+// immediate.
+func appendNameSpace(dst []byte, name string) []byte {
+	return append(append(dst, name...), ' ')
+}
+
+// appendNameU appends "name value".
+func appendNameU(dst []byte, name string, v uint64) []byte {
+	return strconv.AppendUint(appendNameSpace(dst, name), v, 10)
+}
+
+// appendSpaceU appends " value".
+func appendSpaceU(dst []byte, v uint64) []byte {
+	return strconv.AppendUint(append(dst, ' '), v, 10)
 }
 
 // localRefText resolves a local or parameter index to a printed identifier when
 // a name is available, or falls back to the numeric index.
-func (p *modulePrinter) localRefText(fn *wasmir.Function, index uint32) string {
+func (p *modulePrinter) appendLocalRef(dst []byte, fn *wasmir.Function, index uint32) []byte {
 	if fn == nil {
-		return strconv.FormatUint(uint64(index), 10)
+		return strconv.AppendUint(dst, uint64(index), 10)
 	}
 	paramCount := uint32(0)
 	if p.m != nil && int(fn.TypeIdx) < len(p.m.Types) && p.m.Types[fn.TypeIdx].Kind == wasmir.TypeDefKindFunc {
 		paramCount = uint32(len(p.m.Types[fn.TypeIdx].Params))
 	}
 	if index < paramCount && int(index) < len(fn.ParamNames) && fn.ParamNames[index] != "" {
-		return formatID(fn.ParamNames[index])
+		return append(dst, formatID(fn.ParamNames[index])...)
 	}
 	if index >= paramCount {
 		localIdx := index - paramCount
 		if int(localIdx) < len(fn.LocalNames) && fn.LocalNames[localIdx] != "" {
-			return formatID(fn.LocalNames[localIdx])
+			return append(dst, formatID(fn.LocalNames[localIdx])...)
 		}
 	}
 	if p.opts.NameUnnamed {
-		return syntheticName("local", index)
+		return append(dst, syntheticName("local", index)...)
 	}
-	return strconv.FormatUint(uint64(index), 10)
+	return strconv.AppendUint(dst, uint64(index), 10)
 }
 
 func syntheticName(namespace string, idx uint32) string {
