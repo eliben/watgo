@@ -506,7 +506,8 @@ func (p *modulePrinter) printData() error {
 // driven by structured control instructions.
 func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function) error {
 	indent := 2
-	for _, ins := range body {
+	for i := range body {
+		ins := &body[i]
 		switch ins.Kind {
 		case wasmir.InstrElse, wasmir.InstrEnd:
 			indent--
@@ -532,7 +533,7 @@ func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function
 }
 
 // instructionText formats a single instruction in linear WAT syntax.
-func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Function) (string, error) {
+func (p *modulePrinter) instructionText(ins *wasmir.Instruction, fn *wasmir.Function) (string, error) {
 	def, ok := instrdef.LookupInstructionByKind(ins.Kind)
 	if !ok {
 		return "", fmt.Errorf("unsupported instruction kind %d", ins.Kind)
@@ -674,7 +675,7 @@ func (p *modulePrinter) instructionText(ins wasmir.Instruction, fn *wasmir.Funct
 }
 
 // tryTableText formats a flat try_table header including its catch clauses.
-func (p *modulePrinter) tryTableText(name string, ins wasmir.Instruction) (string, error) {
+func (p *modulePrinter) tryTableText(name string, ins *wasmir.Instruction) (string, error) {
 	var b strings.Builder
 	b.WriteString(name)
 	b.WriteString(p.blockTypeText(ins))
@@ -830,7 +831,7 @@ func (p *modulePrinter) typeUseText(typeIdx uint32) string {
 
 // blockTypeText formats the optional block type annotation for structured
 // control instructions.
-func (p *modulePrinter) blockTypeText(ins wasmir.Instruction) string {
+func (p *modulePrinter) blockTypeText(ins *wasmir.Instruction) string {
 	if ins.BlockTypeUsesIndex {
 		return p.typeUseText(ins.BlockTypeIndex)
 	}
@@ -1192,8 +1193,8 @@ func (p *modulePrinter) formatElemItemExpr(expr []wasmir.Instruction) (string, e
 // flat instruction sequence.
 func (p *modulePrinter) formatConstExprInstructions(expr []wasmir.Instruction) (string, error) {
 	parts := make([]string, 0, len(expr))
-	for _, ins := range expr {
-		text, err := p.instructionTextNoContext(ins)
+	for i := range expr {
+		text, err := p.instructionTextNoContext(&expr[i])
 		if err != nil {
 			return "", err
 		}
@@ -1204,13 +1205,13 @@ func (p *modulePrinter) formatConstExprInstructions(expr []wasmir.Instruction) (
 
 // instructionTextNoContext formats an instruction outside a function body, so
 // only module-level name resolution is available.
-func (p *modulePrinter) instructionTextNoContext(ins wasmir.Instruction) (string, error) {
+func (p *modulePrinter) instructionTextNoContext(ins *wasmir.Instruction) (string, error) {
 	return p.instructionText(ins, nil)
 }
 
 // memoryInstrText formats a memory instruction including optional memory index,
 // offset, and alignment immediates.
-func memoryInstrText(name string, ins wasmir.Instruction) string {
+func memoryInstrText(name string, ins *wasmir.Instruction) string {
 	var b strings.Builder
 	b.WriteString(name)
 	if ins.MemoryIndex != 0 {
