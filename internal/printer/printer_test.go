@@ -517,3 +517,72 @@ func BenchmarkPrintFlatBody(b *testing.B) {
 		}
 	}
 }
+
+// TestDeepNestingIndentCapped checks that indentation stops growing past
+// maxBodyIndentLevel, so output size stays linear in instruction count
+// rather than quadratic in nesting depth.
+func TestDeepNestingIndentCapped(t *testing.T) {
+	// The following code builds a body that looks like:
+	//
+	//	(func (type 0)
+	//	    block
+	//	      nop (20x times)
+	//	      block
+	//	        nop (20x times)
+	//	        block
+	//	          nop (20x times)
+	//	          ;; recursively until depth=7000 is reached
+	//	        end
+	//	      end
+	//	    end
+	//	)
+
+	const depth, per = 7000, 20
+	var body []wasmir.Instruction
+	for range depth {
+		body = append(body, wasmir.Instruction{Kind: wasmir.InstrBlock})
+		for range per {
+			body = append(body, wasmir.Instruction{Kind: wasmir.InstrNop})
+		}
+	}
+	for range depth + 1 {
+		body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd})
+	}
+
+	m := &wasmir.Module{
+		Types: []wasmir.TypeDef{{Kind: wasmir.TypeDefKindFunc}},
+		Funcs: []wasmir.Function{{Body: body}},
+	}
+	wat, err := PrintModule(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unbounded indentation would produce ~1 GB here.
+	if limit := len(body) * (2*maxBodyIndentLevel + 16); len(wat) > limit {
+		t.Fatalf("output %d bytes exceeds %d", len(wat), limit)
+	}
+}
+
+func BenchmarkPrintDeepBody(b *testing.B) {
+	const depth, per = 2000, 20
+	var body []wasmir.Instruction
+	for range depth {
+		body = append(body, wasmir.Instruction{Kind: wasmir.InstrBlock})
+		for range per {
+			body = append(body, wasmir.Instruction{Kind: wasmir.InstrLocalGet, LocalIndex: 3})
+		}
+	}
+	for range depth + 1 {
+		body = append(body, wasmir.Instruction{Kind: wasmir.InstrEnd})
+	}
+	m := &wasmir.Module{
+		Types: []wasmir.TypeDef{{Kind: wasmir.TypeDefKindFunc}},
+		Funcs: []wasmir.Function{{Body: body}},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := PrintModule(m); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

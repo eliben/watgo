@@ -502,10 +502,14 @@ func (p *modulePrinter) printData() error {
 	return nil
 }
 
+// maxBodyIndentLevel caps instruction indentation inside function bodies.
+const maxBodyIndentLevel = 16
+
 // printBody emits a function body as one instruction per line with indentation
 // driven by structured control instructions.
 func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function) error {
 	indent := 2
+	indentBuf := strings.Repeat(p.opts.IndentText, maxBodyIndentLevel)
 	for i := range body {
 		ins := &body[i]
 		switch ins.Kind {
@@ -515,7 +519,9 @@ func (p *modulePrinter) printBody(body []wasmir.Instruction, fn *wasmir.Function
 				indent = 2
 			}
 		}
-		p.writeIndent(indent)
+		// Go-compiled wasm nests blocks thousands deep (br_table switches);
+		// unbounded indentation makes output size quadratic in depth.
+		p.buf.WriteString(indentBuf[:min(indent, maxBodyIndentLevel)*len(p.opts.IndentText)])
 		text, err := p.instructionText(ins, fn)
 		if err != nil {
 			return err
