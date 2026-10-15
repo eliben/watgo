@@ -24,6 +24,9 @@ type Parser struct {
 
 // ParseTopLevelSExprs parses all top-level s-expressions in buf.
 func ParseTopLevelSExprs(buf string) ([]*SExpr, error) {
+	if !utf8.ValidString(buf) {
+		return nil, fmt.Errorf("malformed UTF-8 encoding")
+	}
 	lex := newLexer(buf)
 	return sexprifyAll(lex)
 }
@@ -69,6 +72,12 @@ func sexprify(lex *lexer, lparen token) (*SExpr, error) {
 		case EOF:
 			return nil, fmt.Errorf("expression starting with ( at %v is unterminated", lparen.loc)
 		default:
+			// Annotation payloads allow arbitrary printable ASCII atoms, but
+			// control characters and non-ASCII characters outside strings are
+			// still illegal. Do not let stripping annotations hide these errors.
+			if tok.name == ERROR && strings.HasPrefix(tok.value, "illegal character") {
+				return nil, fmt.Errorf("at %s: %s", tok.loc, tok.value)
+			}
 			sx.list = append(sx.list, &SExpr{tok: tok, loc: tok.loc})
 		}
 	}

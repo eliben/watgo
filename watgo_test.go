@@ -29,6 +29,11 @@ func TestMalformedWATRegressions(t *testing.T) {
 		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
 		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
 		{"invalid name bytes", `(func (export "\ff"))`, "malformed UTF-8"},
+		{"invalid source bytes", "(@a \xff)", "malformed UTF-8"},
+		{"annotation control", "(@a \x00)", "illegal character"},
+		{"annotation unicode atom", "(@a é)", "illegal character"},
+		{"annotation spacing", `( @a)`, "unsupported module field"},
+		{"annotation name bytes", `(@"\ff")`, "unsupported module field"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))
@@ -44,6 +49,7 @@ func TestValidWATBoundaries(t *testing.T) {
 		`(type (func (param i32) (result i32))) (func (type 0) (param i32) (result i32) (local i32) local.get 0)`,
 		`(func block $a loop $b end $b end $a)`,
 		`(func i32.const 0 if $a else $a end $a)`,
+		`(@a x-y$z"a"-2 (0drop) , { }) (@"é")`,
 		`(type (struct (field $x i32))) (type (struct (field $x i32)))`,
 	} {
 		if _, err := watgo.CompileWATToWASM([]byte("(module " + body + ")")); err != nil {

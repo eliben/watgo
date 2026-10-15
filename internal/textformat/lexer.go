@@ -166,7 +166,11 @@ func (lex *lexer) nextToken() token {
 		return lex.scanString()
 	}
 
-	errtok := lex.errorToken(fmt.Sprintf("unknown token starting with %q", lex.r), rloc)
+	message := fmt.Sprintf("unknown token starting with %q", lex.r)
+	if lex.r < 0x20 || lex.r >= 0x7f {
+		message = fmt.Sprintf("illegal character %q", lex.r)
+	}
+	errtok := lex.errorToken(message, rloc)
 	lex.next()
 	return errtok
 }

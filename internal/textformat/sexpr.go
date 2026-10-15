@@ -3,6 +3,7 @@ package textformat
 import (
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // SExpr represents textformat source as an s-expression with tokens.
@@ -129,7 +130,7 @@ func isValidAnnotationSExpr(sx *SExpr) bool {
 	}
 
 	head := sx.list[0]
-	if !head.IsTokenKind(KEYWORD) {
+	if !head.IsTokenKind(KEYWORD) || head.loc.line != sx.loc.line || head.loc.column != sx.loc.column+1 {
 		return false
 	}
 	if strings.HasPrefix(head.tok.value, "@") && head.tok.value != "@" {
@@ -141,6 +142,10 @@ func isValidAnnotationSExpr(sx *SExpr) bool {
 
 	name := sx.list[1]
 	if !name.IsTokenKind(STRING) || name.tok.value == "" {
+		return false
+	}
+	decoded, err := decodeWATStringBytes(name.tok.value)
+	if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) || strings.ContainsAny(name.tok.value, "\n\r\t") {
 		return false
 	}
 
