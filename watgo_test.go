@@ -4,12 +4,30 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/wasmir"
 )
+
+func TestMalformedWATRegressions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got error %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
 
 func canonicalAddModuleBytes() []byte {
 	return []byte{

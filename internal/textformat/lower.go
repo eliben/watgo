@@ -2280,11 +2280,14 @@ func (fl *functionLowerer) lowerBySpec(pi *PlainInstr, instrLoc string) bool {
 	}
 	prevDiagCount := len(fl.mod.diags)
 	if spec.decode != nil && !spec.decode(fl, &ins, pi.Operands) {
-		// Current table-driven entries with decode callbacks all consume exactly
-		// one or more explicit operands. If the decoder already emitted a more
-		// specific diagnostic, keep that as the primary error.
+		// Variadic decoders may receive no operands. If the decoder already
+		// emitted a more specific diagnostic, keep that as the primary error.
 		if len(fl.mod.diags) == prevDiagCount {
-			fl.diagf(pi.Operands[0].Loc(), "invalid %s operand", pi.Name)
+			loc := instrLoc
+			if len(pi.Operands) > 0 {
+				loc = pi.Operands[0].Loc()
+			}
+			fl.diagf(loc, "invalid %s operand", pi.Name)
 		}
 		return true
 	}
