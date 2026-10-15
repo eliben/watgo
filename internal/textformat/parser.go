@@ -1846,10 +1846,12 @@ func (p *Parser) parsePlainStructuredInstr(name string, elems []*SExpr, cursor i
 		return &PlainInstr{Name: name, Operands: operands, loc: elems[cursor].loc}, next, true
 	case "else", "end":
 		next := cursor + 1
+		var operands []Operand
 		if next < len(elems) && elems[next].IsTokenKind(ID) {
+			operands = append(operands, p.parseOperand(elems[next]))
 			next++
 		}
-		return &PlainInstr{Name: name, loc: elems[cursor].loc}, next, true
+		return &PlainInstr{Name: name, Operands: operands, loc: elems[cursor].loc}, next, true
 	default:
 		return nil, cursor, false
 	}

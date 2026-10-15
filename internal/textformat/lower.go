@@ -2526,20 +2526,24 @@ func (fl *functionLowerer) lowerPlainInstr(pi *PlainInstr) {
 	}
 
 	switch pi.Name {
-	case "end":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "end expects no operands")
+	case "end", "else":
+		if len(pi.Operands) > 1 {
+			fl.diagf(instrLoc, "%s expects at most one label", pi.Name)
 			return
 		}
-		fl.popLabel()
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrEnd, SourceLoc: instrLoc})
-		return
-	case "else":
-		if len(pi.Operands) != 0 {
-			fl.diagf(instrLoc, "else expects no operands")
-			return
+		if len(pi.Operands) == 1 {
+			label, ok := pi.Operands[0].(*IdOperand)
+			if !ok || len(fl.labelStack) == 0 || fl.labelStack[len(fl.labelStack)-1].name != label.Value {
+				fl.diagf(instrLoc, "mismatching label on %s", pi.Name)
+				return
+			}
 		}
-		fl.emitInstr(wasmir.Instruction{Kind: wasmir.InstrElse, SourceLoc: instrLoc})
+		kind := wasmir.InstrElse
+		if pi.Name == "end" {
+			fl.popLabel()
+			kind = wasmir.InstrEnd
+		}
+		fl.emitInstr(wasmir.Instruction{Kind: kind, SourceLoc: instrLoc})
 		return
 	case "memory.init":
 		if len(pi.Operands) != 1 && len(pi.Operands) != 2 {

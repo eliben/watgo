@@ -24,6 +24,8 @@ func TestMalformedWATRegressions(t *testing.T) {
 		{"result after local", `(func (local i32) (result i32) local.get 0)`, "out of order"},
 		{"function type order", `(type (func (result i32) (param i32)))`, "param after result"},
 		{"duplicate field", `(type (struct (field $x i32) (field $x i32)))`, "duplicate field"},
+		{"end label", `(func block $a end $b)`, "mismatching label"},
+		{"else label", `(func i32.const 0 if $a else $b end $a)`, "mismatching label"},
 		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
 		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
 	} {
@@ -39,6 +41,8 @@ func TestMalformedWATRegressions(t *testing.T) {
 func TestValidWATBoundaries(t *testing.T) {
 	for _, body := range []string{
 		`(type (func (param i32) (result i32))) (func (type 0) (param i32) (result i32) (local i32) local.get 0)`,
+		`(func block $a loop $b end $b end $a)`,
+		`(func i32.const 0 if $a else $a end $a)`,
 		`(type (struct (field $x i32))) (type (struct (field $x i32)))`,
 	} {
 		if _, err := watgo.CompileWATToWASM([]byte("(module " + body + ")")); err != nil {
