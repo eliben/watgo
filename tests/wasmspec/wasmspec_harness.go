@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/eliben/watgo"
 	"github.com/eliben/watgo/diag"
@@ -512,7 +513,7 @@ func parseRegister(sx *textformat.SExpr) (scriptCommand, error) {
 	if len(elems) < 2 || len(elems) > 3 {
 		return scriptCommand{}, fmt.Errorf("register requires 1 or 2 arguments")
 	}
-	name, err := parseStringToken(elems[1])
+	name, err := parseNameToken(elems[1])
 	if err != nil {
 		return scriptCommand{}, fmt.Errorf("invalid register name: %w", err)
 	}
@@ -771,7 +772,7 @@ func parseInvoke(sx *textformat.SExpr) (invokeAction, error) {
 		return invokeAction{}, fmt.Errorf("invoke requires function name")
 	}
 
-	funcName, err := parseStringToken(elems[cursor])
+	funcName, err := parseNameToken(elems[cursor])
 	if err != nil {
 		return invokeAction{}, fmt.Errorf("invalid function name: %w", err)
 	}
@@ -819,7 +820,7 @@ func parseGet(sx *textformat.SExpr) (getAction, error) {
 		return getAction{}, fmt.Errorf("get accepts only one global name")
 	}
 
-	globalName, err := parseStringToken(elems[cursor])
+	globalName, err := parseNameToken(elems[cursor])
 	if err != nil {
 		return getAction{}, fmt.Errorf("invalid global name: %w", err)
 	}
@@ -1273,6 +1274,23 @@ func parseStringToken(sx *textformat.SExpr) (string, error) {
 		return "", fmt.Errorf("expected STRING token")
 	}
 	return value, nil
+}
+
+// parseNameToken decodes a script import/export name, matching the compiler's
+// treatment of name strings. Quoted module source keeps using the raw token.
+func parseNameToken(sx *textformat.SExpr) (string, error) {
+	raw, err := parseStringToken(sx)
+	if err != nil {
+		return "", err
+	}
+	name, err := decodeWATStringBytes(raw)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(name) {
+		return "", fmt.Errorf("malformed UTF-8 encoding in name")
+	}
+	return string(name), nil
 }
 
 // headKeyword returns the head keyword for a list expression. If sx is not a
@@ -2102,7 +2120,7 @@ func parseSyntheticResourceDecl(sx *textformat.SExpr) (string, []string, error) 
 		if sub.HeadKeyword() != "export" {
 			continue
 		}
-		name, err := parseStringTokenAt(sub, 1)
+		name, err := parseNameTokenAt(sub, 1)
 		if err != nil {
 			return "", nil, err
 		}
@@ -2119,7 +2137,7 @@ func parseSyntheticTopLevelExport(sx *textformat.SExpr) (string, string, string,
 	if len(children) != 3 {
 		return "", "", "", false, nil
 	}
-	name, err := parseStringTokenAt(sx, 1)
+	name, err := parseNameTokenAt(sx, 1)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -2140,12 +2158,12 @@ func parseSyntheticTopLevelExport(sx *textformat.SExpr) (string, string, string,
 	return name, kind, value, true, nil
 }
 
-func parseStringTokenAt(sx *textformat.SExpr, idx int) (string, error) {
+func parseNameTokenAt(sx *textformat.SExpr, idx int) (string, error) {
 	children := sx.Children()
 	if len(children) <= idx {
 		return "", fmt.Errorf("missing string at child %d", idx)
 	}
-	return parseStringToken(children[idx])
+	return parseNameToken(children[idx])
 }
 
 func (r *scriptRunner) instantiateSyntheticDefinition(def *syntheticDefinition) *syntheticInstance {
@@ -2220,11 +2238,11 @@ func buildSyntheticConsumerModule(moduleExpr *textformat.SExpr, lookup func(stri
 		if len(children) != 4 {
 			return nil, false, fmt.Errorf("invalid import declaration")
 		}
-		modName, err := parseStringToken(children[1])
+		modName, err := parseNameToken(children[1])
 		if err != nil {
 			return nil, false, err
 		}
-		expName, err := parseStringToken(children[2])
+		expName, err := parseNameToken(children[2])
 		if err != nil {
 			return nil, false, err
 		}

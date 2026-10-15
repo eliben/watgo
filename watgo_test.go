@@ -28,6 +28,7 @@ func TestMalformedWATRegressions(t *testing.T) {
 		{"else label", `(func i32.const 0 if $a else $b end $a)`, "mismatching label"},
 		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
 		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
+		{"invalid name bytes", `(func (export "\ff"))`, "malformed UTF-8"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))
@@ -48,6 +49,20 @@ func TestValidWATBoundaries(t *testing.T) {
 		if _, err := watgo.CompileWATToWASM([]byte("(module " + body + ")")); err != nil {
 			t.Errorf("valid body %q: %v", body, err)
 		}
+	}
+}
+
+func TestWATNamesDecodeEscapes(t *testing.T) {
+	m, err := watgo.ParseAndValidateWAT([]byte(`(module (func (export "\c3\a9")) (data "\ff"))`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Exports[0].Name; got != "é" {
+		t.Fatalf("export name=%q, want é", got)
+	}
+	// Data segments carry arbitrary bytes, unlike import/export names.
+	if got := m.Data[0].Init; !bytes.Equal(got, []byte{0xff}) {
+		t.Fatalf("data bytes=%x, want ff", got)
 	}
 }
 

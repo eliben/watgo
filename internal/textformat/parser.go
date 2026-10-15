@@ -3,6 +3,7 @@ package textformat
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/eliben/watgo/diag"
 	"github.com/eliben/watgo/internal/instrdef"
@@ -144,6 +145,20 @@ func (p *Parser) matchElement(sx *SExpr, idx int, tokname tokenName) string {
 		return ""
 	}
 
+	if tokname == STRING {
+		// String elements matched here are import/export names, whose decoded
+		// bytes must be UTF-8. Data strings are decoded separately as raw bytes.
+		name, err := decodeWATStringBytes(sub.tok.value)
+		if err != nil {
+			p.emitError(sub.loc, "invalid name: %v", err)
+			return ""
+		}
+		if !utf8.Valid(name) {
+			p.emitError(sub.loc, "malformed UTF-8 encoding in name")
+			return ""
+		}
+		return string(name)
+	}
 	return sub.tok.value
 }
 

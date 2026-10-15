@@ -2,6 +2,20 @@ package tests
 
 import "testing"
 
+func TestParseScriptEscapedNames(t *testing.T) {
+	commands, err := parseScript(`
+(register "\6d")
+(invoke "\66")
+(assert_return (get "\67") (i32.const 0))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commands[0].registerName != "m" || commands[1].action.funcName != "f" || commands[2].getAction.globalName != "g" {
+		t.Fatalf("names were not decoded: %#v", commands)
+	}
+}
+
 func TestParseScript_AssertMalformedBinaryModule(t *testing.T) {
 	src := `(assert_malformed
   (module binary
