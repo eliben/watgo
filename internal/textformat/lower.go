@@ -5055,11 +5055,19 @@ func (l *moduleLowerer) lowerTypeResults(results []*ResultDecl, typeIdx int) []w
 
 func (l *moduleLowerer) lowerTypeFields(fields []*FieldDecl, typeIdx int) []wasmir.FieldType {
 	out := make([]wasmir.FieldType, 0, len(fields))
+	names := make(map[string]bool)
 	for i, fd := range fields {
 		field, ok := l.lowerFieldType(fd, typeIdx, i)
-		if ok {
-			out = append(out, field)
+		if !ok {
+			continue
 		}
+		if field.Name != "" {
+			if names[field.Name] {
+				l.diags.Addf("type[%d] field[%d] at %s: duplicate field %s", typeIdx, i, fd.loc, field.Name)
+			}
+			names[field.Name] = true
+		}
+		out = append(out, field)
 	}
 	return out
 }

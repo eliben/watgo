@@ -110,6 +110,20 @@ func TestLowerModule_ModuleName(t *testing.T) {
 	}
 }
 
+func TestLowerModule_DuplicateStructField(t *testing.T) {
+	ast, err := ParseModule(`(module (type (struct (field $x i32) (field $x i32))))`)
+	if err != nil {
+		t.Fatalf("ParseModule failed: %v", err)
+	}
+	_, _, err = LowerModule(ast)
+	if err == nil {
+		t.Fatal("LowerModule returned nil error, want duplicate field diagnostic")
+	}
+	if !errorListContains(asErrorList(t, err), "duplicate field $x") {
+		t.Fatalf("LowerModule error: %v, want duplicate field diagnostic", err)
+	}
+}
+
 func TestLowerModule_UnknownLocalName(t *testing.T) {
 	wat := `
 (module
