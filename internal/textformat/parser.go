@@ -490,9 +490,29 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 
 	f.TyUse = &TypeUse{}
 
+	// Clause ranks enforce type (1) -> param (2) -> result (3) -> local (4).
+	// Rank 0 means no declaration clause. Ranks may repeat except for type.
+	lastClause := 0
 	for ; cursor < len(sx.list); cursor++ {
-		// TODO: enforce order on param/result/local clauses?
 		elem := sx.list[cursor]
+		clause := 0
+		switch elem.HeadKeyword() {
+		case "type":
+			clause = 1
+		case "param":
+			clause = 2
+		case "result":
+			clause = 3
+		case "local":
+			clause = 4
+		}
+		if clause != 0 {
+			if clause < lastClause || clause == 1 && lastClause == 1 {
+				p.emitError(elem.loc, "unexpected token: %s clause out of order", elem.HeadKeyword())
+				continue
+			}
+			lastClause = clause
+		}
 		switch elem.HeadKeyword() {
 		case "type":
 			f.TyUse.Id = p.parseTypeUseClause(elem)
@@ -945,12 +965,17 @@ func (p *Parser) parseFuncTypeUse(sx *SExpr) *TypeUse {
 		p.emitError(sx.loc, "type declaration expects (func ...)")
 		return tu
 	}
+	seenResult := false
 	for i := 1; i < len(sx.list); i++ {
 		elem := sx.list[i]
 		switch elem.HeadKeyword() {
 		case "param":
+			if seenResult {
+				p.emitError(elem.loc, "unexpected token: param after result")
+			}
 			tu.Params = append(tu.Params, p.parseParamDecl(elem)...)
 		case "result":
+			seenResult = true
 			tu.Results = append(tu.Results, p.parseResultDecl(elem)...)
 		default:
 			p.emitError(elem.loc, "unsupported type declaration clause")

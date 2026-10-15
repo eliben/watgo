@@ -18,6 +18,11 @@ func TestMalformedWATRegressions(t *testing.T) {
 		body string
 		want string
 	}{
+		{"param after result", `(func (result i32) (param i32) i32.const 0)`, "out of order"},
+		{"param after empty result", `(func (result) (param i32))`, "out of order"},
+		{"type after param", `(type (func)) (func (param) (type 0))`, "out of order"},
+		{"result after local", `(func (local i32) (result i32) local.get 0)`, "out of order"},
+		{"function type order", `(type (func (result i32) (param i32)))`, "param after result"},
 		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
 		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
 	} {
@@ -27,6 +32,16 @@ func TestMalformedWATRegressions(t *testing.T) {
 				t.Fatalf("got error %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidWATBoundaries(t *testing.T) {
+	for _, body := range []string{
+		`(type (func (param i32) (result i32))) (func (type 0) (param i32) (result i32) (local i32) local.get 0)`,
+	} {
+		if _, err := watgo.CompileWATToWASM([]byte("(module " + body + ")")); err != nil {
+			t.Errorf("valid body %q: %v", body, err)
+		}
 	}
 }
 
