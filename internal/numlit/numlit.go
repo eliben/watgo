@@ -15,6 +15,9 @@ func ParseIntBits(s string, bits int) (uint64, error) {
 	if bits != 32 && bits != 64 {
 		return 0, fmt.Errorf("unsupported integer width %d", bits)
 	}
+	if !validDigitSeparators(s) {
+		return 0, fmt.Errorf("invalid integer literal %q", s)
+	}
 
 	clean := strings.ReplaceAll(s, "_", "")
 	neg := false
@@ -45,6 +48,9 @@ func ParseIntBits(s string, bits int) (uint64, error) {
 		return 0, fmt.Errorf("invalid integer literal %q", s)
 	}
 	if neg {
+		if u > uint64(1)<<(bits-1) {
+			return 0, fmt.Errorf("integer literal %q out of range", s)
+		}
 		u = ^u + 1
 	}
 	if bits == 32 {
@@ -55,6 +61,9 @@ func ParseIntBits(s string, bits int) (uint64, error) {
 
 // ParseF32Bits parses s as a WAT f32 literal and returns IEEE-754 bits.
 func ParseF32Bits(s string) (uint32, error) {
+	if !validDigitSeparators(s) {
+		return 0, fmt.Errorf("invalid f32 literal %q", s)
+	}
 	clean := strings.ReplaceAll(s, "_", "")
 	if clean == "" {
 		return 0, fmt.Errorf("invalid f32 literal %q", s)
@@ -107,6 +116,9 @@ func ParseF32Bits(s string) (uint32, error) {
 
 // ParseF64Bits parses s as a WAT f64 literal and returns IEEE-754 bits.
 func ParseF64Bits(s string) (uint64, error) {
+	if !validDigitSeparators(s) {
+		return 0, fmt.Errorf("invalid f64 literal %q", s)
+	}
 	clean := strings.ReplaceAll(s, "_", "")
 	if clean == "" {
 		return 0, fmt.Errorf("invalid f64 literal %q", s)
@@ -233,6 +245,26 @@ func parseIntegerLiteralF64Bits(s string) (uint64, bool) {
 		return 0, false
 	}
 	return math.Float64bits(f), true
+}
+
+// validDigitSeparators requires each underscore to separate two digits of
+// the same component. Hexadecimal significands and NaN payloads use hex
+// digits; exponents always use decimal digits.
+func validDigitSeparators(s string) bool {
+	_, mag := splitSign(s)
+	hex := strings.HasPrefix(mag, "0x") || strings.HasPrefix(mag, "nan:0x")
+	isDigit := func(c byte) bool {
+		return c >= '0' && c <= '9' || hex && (c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F')
+	}
+	for i := range len(s) {
+		if s[i] == 'p' || s[i] == 'P' {
+			hex = false
+		}
+		if s[i] == '_' && (i == 0 || i+1 == len(s) || !isDigit(s[i-1]) || !isDigit(s[i+1])) {
+			return false
+		}
+	}
+	return true
 }
 
 func splitSign(s string) (float64, string) {

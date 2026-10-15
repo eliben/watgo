@@ -19,6 +19,7 @@ func TestMalformedWATRegressions(t *testing.T) {
 		want string
 	}{
 		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
+		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))

@@ -13,7 +13,10 @@ func TestParseIntBits(t *testing.T) {
 		{lit: "123", bits: 32, want: 123},
 		{lit: "-1", bits: 32, want: 0xffffffff},
 		{lit: "0x1_2_3", bits: 32, want: 0x123},
+		{lit: "-2147483648", bits: 32, want: 0x80000000},
+		{lit: "4294967295", bits: 32, want: 0xffffffff},
 		{lit: "-0x8000000000000000", bits: 64, want: 0x8000000000000000},
+		{lit: "18446744073709551615", bits: 64, want: 0xffffffffffffffff},
 	}
 
 	for _, tt := range tests {
@@ -33,6 +36,42 @@ func TestParseIntBitsErrors(t *testing.T) {
 	}
 	if _, err := ParseIntBits("0x", 32); err == nil {
 		t.Fatal("ParseIntBits with invalid literal succeeded, want error")
+	}
+	for _, tc := range []struct {
+		lit  string
+		bits int
+	}{
+		{"-2147483649", 32}, {"-0x80000001", 32},
+		{"-9223372036854775809", 64}, {"-0x8000000000000001", 64},
+	} {
+		if _, err := ParseIntBits(tc.lit, tc.bits); err == nil {
+			t.Errorf("ParseIntBits(%q, %d) accepted a value below the signed minimum", tc.lit, tc.bits)
+		}
+	}
+}
+
+func TestNumericDigitSeparators(t *testing.T) {
+	for _, lit := range []string{"+_100", "-1_", "1__0", "0x_1", "0x1_", "0xa__b"} {
+		for _, bits := range []int{32, 64} {
+			if _, err := ParseIntBits(lit, bits); err == nil {
+				t.Errorf("ParseIntBits(%q, %d) accepted malformed separators", lit, bits)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		lit   string
+		valid bool
+	}{
+		{"1_0.2_5e+0_1", true}, {"0xa_b.c_dp-0_1", true}, {"nan:0x1_a", true},
+		{"1_.0", false}, {"1._0", false}, {"1_e1", false}, {"1e_1", false},
+		{"1.0e+_1", false}, {"0x1_p1", false}, {"0x1p_1", false},
+		{"nan:0x_1", false}, {"nan:0x1_", false},
+	} {
+		_, err32 := ParseF32Bits(tc.lit)
+		_, err64 := ParseF64Bits(tc.lit)
+		if (err32 == nil) != tc.valid || (err64 == nil) != tc.valid {
+			t.Errorf("float literal %q: f32 error=%v, f64 error=%v, want valid=%v", tc.lit, err32, err64, tc.valid)
+		}
 	}
 }
 

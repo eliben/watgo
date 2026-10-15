@@ -4773,9 +4773,11 @@ func lowerFoldedRefTypeInstr(fi *FoldedInstr, typesByName map[string]uint32) (wa
 // parseU32Literal parses s as an unsigned 32-bit integer literal.
 // It returns the parsed value and true on success, or 0/false on failure.
 func parseU32Literal(s string) (uint32, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	value, err := strconv.ParseInt(clean, 0, 64)
-	if err != nil || value < 0 || value > (1<<32-1) {
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		return 0, false
+	}
+	value, err := numlit.ParseIntBits(s, 32)
+	if err != nil {
 		return 0, false
 	}
 	return uint32(value), true
@@ -4784,8 +4786,10 @@ func parseU32Literal(s string) (uint32, bool) {
 // parseU64Literal parses s as an unsigned 64-bit integer literal.
 // It returns the parsed value and true on success, or 0/false on failure.
 func parseU64Literal(s string) (uint64, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	value, err := strconv.ParseUint(clean, 0, 64)
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		return 0, false
+	}
+	value, err := numlit.ParseIntBits(s, 64)
 	if err != nil {
 		return 0, false
 	}

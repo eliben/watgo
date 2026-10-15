@@ -2,7 +2,6 @@ package textformat
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/eliben/watgo/diag"
@@ -2378,13 +2377,7 @@ func isValidPlainOperand(name string, op Operand) bool {
 	}
 }
 
-// parseU64Token parses an INT token text into uint64, accepting '_' separators
-// and base prefixes supported by strconv.ParseUint.
+// parseU64Token parses an unsigned WAT integer token.
 func parseU64Token(s string) (uint64, bool) {
-	clean := strings.ReplaceAll(s, "_", "")
-	n, err := strconv.ParseUint(clean, 0, 64)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	return parseU64Literal(s)
 }
