@@ -3,6 +3,7 @@ package binaryformat
 import (
 	"bytes"
 	"errors"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -311,6 +312,44 @@ func TestDecodeEncodeRoundTrip_ActiveTable0ExprElement(t *testing.T) {
 	}
 	if !bytes.Equal(got, got2) {
 		t.Fatalf("roundtrip mismatch:\n pass1=%x\npass2=%x", got, got2)
+	}
+}
+
+func TestDecodeModule_AllocationBounds(t *testing.T) {
+	// Each section declares 262144 (LEB128 80 80 10) entries or bytes without
+	// providing them. Merely checking for an error would miss allocations
+	// performed before the decoder notices the truncated input.
+	for _, tc := range []struct {
+		name    string
+		section []byte
+	}{
+		{"struct fields", []byte{sectionTypeID, 5, 1, typeCodeStruct, 0x80, 0x80, 0x10}},
+		{"supertypes", []byte{sectionTypeID, 5, 1, typeCodeSub, 0x80, 0x80, 0x10}},
+		{"name map", []byte{sectionCustomID, 10, 4, 'n', 'a', 'm', 'e', nameSubsectionFuncID, 3, 0x80, 0x80, 0x10}},
+		{"indirect name map", []byte{sectionCustomID, 10, 4, 'n', 'a', 'm', 'e', nameSubsectionLocalID, 3, 0x80, 0x80, 0x10}},
+		{"nested name map", []byte{sectionCustomID, 12, 4, 'n', 'a', 'm', 'e', nameSubsectionLocalID, 5, 1, 0, 0x80, 0x80, 0x10}},
+		{"section size", []byte{sectionTypeID, 0x80, 0x80, 0x10}},
+		{"name subsection size", []byte{sectionCustomID, 9, 4, 'n', 'a', 'm', 'e', nameSubsectionFuncID, 0x80, 0x80, 0x10}},
+		{"function body size", []byte{sectionCodeID, 4, 1, 0x80, 0x80, 0x10}},
+		{"name length", []byte{sectionExportID, 4, 1, 0x80, 0x80, 0x10}},
+		{"data size", []byte{sectionDataID, 5, 1, dataSegmentFlagPassive, 0x80, 0x80, 0x10}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := append([]byte(wasmMagic+wasmVersion), tc.section...)
+			// Keep this sequential: TotalAlloc is process-wide. The allowance
+			// leaves room for diagnostics and runtime overhead, but is much
+			// smaller than even the smallest claimed allocation (256 KiB).
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := DecodeModule(bin)
+			runtime.ReadMemStats(&after)
+			if err == nil {
+				t.Fatal("DecodeModule accepted a truncated module")
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 64<<10 {
+				t.Errorf("DecodeModule allocated %d bytes for a %d-byte input, want at most 64 KiB", allocated, len(bin))
+			}
+		})
 	}
 }
 

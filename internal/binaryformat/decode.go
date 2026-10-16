@@ -402,7 +402,12 @@ func decodeNameMap(r *bytes.Reader, context string, diags *diag.ErrorList) map[u
 		diags.Addf("name section %s: invalid map length: %v", context, err)
 		return nil
 	}
-	out := make(map[uint32]string, count)
+	capN, err := boundedVectorCapacity(r, count)
+	if err != nil {
+		diags.Addf("name section %s: invalid map length: %v", context, err)
+		return nil
+	}
+	out := make(map[uint32]string, capN)
 	var prev uint32
 	for i := range count {
 		idx, err := readU32(r)
@@ -436,7 +441,12 @@ func decodeIndirectNameMap(r *bytes.Reader, context string, diags *diag.ErrorLis
 		diags.Addf("name section %s: invalid map length: %v", context, err)
 		return nil
 	}
-	out := make(map[uint32]map[uint32]string, count)
+	capN, err := boundedVectorCapacity(r, count)
+	if err != nil {
+		diags.Addf("name section %s: invalid map length: %v", context, err)
+		return nil
+	}
+	out := make(map[uint32]map[uint32]string, capN)
 	var prev uint32
 	for i := range count {
 		idx, err := readU32(r)
@@ -678,7 +688,12 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 			diags.Addf("type[%d]: invalid supertype count: %v", index, err)
 			return wasmir.TypeDef{}, false
 		}
-		typeDef.SuperTypes = make([]uint32, 0, superCount)
+		capN, err := boundedVectorCapacity(r, superCount)
+		if err != nil {
+			diags.Addf("type[%d]: invalid supertype count: %v", index, err)
+			return wasmir.TypeDef{}, false
+		}
+		typeDef.SuperTypes = make([]uint32, 0, capN)
 		for j := range superCount {
 			superIndex, err := readU32(r)
 			if err != nil {
@@ -707,7 +722,12 @@ func decodeOneTypeDef(r *bytes.Reader, index int, diags *diag.ErrorList) (wasmir
 			diags.Addf("type[%d]: invalid struct field count: %v", index, err)
 			return wasmir.TypeDef{}, false
 		}
-		fields := make([]wasmir.FieldType, 0, fieldCount)
+		capN, err := boundedVectorCapacity(r, fieldCount)
+		if err != nil {
+			diags.Addf("type[%d]: invalid struct field count: %v", index, err)
+			return wasmir.TypeDef{}, false
+		}
+		fields := make([]wasmir.FieldType, 0, capN)
 		for j := range fieldCount {
 			field, err := decodeFieldType(r)
 			if err != nil {
@@ -2251,10 +2271,10 @@ func decodeValueTypeVec(r *bytes.Reader, where string, diags *diag.ErrorList) []
 	return out
 }
 
-// boundedVectorCapacity returns a safe slice capacity for a decoded vector of
-// n entries. It uses the remaining bytes in r as a cheap allocation guard
-// against malformed binaries that claim absurd vector lengths; semantic vector
-// validation still happens in the specific decoder that consumes the entries.
+// boundedVectorCapacity returns a safe allocation capacity for a decoded vector
+// of n entries. Each entry must occupy at least one input byte, so a count
+// greater than the remaining bytes cannot be valid. This guards allocations
+// before the specific decoder performs semantic vector validation.
 func boundedVectorCapacity(r *bytes.Reader, n uint32) (int, error) {
 	if uint64(n) > uint64(r.Len()) {
 		return 0, fmt.Errorf("length out of bounds")
@@ -2457,6 +2477,10 @@ func readByte(r *bytes.Reader) (byte, error) {
 func readN(r *bytes.Reader, n int) ([]byte, error) {
 	if n < 0 {
 		return nil, fmt.Errorf("negative length %d", n)
+	}
+	// Check before allocating: lengths from the input may exceed its payload.
+	if n > r.Len() {
+		return nil, io.ErrUnexpectedEOF
 	}
 	b := make([]byte, n)
 	_, err := io.ReadFull(r, b)
