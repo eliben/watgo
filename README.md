@@ -103,12 +103,25 @@ go test ./...
 ```
 
 Some of the end-to-end tests execute compiled modules under Node.js, so Node is
-required for the full suite (set the env var `WATGO_NODE_TESTS=0` to disable
-all Node-dependent tests). Selected spec and WABT-style execution coverage
-also runs through `wasmvm`.
+required for the full suite (set the env var `WATGO_NODE_TESTS=0` to disable all
+Node-dependent tests). Selected spec and WABT-style execution coverage also runs
+through `wasmvm`.
 
 For more detail on the different test sets and how to refresh them from
 upstream, see [`tests/README.md`](tests/README.md).
+
+Fuzz targets check the binary decoder and WAT parser for crashes on arbitrary
+input; parse and decode errors are expected. Their seed inputs run as part of
+normal tests. To generate new inputs, run either target explicitly:
+
+```sh
+go test ./internal/binaryformat -run '^$' -fuzz '^FuzzDecodeModule$' -fuzztime=5m -parallel=2
+go test ./internal/textformat -run '^$' -fuzz '^FuzzParseModule$' -fuzztime=5m -parallel=2
+```
+
+Adjust `-fuzztime` for longer runs and `-parallel` to control worker count. Go
+saves failing inputs under the package's `testdata/fuzz/` directory; keep them
+as regression cases after fixing the bug.
 
 ### License
 

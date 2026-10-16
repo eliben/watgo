@@ -59,6 +59,47 @@ func showForTest(sx *SExpr) string {
 	return tokenNames[sx.tok.name]
 }
 
+// FuzzParseModule exercises lexing, s-expression parsing, annotation removal,
+// and AST construction with arbitrary source text. Parsing may reject the input;
+// semantic validity is checked separately during lowering and validation.
+func FuzzParseModule(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		`(module)`,
+		`(module (func $add (param $a i32) (param $b i32) (result i32) local.get $a local.get $b i32.add))`,
+		`(module (func (result i32) (i32.add (i32.const 1) (i32.const 2))))`,
+		`(module (func block $a loop $b br 1 end $b end $a))`,
+		`(module (func (result i32) (if (result i32) (i32.const 1) (then (i32.const 2)) (else (i32.const 3)))))`,
+		`(module (type $sig (func (param i32) (result i32))) (func (type $sig) (param $x i32) (result i32) (local $y i32) local.get $x))`,
+		`(module (func (import "" "")) (table (import "m" "t") 1 funcref) (memory (import "m" "mem") 1) (global (import "m" "g") i32) (tag (import "m" "e") (param i32)) (export "f" (func 0)))`,
+		`(module (memory 1) (data (i32.const 0) "a\00\ff"))`,
+		`(module (table 1 funcref) (elem (i32.const 0) func $f) (func $f))`,
+		`(module (global $g (mut i32) (i32.const 0)) (func global.get $g drop))`,
+		`(module (rec (type $s (sub (struct (field $x (mut i32))))) (type $a (array (mut (ref null $s))))))`,
+		`(module (tag $e (param i32)) (func (block (result i32) (try_table (catch $e 0) (throw $e (i32.const 1))) (i32.const 0)) drop))`,
+		`(module (memory (data "abc")) (table funcref (elem $f)) (func $f))`,
+		`(module (func (result v128) (v128.const i32x4 0 -1 0x10 1_000)))`,
+		`(module (; outer (; inner ;) ;) (func))`,
+		`(module (@a x-y$z"a"-2 (0drop) , { }) (func (export "\c3\a9")))`,
+		`(module (func br 0drop))`,
+		`(module (data "a""b"))`,
+		`(module (func`,
+		"(module (@a \xff))",
+		"(module (@a \x00))",
+		`(module (func (export "\ff")))`,
+		`(module (; unterminated comment)`,
+		`(module (func (param ()) ()))`,
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, src string) {
+		// Parse errors are expected. The fuzzing engine reports panics and
+		// saves failing inputs as regression cases.
+		_, _ = ParseModule(src)
+	})
+}
+
 func TestSexprSmoke(t *testing.T) {
 	s := `(foo bar)`
 	sx := mustParseSingleSExpr(t, s)
