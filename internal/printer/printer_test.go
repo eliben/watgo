@@ -2,6 +2,7 @@ package printer
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,38 @@ import (
 	"github.com/eliben/watgo/internal/validate"
 	"github.com/eliben/watgo/wasmir"
 )
+
+func TestPrintModule_ImportNamesRoundTrip(t *testing.T) {
+	for _, names := range []struct{ module, field string }{
+		{"", ""}, {"", "field"}, {"module", ""}, {"module", "field"},
+	} {
+		for _, decl := range []struct {
+			kind       string
+			typ        string
+			definition string
+		}{
+			{"func", "(result i32)", "(func $def (result i32) i32.const 7)"},
+			{"table", "1 funcref", "(table $def 1 funcref)"},
+			{"memory", "1", "(memory $def 1)"},
+			{"global", "i32", "(global $def i32 (i32.const 7))"},
+			{"tag", "(param i32)", "(tag $def (param i32))"},
+		} {
+			t.Run(fmt.Sprintf("%s/%q/%q", decl.kind, names.module, names.field), func(t *testing.T) {
+				for _, inline := range []bool{false, true} {
+					t.Run(fmt.Sprintf("inline=%v", inline), func(t *testing.T) {
+						imp := fmt.Sprintf("(import %q %q (%s $imp %s))", names.module, names.field, decl.kind, decl.typ)
+						if inline {
+							imp = fmt.Sprintf("(%s $imp (import %q %q) %s)", decl.kind, names.module, names.field, decl.typ)
+						}
+						src := fmt.Sprintf(`(module %s %s (export "import" (%s $imp)) (export "definition" (%s $def)))`,
+							imp, decl.definition, decl.kind, decl.kind)
+						printRoundTripFromWAT(t, src)
+					})
+				}
+			})
+		}
+	}
+}
 
 func TestPrintModule_AddFunctionRoundTrip(t *testing.T) {
 	// A simple function-only module should print to WAT that watgo can compile

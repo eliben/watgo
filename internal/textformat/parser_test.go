@@ -2,6 +2,7 @@ package textformat
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -144,15 +145,22 @@ func TestParseModuleSExpr_MalformedBareAtStringIsNotStripped(t *testing.T) {
 }
 
 func TestParseModuleSExpr_ReservedTokens(t *testing.T) {
-	for _, src := range []string{
-		"(module\n  (memory 0 0drop))",
-		"(module\n  (memory 0 (data 0drop)))",
+	for _, tc := range []struct {
+		src, token string
+	}{
+		{"(module\n  (memory 0 0drop))", "0drop"},
+		{"(module\n  (memory 0 (data 0drop)))", "0drop"},
+		{`(module (func br 0drop))`, "0drop"},
+		{`(module (data "a""b"))`, `"a""b"`},
+		{`(module (func $"f"nop))`, `$"f"nop`},
+		{`(module ( @a))`, "@a"},
 	} {
-		t.Run(src, func(t *testing.T) {
-			sx := mustParseSingleSExpr(t, src)
+		t.Run(tc.src, func(t *testing.T) {
+			sx := mustParseSingleSExpr(t, tc.src)
 			_, err := ParseModuleSExpr(sx)
-			if err == nil || !strings.Contains(err.Error(), `reserved token "0drop" outside annotation`) {
-				t.Fatalf("got error %v, want reserved-token error", err)
+			want := fmt.Sprintf("reserved token %q outside annotation", tc.token)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("got error %v, want %q", err, want)
 			}
 		})
 	}
@@ -176,6 +184,103 @@ func TestErrorUnterminatedLparen(t *testing.T) {
 
 			if !strings.Contains(err.Error(), tt.where) {
 				t.Errorf("got error %v, want to find %s", err, tt.where)
+			}
+		})
+	}
+}
+
+func TestParseModule_MalformedWAT(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"param after result", `(func (result i32) (param i32) i32.const 0)`, "out of order"},
+		{"param after empty result", `(func (result) (param i32))`, "out of order"},
+		{"type after param", `(type (func)) (func (param) (type 0))`, "out of order"},
+		{"result after local", `(func (local i32) (result i32) local.get 0)`, "out of order"},
+		{"function type order", `(type (func (result i32) (param i32)))`, "param after result"},
+		{"invalid name bytes", `(func (export "\ff"))`, "malformed UTF-8"},
+		{"invalid source bytes", "(@a \xff)", "malformed UTF-8"},
+		{"annotation control", "(@a \x00)", "illegal character"},
+		{"annotation unicode atom", "(@a é)", "illegal character"},
+		{"annotation name bytes", `(@"\ff")`, "unsupported module field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseModule("(module " + tc.body + ")")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got error %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseModule_ValidWATBoundaries(t *testing.T) {
+	for _, body := range []string{
+		`(type (func (param i32) (result i32))) (func (type 0) (param i32) (result i32) (local i32) local.get 0)`,
+		`(func(nop)nop(nop))`,
+		"(func br 0;; comment\n)",
+		`(data "a" (; comment ;) "b")`,
+		`(@a x-y$z"a"-2 (0drop) , { }) (@"é")`,
+		`(memory 0 (@a 0drop (data "a""b")))`,
+	} {
+		if _, err := ParseModule("(module " + body + ")"); err != nil {
+			t.Errorf("valid body %q: %v", body, err)
+		}
+	}
+}
+
+func TestParseModule_NameEscapes(t *testing.T) {
+	m, err := ParseModule(`(module (func (export "\c3\a9")))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Funcs[0].Export == nil {
+		t.Fatal("missing inline export")
+	}
+	if got := *m.Funcs[0].Export; got != "é" {
+		t.Fatalf("export name=%q, want é", got)
+	}
+}
+
+func TestParseModule_EmptyImportKeepsImportPhaseOpen(t *testing.T) {
+	for _, declaration := range []string{
+		`(func (import "" ""))`,
+		`(table (import "" "") 1 funcref)`,
+		`(memory (import "" "") 1)`,
+		`(global (import "" "") i32)`,
+		`(tag (import "" ""))`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			src := `(module ` + declaration + ` (import "m" "f" (func)))`
+			if _, err := ParseModule(src); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestParseModule_MalformedImportClauses(t *testing.T) {
+	for _, declaration := range []string{
+		`(func (import 0 ""))`,
+		`(func (import "" 0))`,
+		`(func (import "\ff" ""))`,
+		`(func (import "" "\ff"))`,
+		`(table (import "" 0) 1 funcref)`,
+		`(memory (import "" 0) 1)`,
+		`(global (import "" 0) i32)`,
+		`(tag (import "" 0))`,
+		`(func (import ""))`,
+		`(func (import "" "" ""))`,
+		`(func (import "" "") (import "" ""))`,
+		`(table (import "" "") (import "" "") 1 funcref)`,
+		`(memory (import "" "") (import "" "") 1)`,
+		`(global (import "" "") (import "" "") i32)`,
+		`(tag (import "" "") (import "" ""))`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			if _, err := ParseModule("(module " + declaration + ")"); err == nil {
+				t.Fatal("malformed import was accepted")
 			}
 		})
 	}

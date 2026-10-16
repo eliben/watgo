@@ -12,6 +12,81 @@ import (
 	"github.com/eliben/watgo/wasmir"
 )
 
+func TestPipelineImportNamesRoundTrip(t *testing.T) {
+	for _, names := range []struct{ module, field string }{
+		{"", ""}, {"", "field"}, {"module", ""}, {"module", "field"},
+	} {
+		for _, decl := range []struct {
+			kind       string
+			typ        string
+			definition string
+			external   wasmir.ExternalKind
+		}{
+			{"func", "(result i32)", "(func $def (result i32) i32.const 7)", wasmir.ExternalKindFunction},
+			{"table", "1 funcref", "(table $def 1 funcref)", wasmir.ExternalKindTable},
+			{"memory", "1", "(memory $def 1)", wasmir.ExternalKindMemory},
+			{"global", "i32", "(global $def i32 (i32.const 7))", wasmir.ExternalKindGlobal},
+			{"tag", "(param i32)", "(tag $def (param i32))", wasmir.ExternalKindTag},
+		} {
+			t.Run(fmt.Sprintf("%s/%q/%q", decl.kind, names.module, names.field), func(t *testing.T) {
+				var first []byte
+				for _, inline := range []bool{false, true} {
+					t.Run(fmt.Sprintf("inline=%v", inline), func(t *testing.T) {
+						imp := fmt.Sprintf("(import %q %q (%s $imp %s))", names.module, names.field, decl.kind, decl.typ)
+						if inline {
+							imp = fmt.Sprintf("(%s $imp (import %q %q) %s)", decl.kind, names.module, names.field, decl.typ)
+						}
+						src := fmt.Sprintf(`(module %s %s (export "import" (%s $imp)) (export "definition" (%s $def)))`,
+							imp, decl.definition, decl.kind, decl.kind)
+						encoded := compilePipelineWAT(t, src)
+						if !inline {
+							first = encoded
+						} else if !bytes.Equal(first, encoded) {
+							t.Fatal("inline and top-level imports encode differently")
+						}
+						decoded, err := DecodeModule(encoded)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if len(decoded.Imports) != 1 || decoded.Imports[0].Module != names.module ||
+							decoded.Imports[0].Name != names.field || decoded.Imports[0].Kind != decl.external {
+							t.Fatalf("unexpected imports: %+v", decoded.Imports)
+						}
+						// Functions and tags store only definitions; other index spaces
+						// include imported entries followed by definitions.
+						var count, want int
+						switch decl.external {
+						case wasmir.ExternalKindFunction:
+							count, want = len(decoded.Funcs), 1
+						case wasmir.ExternalKindTable:
+							count, want = len(decoded.Tables), 2
+						case wasmir.ExternalKindMemory:
+							count, want = len(decoded.Memories), 2
+						case wasmir.ExternalKindGlobal:
+							count, want = len(decoded.Globals), 2
+						case wasmir.ExternalKindTag:
+							count, want = len(decoded.Tags), 1
+						}
+						if count != want {
+							t.Fatalf("got %d %s entries, want %d", count, decl.kind, want)
+						}
+						if len(decoded.Exports) != 2 || decoded.Exports[0].Index != 0 || decoded.Exports[1].Index != 1 {
+							t.Fatalf("import/definition indices changed: %+v", decoded.Exports)
+						}
+						if err := validate.ValidateModule(decoded, nil); err != nil {
+							t.Fatal(err)
+						}
+						reencoded, err := EncodeModule(decoded)
+						if err != nil || !bytes.Equal(encoded, reencoded) {
+							t.Fatalf("binary round trip changed imports: %v", err)
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
 func TestPipelineEncodeAddModule(t *testing.T) {
 	wat := `
 (module

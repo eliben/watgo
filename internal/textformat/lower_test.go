@@ -1,7 +1,9 @@
 package textformat
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,6 +27,118 @@ func errorListContains(errs diag.ErrorList, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestLowerModule_WATRegressions(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"end label", `(func block $a end $b)`, "mismatching label"},
+		{"else label", `(func i32.const 0 if $a else $b end $a)`, "mismatching label"},
+		{"missing v128 operands", `(func (v128.const) drop)`, "invalid v128.const operand"},
+		{"signed lane index", `(func (result i32) (i32x4.extract_lane +0 (v128.const i32x4 0 0 0 0)))`, "invalid i32x4.extract_lane operand"},
+		{"matching nested labels", `(func block $a loop $b end $b end $a)`, ""},
+		{"matching else label", `(func i32.const 0 if $a else $a end $a)`, ""},
+		{"imported function body", `(func (import "" "") nop)`, "imported function must not have a body"},
+		{"imported function locals", `(func (import "" "") (local i32))`, "imported function must not declare locals"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := ParseModule("(module " + tc.body + ")")
+			if err != nil {
+				t.Fatalf("ParseModule failed: %v", err)
+			}
+			_, _, err = LowerModule(ast)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("LowerModule failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !errorListContains(asErrorList(t, err), tc.want) {
+				t.Fatalf("got error %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLowerModule_DataStringBytes(t *testing.T) {
+	ast, err := ParseModule(`(module (data "\ff"))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := LowerModule(ast)
+	if err != nil {
+		t.Fatalf("LowerModule failed: %v", err)
+	}
+	// Data segments carry arbitrary bytes, unlike import/export names.
+	if got := m.Data[0].Init; !bytes.Equal(got, []byte{0xff}) {
+		t.Fatalf("data bytes=%x, want ff", got)
+	}
+}
+
+func TestLowerModule_ImportNames(t *testing.T) {
+	for _, names := range []struct{ module, field string }{
+		{"", ""}, {"", "field"}, {"module", ""}, {"module", "field"},
+	} {
+		for _, decl := range []struct {
+			kind       string
+			typ        string
+			definition string
+			external   wasmir.ExternalKind
+		}{
+			{"func", "(result i32)", "(func $def (result i32) i32.const 7)", wasmir.ExternalKindFunction},
+			{"table", "1 funcref", "(table $def 1 funcref)", wasmir.ExternalKindTable},
+			{"memory", "1", "(memory $def 1)", wasmir.ExternalKindMemory},
+			{"global", "i32", "(global $def i32 (i32.const 7))", wasmir.ExternalKindGlobal},
+			{"tag", "(param i32)", "(tag $def (param i32))", wasmir.ExternalKindTag},
+		} {
+			t.Run(fmt.Sprintf("%s/%q/%q", decl.kind, names.module, names.field), func(t *testing.T) {
+				for _, inline := range []bool{false, true} {
+					t.Run(fmt.Sprintf("inline=%v", inline), func(t *testing.T) {
+						imp := fmt.Sprintf("(import %q %q (%s $imp %s))", names.module, names.field, decl.kind, decl.typ)
+						if inline {
+							imp = fmt.Sprintf("(%s $imp (import %q %q) %s)", decl.kind, names.module, names.field, decl.typ)
+						}
+						src := fmt.Sprintf(`(module %s %s (export "import" (%s $imp)) (export "definition" (%s $def)))`,
+							imp, decl.definition, decl.kind, decl.kind)
+						ast, err := ParseModule(src)
+						if err != nil {
+							t.Fatalf("ParseModule failed: %v", err)
+						}
+						m, _, err := LowerModule(ast)
+						if err != nil {
+							t.Fatalf("LowerModule failed: %v", err)
+						}
+						if len(m.Imports) != 1 || m.Imports[0].Module != names.module ||
+							m.Imports[0].Name != names.field || m.Imports[0].Kind != decl.external {
+							t.Fatalf("unexpected imports: %+v", m.Imports)
+						}
+						// Functions and tags store only definitions; other index spaces
+						// include imported entries followed by definitions.
+						var count, want int
+						switch decl.external {
+						case wasmir.ExternalKindFunction:
+							count, want = len(m.Funcs), 1
+						case wasmir.ExternalKindTable:
+							count, want = len(m.Tables), 2
+						case wasmir.ExternalKindMemory:
+							count, want = len(m.Memories), 2
+						case wasmir.ExternalKindGlobal:
+							count, want = len(m.Globals), 2
+						case wasmir.ExternalKindTag:
+							count, want = len(m.Tags), 1
+						}
+						if count != want {
+							t.Fatalf("got %d %s entries, want %d", count, decl.kind, want)
+						}
+						if len(m.Exports) != 2 || m.Exports[0].Index != 0 || m.Exports[1].Index != 1 {
+							t.Fatalf("import/definition indices changed: %+v", m.Exports)
+						}
+					})
+				}
+			})
+		}
+	}
 }
 
 func TestLowerModule_AddFunction(t *testing.T) {
@@ -111,16 +225,29 @@ func TestLowerModule_ModuleName(t *testing.T) {
 }
 
 func TestLowerModule_DuplicateStructField(t *testing.T) {
-	ast, err := ParseModule(`(module (type (struct (field $x i32) (field $x i32))))`)
-	if err != nil {
-		t.Fatalf("ParseModule failed: %v", err)
-	}
-	_, _, err = LowerModule(ast)
-	if err == nil {
-		t.Fatal("LowerModule returned nil error, want duplicate field diagnostic")
-	}
-	if !errorListContains(asErrorList(t, err), "duplicate field $x") {
-		t.Fatalf("LowerModule error: %v, want duplicate field diagnostic", err)
+	for _, tc := range []struct {
+		name, wat string
+		wantError bool
+	}{
+		{"same type", `(module (type (struct (field $x i32) (field $x i32))))`, true},
+		{"separate types", `(module (type (struct (field $x i32))) (type (struct (field $x i32))))`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := ParseModule(tc.wat)
+			if err != nil {
+				t.Fatalf("ParseModule failed: %v", err)
+			}
+			_, _, err = LowerModule(ast)
+			if !tc.wantError {
+				if err != nil {
+					t.Fatalf("LowerModule failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !errorListContains(asErrorList(t, err), "duplicate field $x") {
+				t.Fatalf("got error %v, want duplicate field diagnostic", err)
+			}
+		})
 	}
 }
 
