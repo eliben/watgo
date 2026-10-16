@@ -89,3 +89,49 @@ func TestTableAllocationLimitPreservesImportMaximum(t *testing.T) {
 		})
 	}
 }
+
+func TestDroppedSegmentInitBounds(t *testing.T) {
+	null := Value{Type: wasmir.RefTypeFunc(true), Ref: Reference{Kind: RefKindNull}}
+	mem := &Memory{addressType: wasmir.ValueTypeI32, data: make([]byte, wasmPageSize)}
+	table := &Table{addressType: wasmir.ValueTypeI32, refType: null.Type, elems: []Value{null, null}}
+	inst := &Instance{
+		memories: []*Memory{mem},
+		tables:   []*Table{table},
+		// Retained payloads must not make a dropped segment usable as a source.
+		data:  []dataInst{{init: []byte{1, 2}, dropped: true}},
+		elems: []elemInst{{values: []Value{null, null}, dropped: true}},
+	}
+	for _, op := range []struct {
+		name string
+		init func(uint32, uint32, uint64, uint64, uint64) error
+		end  uint64
+	}{
+		{"memory", inst.memoryInit, uint64(len(mem.data))},
+		{"table", inst.tableInit, uint64(len(table.elems))},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name           string
+				dst, src, size uint64
+				wantErr        bool
+			}{
+				{"empty at start", 0, 0, 0, false},
+				{"empty at destination end", op.end, 0, 0, false},
+				{"source past end", 0, 1, 0, true},
+				{"destination past end", op.end + 1, 0, 0, true},
+				{"large destination", ^uint64(0), 0, 0, true},
+				{"nonempty copy", 0, 0, 1, true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					err := op.init(0, 0, tc.dst, tc.src, tc.size)
+					if (err != nil) != tc.wantErr {
+						t.Fatalf("init(%d, %d, %d) = %v, want error: %v", tc.dst, tc.src, tc.size, err, tc.wantErr)
+					}
+					if err != nil && !strings.Contains(err.Error(), "out of bounds") {
+						t.Fatalf("expected bounds error, got %v", err)
+					}
+				})
+			}
+		})
+	}
+}

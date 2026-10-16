@@ -1386,10 +1386,9 @@ func (inst *Instance) memoryInit(memoryIndex uint32, dataIndex uint32, dstAddres
 	if err != nil {
 		return err
 	}
-	if data.dropped {
-		if size == 0 {
-			return nil
-		}
+	// A dropped segment is an empty source, so only offset 0 and size 0
+	// are in bounds. Destination bounds must still be checked below.
+	if data.dropped && (srcOffset != 0 || size != 0) {
 		return fmt.Errorf("data segment out of bounds")
 	}
 	if srcOffset > uint64(len(data.init)) || size > uint64(len(data.init))-srcOffset {
@@ -1520,10 +1519,9 @@ func (inst *Instance) tableInit(tableIndex uint32, elemIndex uint32, dstElemInde
 	if err != nil {
 		return err
 	}
-	if elem.dropped {
-		if size == 0 {
-			return nil
-		}
+	// A dropped segment is an empty source, so only offset 0 and size 0
+	// are in bounds. Destination bounds must still be checked below.
+	if elem.dropped && (srcOffset != 0 || size != 0) {
 		return fmt.Errorf("element segment out of bounds")
 	}
 	if srcOffset > uint64(len(elem.values)) || size > uint64(len(elem.values))-srcOffset {
