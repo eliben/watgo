@@ -5,6 +5,10 @@
 // exported functions, globals, and memories, call functions with runtime
 // values, satisfy WebAssembly function imports with Go callbacks, and share
 // exported globals and memories with later instantiations.
+//
+// Each table is limited to 1,048,576 entries. Larger initial sizes fail to
+// instantiate, and table.grow returns -1 if growth would exceed this runtime
+// resource limit. Declared maxima may be larger.
 package wasmvm
 
 import (

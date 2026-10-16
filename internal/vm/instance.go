@@ -22,6 +22,12 @@ const (
 	// maxWasm32MemoryPages is the architectural wasm32 memory limit. A memory
 	// without an explicit max is still bounded by the 32-bit address space.
 	maxWasm32MemoryPages = 65536
+
+	// maxTableElements bounds each table's allocation in this interpreter.
+	// This is a runtime resource limit, separate from the declared maximum
+	// used for import matching. Oversized tables fail to instantiate, and
+	// table.grow returns -1 when growth would exceed the limit.
+	maxTableElements = 1 << 20
 )
 
 var errCallStackExhausted = errors.New("call stack exhausted")
@@ -204,9 +210,6 @@ type Table struct {
 func NewTable(t wasmir.Table) (*Table, error) {
 	if t.AddressType != wasmir.ValueTypeI32 && t.AddressType != wasmir.ValueTypeI64 {
 		return nil, fmt.Errorf("unsupported table address type %s", t.AddressType)
-	}
-	if t.Min > uint64(int(^uint(0)>>1)) {
-		return nil, fmt.Errorf("minimum size is too large")
 	}
 	init, err := zeroTableValue(t.RefType)
 	if err != nil {
@@ -1333,8 +1336,8 @@ func newTable(t wasmir.Table, init Value) (*Table, error) {
 	if t.AddressType != wasmir.ValueTypeI32 && t.AddressType != wasmir.ValueTypeI64 {
 		return nil, fmt.Errorf("unsupported table address type %s", t.AddressType)
 	}
-	if t.Min > uint64(int(^uint(0)>>1)) {
-		return nil, fmt.Errorf("minimum size is too large")
+	if t.Min > maxTableElements {
+		return nil, fmt.Errorf("minimum size %d exceeds table resource limit of %d elements", t.Min, maxTableElements)
 	}
 	if err := checkResults([]wasmir.ValueType{t.RefType}, []Value{init}); err != nil {
 		return nil, fmt.Errorf("initializer type mismatch: %w", err)
@@ -1460,7 +1463,7 @@ func (inst *Instance) tableGrow(index uint32, init Value, delta uint64) (uint64,
 		return oldSize, false, nil
 	}
 	newSize := oldSize + delta
-	if newSize > table.maxElements() {
+	if newSize > maxTableElements || newSize > table.maxElements() {
 		return oldSize, false, nil
 	}
 	if table.addressType == wasmir.ValueTypeI32 && newSize > uint64(^uint32(0)) {
