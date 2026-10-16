@@ -1903,11 +1903,7 @@ func (r *scriptRunner) runModule(res *commandResult, cmd scriptCommand) {
 		err       error
 	)
 	if cmd.quotedWAT != "" {
-		src := cmd.quotedWAT
-		if trimmed := strings.TrimSpace(src); !strings.HasPrefix(trimmed, "(module") {
-			src = "(module\n" + src + "\n)"
-		}
-		wasmBytes, err = r.compileWAT(src)
+		wasmBytes, err = r.compileWAT(cmd.quotedWAT)
 	} else {
 		wasmBytes, err = r.compileModuleExpr(cmd.moduleExpr)
 	}
@@ -3237,7 +3233,7 @@ func (r *scriptRunner) runAssertMalformed(res *commandResult, cmd scriptCommand,
 		if opts.logf != nil {
 			opts.logf("assert_malformed: compiling quoted WAT")
 		}
-		_, err = watgo.CompileWATToWASM([]byte(cmd.quotedWAT))
+		_, err = compileWATModule(cmd.quotedWAT)
 	}
 	if opts.logf != nil {
 		if err != nil {
@@ -3640,10 +3636,25 @@ func isArithmeticNaN64(bits uint64) bool {
 	return (bits&expMask) == expMask && (mantissa&quietBit) != 0
 }
 
+// compileWATModule compiles either an explicit module or an abbreviated list
+// of module fields. Inspect the expressions rather than a string prefix so
+// leading comments and whitespace inside the opening parenthesis work too.
+// Keep the original source intact, including malformed tokens and annotations.
+func compileWATModule(src string) ([]byte, error) {
+	exprs, err := textformat.ParseTopLevelSExprs(src)
+	if err != nil {
+		return nil, err
+	}
+	if len(exprs) == 0 || exprs[0].WithoutAnnotations().HeadKeyword() != "module" {
+		src = "(module\n" + src + "\n)"
+	}
+	return watgo.CompileWATToWASM([]byte(src))
+}
+
 // compileWAT compiles WAT source with watgo and applies the decoder/encoder
 // roundtrip fixed-point check used by integration tests.
 func (r *scriptRunner) compileWAT(watSrc string) ([]byte, error) {
-	wasmBytes, err := watgo.CompileWATToWASM([]byte(watSrc))
+	wasmBytes, err := compileWATModule(watSrc)
 	if err != nil {
 		return nil, err
 	}

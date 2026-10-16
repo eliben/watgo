@@ -340,10 +340,7 @@ func compileWasmSpecCommandForPrintRoundTrip(cmd scriptCommand) ([]byte, bool, e
 // compileWasmSpecModuleText compiles one text module source and normalizes it
 // through the binary fixed-point pass used by the main wasmspec harness.
 func compileWasmSpecModuleText(src string) ([]byte, bool, error) {
-	if trimmed := strings.TrimSpace(src); !strings.HasPrefix(trimmed, "(module") {
-		src = "(module\n" + src + "\n)"
-	}
-	wasmBytes, err := watgo.CompileWATToWASM([]byte(src))
+	wasmBytes, err := compileWATModule(src)
 	if err != nil {
 		return nil, false, err
 	}

@@ -1,6 +1,51 @@
 package tests
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
+
+func TestAssertMalformedQuotedWAT(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		source     string
+		expectText string
+		malformed  bool
+	}{
+		{name: "valid body", source: `(func)`},
+		{name: "valid fields", source: `(type (func)) (func (type 0))`},
+		{name: "valid module", source: `(module (func))`},
+		{name: "valid commented module", source: ";; comment\n( module (func))"},
+		{name: "valid annotated module", source: `((@a) module (func))`},
+		{name: "empty module", source: ""},
+		{name: "malformed body", source: `(bogus)`, expectText: "unsupported module field", malformed: true},
+		{name: "malformed module", source: `(module (bogus))`, expectText: "unsupported module field", malformed: true},
+		{name: "unclosed body", source: `(func`, expectText: "unterminated", malformed: true},
+		{name: "unclosed module", source: `(module (func)`, expectText: "unterminated", malformed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands, err := parseScript(fmt.Sprintf(`(assert_malformed (module quote %q) %q)`, tc.source, tc.expectText))
+			if err != nil {
+				t.Fatalf("parseScript: %v", err)
+			}
+			for _, backend := range []struct {
+				name string
+				run  func(*commandResult, scriptCommand, runOptions)
+			}{
+				{"node", new(scriptRunner).runAssertMalformed},
+				{"wasmvm", new(wasmSpecWasmvmRunner).runAssertMalformed},
+			} {
+				t.Run(backend.name, func(t *testing.T) {
+					var result commandResult
+					backend.run(&result, commands[0], runOptions{strictErrorText: true})
+					if result.status != tc.malformed {
+						t.Fatalf("assert_malformed passed=%v, want %v: %s", result.status, tc.malformed, result.detail)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestParseScriptEscapedNames(t *testing.T) {
 	commands, err := parseScript(`

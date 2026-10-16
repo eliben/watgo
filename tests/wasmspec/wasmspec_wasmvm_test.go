@@ -841,7 +841,7 @@ func compileWasmSpecMalformedModule(cmd scriptCommand) error {
 		_, err = binaryformat.DecodeModule(wasmBytes)
 		return err
 	}
-	_, err := watgo.CompileWATToWASM([]byte(cmd.quotedWAT))
+	_, err := compileWATModule(cmd.quotedWAT)
 	return err
 }
 
