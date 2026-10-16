@@ -259,13 +259,13 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		case "table":
 			td := p.parseTableDecl(sub)
 			m.Tables = append(m.Tables, td)
-			if td.ImportModule == "" {
+			if !td.Imported {
 				importsClosed = true
 			}
 		case "memory":
 			md := p.parseMemoryDecl(sub)
 			m.Memories = append(m.Memories, md)
-			if md.ImportModule == "" {
+			if !md.Imported {
 				importsClosed = true
 			}
 		case "data":
@@ -274,13 +274,13 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		case "global":
 			gd := p.parseGlobalDecl(sub)
 			m.Globals = append(m.Globals, gd)
-			if gd.ImportModule == "" {
+			if !gd.Imported {
 				importsClosed = true
 			}
 		case "tag":
 			td := p.parseTagDecl(sub)
 			m.Tags = append(m.Tags, td)
-			if td.ImportModule == "" {
+			if !td.Imported {
 				importsClosed = true
 			}
 		case "elem":
@@ -289,7 +289,7 @@ func (p *Parser) parseModule(sx *SExpr) *Module {
 		case "func":
 			fd := p.parseFunction(sub)
 			m.Funcs = append(m.Funcs, fd)
-			if fd.ImportModule == "" {
+			if !fd.Imported {
 				importsClosed = true
 			}
 		case "export":
@@ -381,26 +381,31 @@ func (p *Parser) parseImportField(sx *SExpr) (*Function, *TableDecl, *MemoryDecl
 	switch desc.HeadKeyword() {
 	case "func":
 		fd := p.parseFuncImportDesc(desc)
+		fd.Imported = true
 		fd.ImportModule = mod
 		fd.ImportName = name
 		return fd, nil, nil, nil, nil, true
 	case "table":
 		td := p.parseTableDecl(desc)
+		td.Imported = true
 		td.ImportModule = mod
 		td.ImportName = name
 		return nil, td, nil, nil, nil, true
 	case "memory":
 		md := p.parseMemoryDecl(desc)
+		md.Imported = true
 		md.ImportModule = mod
 		md.ImportName = name
 		return nil, nil, md, nil, nil, true
 	case "global":
 		gd := p.parseGlobalImportDesc(desc)
+		gd.Imported = true
 		gd.ImportModule = mod
 		gd.ImportName = name
 		return nil, nil, nil, gd, nil, true
 	case "tag":
 		td := p.parseTagDecl(desc)
+		td.Imported = true
 		td.ImportModule = mod
 		td.ImportName = name
 		return nil, nil, nil, nil, td, true
@@ -443,10 +448,11 @@ func (p *Parser) parseTagDecl(sx *SExpr) *TagDecl {
 				p.emitError(elem.loc, "invalid tag import clause")
 				continue
 			}
-			if td.ImportModule != "" {
+			if td.Imported {
 				p.emitError(elem.loc, "duplicate tag import clause")
 				continue
 			}
+			td.Imported = true
 			td.ImportModule = modName
 			td.ImportName = fieldName
 		case "param":
@@ -568,10 +574,11 @@ func (p *Parser) parseFunction(sx *SExpr) *Function {
 				p.emitError(elem.loc, "invalid function import clause")
 				continue
 			}
-			if f.ImportModule != "" {
+			if f.Imported {
 				p.emitError(elem.loc, "duplicate function import clause")
 				continue
 			}
+			f.Imported = true
 			f.ImportModule = modName
 			f.ImportName = fieldName
 		case "param":
@@ -703,6 +710,7 @@ func (p *Parser) parseTableDecl(sx *SExpr) *TableDecl {
 			p.emitError(sx.list[cursor].loc, "invalid table import clause")
 			return td
 		}
+		td.Imported = true
 		td.ImportModule = modName
 		td.ImportName = fieldName
 		cursor++
@@ -807,6 +815,7 @@ func (p *Parser) parseMemoryDecl(sx *SExpr) *MemoryDecl {
 			p.emitError(sx.list[cursor].loc, "invalid memory import clause")
 			return md
 		}
+		md.Imported = true
 		md.ImportModule = modName
 		md.ImportName = fieldName
 		cursor++
@@ -959,6 +968,7 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 			p.emitError(sx.list[cursor].loc, "invalid global import clause")
 			return gd
 		}
+		gd.Imported = true
 		gd.ImportModule = modName
 		gd.ImportName = fieldName
 		cursor++
@@ -979,7 +989,7 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 		gd.Ty = p.parseType(tySx)
 	}
 	cursor++
-	if gd.ImportModule != "" {
+	if gd.Imported {
 		return gd
 	}
 	gd.Init = p.parseConstExprRange(sx, cursor, len(sx.list))
@@ -1294,12 +1304,11 @@ func (p *Parser) parseImportClause(sx *SExpr) (string, string, bool) {
 	if len(sx.list) != 3 {
 		return "", "", false
 	}
+	// Empty strings are valid names; only diagnostics indicate a bad clause.
+	errsBefore := len(p.errs)
 	mod := p.matchElement(sx, 1, STRING)
 	field := p.matchElement(sx, 2, STRING)
-	if mod == "" || field == "" {
-		return "", "", false
-	}
-	return mod, field, true
+	return mod, field, len(p.errs) == errsBefore
 }
 
 // parseElemDecl parses one module-level "(elem ...)" declaration.

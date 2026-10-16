@@ -411,7 +411,7 @@ func encodeTagSection(tags []wasmir.Tag, diags *diag.ErrorList) []byte {
 	for i, tag := range tags {
 		payload.WriteByte(tagAttributeException)
 		writeULEB128(&payload, tag.TypeIdx)
-		if tag.ImportModule != "" {
+		if tag.Imported {
 			diags.Addf("tag[%d]: imported tags must be encoded through the import section", i)
 		}
 	}
@@ -437,7 +437,7 @@ func encodeFunctionSection(funcs []wasmir.Function) []byte {
 func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 	definedCount := 0
 	for _, tb := range tables {
-		if tb.ImportModule == "" {
+		if !tb.Imported {
 			definedCount++
 		}
 	}
@@ -447,7 +447,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(definedCount))
 	for i, tb := range tables {
-		if tb.ImportModule != "" {
+		if tb.Imported {
 			continue
 		}
 		if len(tb.Init) > 0 {
@@ -474,7 +474,7 @@ func encodeTableSection(tables []wasmir.Table, diags *diag.ErrorList) []byte {
 func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
 	definedCount := 0
 	for _, mem := range memories {
-		if mem.ImportModule == "" {
+		if !mem.Imported {
 			definedCount++
 		}
 	}
@@ -484,7 +484,7 @@ func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(definedCount))
 	for _, mem := range memories {
-		if mem.ImportModule != "" {
+		if mem.Imported {
 			continue
 		}
 		writeMemoryLimits(&payload, mem)
@@ -496,7 +496,7 @@ func encodeMemorySection(memories []wasmir.Memory, _ *diag.ErrorList) []byte {
 func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte {
 	definedCount := 0
 	for _, g := range globals {
-		if g.ImportModule == "" {
+		if !g.Imported {
 			definedCount++
 		}
 	}
@@ -506,7 +506,7 @@ func encodeGlobalSection(globals []wasmir.Global, diags *diag.ErrorList) []byte 
 	var payload bytes.Buffer
 	writeULEB128(&payload, uint32(definedCount))
 	for i, g := range globals {
-		if g.ImportModule != "" {
+		if g.Imported {
 			continue
 		}
 		if !encodeValueType(&payload, g.Type) {

@@ -691,7 +691,7 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 			diags.Addf("global[%d]: unknown type", i)
 			continue
 		}
-		if g.ImportModule != "" {
+		if g.Imported {
 			continue
 		}
 		initType, ok := globalInitType(m, g.Init)

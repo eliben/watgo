@@ -132,7 +132,7 @@ type functionLowerer struct {
 }
 
 func isImportedFunctionDecl(f *Function) bool {
-	return f != nil && f.ImportModule != ""
+	return f != nil && f.Imported
 }
 
 // labelScope describes one active structured control label.
@@ -429,7 +429,7 @@ func (l *moduleLowerer) collectTypeDecls(astm *Module) {
 }
 
 func isImportedTagDecl(t *TagDecl) bool {
-	return t != nil && t.ImportModule != ""
+	return t != nil && t.Imported
 }
 
 // collectTagDecls lowers module-level tag declarations and records named tag
@@ -476,7 +476,8 @@ func (l *moduleLowerer) collectTagDecls(astm *Module) {
 			Name:    td.Id,
 			TypeIdx: typeIdx,
 		}
-		if td.ImportModule != "" {
+		if td.Imported {
+			tag.Imported = td.Imported
 			tag.ImportModule = td.ImportModule
 			tag.ImportName = td.ImportName
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
@@ -595,7 +596,8 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			RefType:     refType,
 			Max:         td.Max,
 		}
-		if td.ImportModule != "" {
+		if td.Imported {
+			tb.Imported = td.Imported
 			tb.ImportModule = td.ImportModule
 			tb.ImportName = td.ImportName
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
@@ -686,7 +688,7 @@ func (l *moduleLowerer) collectTableDecls(astm *Module) {
 			}
 			if len(ci.Instrs) == 1 && ci.Instrs[0].Kind == wasmir.InstrGlobalGet {
 				globalIdx := ci.Instrs[0].GlobalIndex
-				if int(globalIdx) >= len(l.out.Globals) || l.out.Globals[globalIdx].ImportModule == "" {
+				if int(globalIdx) >= len(l.out.Globals) || !l.out.Globals[globalIdx].Imported {
 					l.diags.Addf("table[%d]: unsupported initializer", i)
 					continue
 				}
@@ -723,10 +725,11 @@ func (l *moduleLowerer) collectMemoryDecls(astm *Module) {
 			AddressType:  addressType,
 			Min:          md.Min,
 			Max:          md.Max,
+			Imported:     md.Imported,
 			ImportModule: md.ImportModule,
 			ImportName:   md.ImportName,
 		}
-		if md.ImportModule != "" {
+		if md.Imported {
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
 				Module: md.ImportModule,
 				Name:   md.ImportName,
@@ -868,7 +871,8 @@ func (l *moduleLowerer) collectGlobalDecls(astm *Module) {
 			Type:    vt,
 			Mutable: gd.Mutable,
 		}
-		if gd.ImportModule != "" {
+		if gd.Imported {
+			g.Imported = gd.Imported
 			g.ImportModule = gd.ImportModule
 			g.ImportName = gd.ImportName
 			l.out.Imports = append(l.out.Imports, wasmir.Import{
@@ -3855,7 +3859,7 @@ func (l *moduleLowerer) evalImportedI32Global(globalIdx uint32) (int32, bool) {
 	if g.Type != wasmir.ValueTypeI32 || g.Mutable {
 		return 0, false
 	}
-	if g.ImportModule == "" {
+	if !g.Imported {
 		if len(g.Init) == 1 && g.Init[0].Kind == wasmir.InstrI32Const {
 			return g.Init[0].I32Const, true
 		}

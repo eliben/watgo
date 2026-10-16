@@ -261,7 +261,7 @@ func (p *modulePrinter) printImports() error {
 
 func (p *modulePrinter) printDefinedTables() error {
 	for _, table := range p.m.Tables {
-		if table.ImportModule != "" {
+		if table.Imported {
 			continue
 		}
 		p.writeIndent(1)
@@ -282,7 +282,7 @@ func (p *modulePrinter) printDefinedTables() error {
 
 func (p *modulePrinter) printDefinedMemories() error {
 	for _, mem := range p.m.Memories {
-		if mem.ImportModule != "" {
+		if mem.Imported {
 			continue
 		}
 		p.writeIndent(1)
@@ -295,7 +295,7 @@ func (p *modulePrinter) printDefinedMemories() error {
 
 func (p *modulePrinter) printDefinedGlobals() error {
 	for i, g := range p.m.Globals {
-		if g.ImportModule != "" {
+		if g.Imported {
 			continue
 		}
 		init, err := p.formatConstExpr(g.Init)
@@ -320,7 +320,7 @@ func (p *modulePrinter) printDefinedGlobals() error {
 func (p *modulePrinter) printDefinedTags() error {
 	importedTags := p.importedTagCount()
 	for i, tag := range p.m.Tags {
-		if tag.ImportModule != "" {
+		if tag.Imported {
 			continue
 		}
 		p.writeIndent(1)

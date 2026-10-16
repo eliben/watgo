@@ -84,13 +84,12 @@ type TagDecl struct {
 	// clause. It is nil when no inline export was declared.
 	Export *string
 
-	// ImportModule is non-empty when this tag is imported and stores the import
-	// module name.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this tag is imported and stores the import
-	// field name.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// TyUse is the parsed type-use information for this tag payload type.
 	//
@@ -115,13 +114,12 @@ type TableDecl struct {
 	// clause. It is nil when no inline export was declared.
 	Export *string
 
-	// ImportModule is non-empty when this table is imported and stores the
-	// import module name.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this table is imported and stores the
-	// import field name.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// AddressType is the table index type keyword, either "i32" or "i64".
 	AddressType string
@@ -160,13 +158,12 @@ type MemoryDecl struct {
 	// clause. It is nil when no inline export was declared.
 	Export *string
 
-	// ImportModule is non-empty when this memory is imported and stores the
-	// import module name.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this memory is imported and stores the
-	// import field name.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// AddressType is the memory address type keyword, either "i32" or "i64".
 	// It defaults to "i32" when omitted in source.
@@ -215,13 +212,12 @@ type GlobalDecl struct {
 	// clause. It is nil when no inline export was declared.
 	Export *string
 
-	// ImportModule is non-empty when this global is imported and stores the
-	// import module name.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this global is imported and stores the import
-	// field name.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// Mutable reports whether this global declaration uses "(mut ...)".
 	Mutable bool
@@ -246,13 +242,12 @@ type Function struct {
 	// clause. It is nil when no inline export was declared.
 	Export *string
 
-	// ImportModule is non-empty when this function is imported and stores the
-	// import module name.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this function is imported and stores the
-	// import field name.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// TyUse is the parsed type-use information for this function, including
 	// inline parameter and result declarations.

@@ -529,7 +529,7 @@ func (inst *Instance) buildFuncs() error {
 // buildGlobals creates the instance global address space.
 func (inst *Instance) buildGlobals() error {
 	for i, g := range inst.m.Globals {
-		if g.ImportModule != "" || g.ImportName != "" {
+		if g.Imported {
 			global, err := inst.resolver.Global(uint32(i), g)
 			if err != nil {
 				return fmt.Errorf("global[%d]: %w", i, err)
@@ -570,7 +570,7 @@ func checkImportedGlobal(def wasmir.Global, global *Global) error {
 // buildMemories creates the instance memory address space.
 func (inst *Instance) buildMemories() error {
 	for i, m := range inst.m.Memories {
-		if m.ImportModule != "" || m.ImportName != "" {
+		if m.Imported {
 			mem, err := inst.resolver.Memory(uint32(i), m)
 			if err != nil {
 				return fmt.Errorf("memory[%d]: %w", i, err)
@@ -610,7 +610,7 @@ func checkImportedMemory(def wasmir.Memory, mem *Memory) error {
 // buildTables creates the instance table address space.
 func (inst *Instance) buildTables() error {
 	for i, t := range inst.m.Tables {
-		if t.ImportModule != "" || t.ImportName != "" {
+		if t.Imported {
 			table, err := inst.resolver.Table(uint32(i), t)
 			if err != nil {
 				return fmt.Errorf("table[%d]: %w", i, err)

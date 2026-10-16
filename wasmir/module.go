@@ -1038,17 +1038,18 @@ type Tag struct {
 	// TypeIdx indexes Module.Types and provides the tag payload signature.
 	TypeIdx uint32
 
-	// ImportModule is non-empty when this tag is imported.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is non-empty when this tag is imported.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 }
 
 // Table is one table definition.
 //
 // This corresponds to either an imported table or a module-defined table,
-// depending on whether ImportModule/ImportName are set.
+// as indicated by Imported.
 type Table struct {
 	// AddressType is the table index type, either i32 or i64.
 	AddressType ValueType
@@ -1067,11 +1068,12 @@ type Table struct {
 	// the const-expression stack.
 	Init []Instruction
 
-	// ImportModule is set when this table is imported.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is set when this table is imported.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 }
 
 // Memory is one linear memory definition.
@@ -1087,11 +1089,12 @@ type Memory struct {
 	// Max is the optional maximum memory size in 64KiB pages.
 	Max *uint64
 
-	// ImportModule is set when this memory is imported.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is set when this memory is imported.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 }
 
 // DataSegmentMode classifies a data segment as active or passive.
@@ -1134,7 +1137,7 @@ type DataSegment struct {
 // Global is one global definition.
 //
 // This corresponds to either an imported global or a module-defined global,
-// depending on whether ImportModule/ImportName are set.
+// as indicated by Imported.
 type Global struct {
 	// Name is an optional source-level identifier (for diagnostics/debugging).
 	Name string
@@ -1145,11 +1148,12 @@ type Global struct {
 	// Mutable reports whether this global can be written by global.set.
 	Mutable bool
 
-	// ImportModule is set when this global is imported.
-	ImportModule string
+	// Imported reports whether this declaration is an import.
+	Imported bool
 
-	// ImportName is set when this global is imported.
-	ImportName string
+	// ImportModule and ImportName are the module and field names used when
+	// Imported is true. Either or both may be empty.
+	ImportModule, ImportName string
 
 	// Init is the initializer constant expression for this global.
 	// The instruction slice is expected to leave exactly one result on the
