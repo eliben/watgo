@@ -1,6 +1,7 @@
 package wasmvm_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -85,6 +86,73 @@ func TestNop(t *testing.T) {
 	}
 
 	expectI32Result(t, inst, "run", 42)
+}
+
+func TestEmptyImportNames(t *testing.T) {
+	rt := wasmvm.NewRuntime()
+	provider, err := rt.Instantiate(parseWAT(t, `
+(module
+  (func $f (export "f") (result i32) i32.const 42)
+  (table (export "t") 1 funcref)
+  (elem (i32.const 0) $f)
+  (memory (export "m") 1)
+  (data (i32.const 0) "\2a")
+  (global (export "g") i32 (i32.const 42))
+  (tag $e (export "e") (param i32))
+  (func (export "throw") (throw $e (i32.const 42)))
+)`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ := provider.ExportedFunc("f")
+	table, _ := provider.ExportedTable("t")
+	memory, _ := provider.ExportedMemory("m")
+	global, _ := provider.ExportedGlobal("g")
+	tag, _ := provider.ExportedTag("e")
+	throw, _ := provider.ExportedFunc("throw")
+	for _, names := range []struct{ module, field string }{
+		{"", ""}, {"", "field"}, {"module", ""},
+	} {
+		for _, tc := range []struct {
+			kind, typ, body string
+			extern          wasmvm.Extern
+		}{
+			{"func", "(result i32)", "call $imp", f},
+			{"table", "1 funcref", "i32.const 0 call_indirect (type $sig)", table},
+			{"memory", "1", "i32.const 0 i32.load8_u", memory},
+			{"global", "i32", "global.get $imp", global},
+			{"tag", "(param i32)", `(block (result i32)
+				(try_table (catch $imp 0) (call $throw))
+				(i32.const 0))`, tag},
+		} {
+			t.Run(fmt.Sprintf("%s/%q/%q", tc.kind, names.module, names.field), func(t *testing.T) {
+				src := fmt.Sprintf(`(module
+					(type $sig (func (result i32)))
+					(%s $imp (import %q %q) %s)
+					(import "provider" "throw" (func $throw))
+					(func (export "run") (result i32) %s))`,
+					tc.kind, names.module, names.field, tc.typ, tc.body)
+				encoded, err := watgo.CompileWATToWASM([]byte(src))
+				if err != nil {
+					t.Fatal(err)
+				}
+				m, err := watgo.DecodeWASM(encoded)
+				if err != nil {
+					t.Fatal(err)
+				}
+				imports := wasmvm.Imports{"provider": {"throw": throw}}
+				if _, err := rt.Instantiate(m, imports); err == nil {
+					t.Fatal("missing empty-name import was treated as a definition")
+				}
+				imports[names.module] = map[string]wasmvm.Extern{names.field: tc.extern}
+				inst, err := rt.Instantiate(m, imports)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expectI32Result(t, inst, "run", 42)
+			})
+		}
+	}
 }
 
 func TestHostFunctionImport(t *testing.T) {

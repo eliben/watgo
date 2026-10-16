@@ -79,6 +79,146 @@ func TestWATNamesDecodeEscapes(t *testing.T) {
 	}
 }
 
+func TestImportNamesRoundTrip(t *testing.T) {
+	for _, names := range []struct{ module, field string }{
+		{"", ""}, {"", "field"}, {"module", ""}, {"module", "field"},
+	} {
+		for _, decl := range []struct {
+			kind       string
+			typ        string
+			definition string
+			external   wasmir.ExternalKind
+		}{
+			{"func", "(result i32)", "(func $def (result i32) i32.const 7)", wasmir.ExternalKindFunction},
+			{"table", "1 funcref", "(table $def 1 funcref)", wasmir.ExternalKindTable},
+			{"memory", "1", "(memory $def 1)", wasmir.ExternalKindMemory},
+			{"global", "i32", "(global $def i32 (i32.const 7))", wasmir.ExternalKindGlobal},
+			{"tag", "(param i32)", "(tag $def (param i32))", wasmir.ExternalKindTag},
+		} {
+			t.Run(fmt.Sprintf("%s/%q/%q", decl.kind, names.module, names.field), func(t *testing.T) {
+				check := func(t *testing.T, m *wasmir.Module) {
+					t.Helper()
+					if len(m.Imports) != 1 || m.Imports[0].Module != names.module ||
+						m.Imports[0].Name != names.field || m.Imports[0].Kind != decl.external {
+						t.Fatalf("unexpected imports: %+v", m.Imports)
+					}
+					// Functions and tags store only definitions; other index spaces
+					// include imported entries followed by definitions.
+					var count, want int
+					switch decl.external {
+					case wasmir.ExternalKindFunction:
+						count, want = len(m.Funcs), 1
+					case wasmir.ExternalKindTable:
+						count, want = len(m.Tables), 2
+					case wasmir.ExternalKindMemory:
+						count, want = len(m.Memories), 2
+					case wasmir.ExternalKindGlobal:
+						count, want = len(m.Globals), 2
+					case wasmir.ExternalKindTag:
+						count, want = len(m.Tags), 1
+					}
+					if count != want {
+						t.Fatalf("got %d %s entries, want %d", count, decl.kind, want)
+					}
+					if len(m.Exports) != 2 || m.Exports[0].Index != 0 || m.Exports[1].Index != 1 {
+						t.Fatalf("import/definition indices changed: %+v", m.Exports)
+					}
+				}
+				var first []byte
+				for _, inline := range []bool{false, true} {
+					t.Run(fmt.Sprintf("inline=%v", inline), func(t *testing.T) {
+						imp := fmt.Sprintf("(import %q %q (%s $imp %s))", names.module, names.field, decl.kind, decl.typ)
+						if inline {
+							imp = fmt.Sprintf("(%s $imp (import %q %q) %s)", decl.kind, names.module, names.field, decl.typ)
+						}
+						src := fmt.Sprintf(`(module %s %s (export "import" (%s $imp)) (export "definition" (%s $def)))`,
+							imp, decl.definition, decl.kind, decl.kind)
+						m, err := watgo.ParseAndValidateWAT([]byte(src))
+						if err != nil {
+							t.Fatal(err)
+						}
+						check(t, m)
+						encoded, err := watgo.EncodeWASM(m)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if !inline {
+							first = encoded
+						} else if !bytes.Equal(first, encoded) {
+							t.Fatal("inline and top-level imports encode differently")
+						}
+						decoded, err := watgo.DecodeWASM(encoded)
+						if err != nil {
+							t.Fatal(err)
+						}
+						check(t, decoded)
+						if err := watgo.ValidateModule(decoded); err != nil {
+							t.Fatal(err)
+						}
+						reencoded, err := watgo.EncodeWASM(decoded)
+						if err != nil || !bytes.Equal(encoded, reencoded) {
+							t.Fatalf("binary round trip changed imports: %v", err)
+						}
+						printed, err := watgo.PrintWAT(decoded)
+						if err != nil {
+							t.Fatal(err)
+						}
+						recompiled, err := watgo.CompileWATToWASM(printed)
+						if err != nil || !bytes.Equal(encoded, recompiled) {
+							t.Fatalf("printed-WAT round trip changed imports: %v\n%s", err, printed)
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
+func TestEmptyImportKeepsImportPhaseOpen(t *testing.T) {
+	for _, declaration := range []string{
+		`(func (import "" ""))`,
+		`(table (import "" "") 1 funcref)`,
+		`(memory (import "" "") 1)`,
+		`(global (import "" "") i32)`,
+		`(tag (import "" ""))`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			src := `(module ` + declaration + ` (import "m" "f" (func)))`
+			if _, err := watgo.CompileWATToWASM([]byte(src)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestMalformedImportClauses(t *testing.T) {
+	for _, declaration := range []string{
+		`(func (import 0 ""))`,
+		`(func (import "" 0))`,
+		`(func (import "\ff" ""))`,
+		`(func (import "" "\ff"))`,
+		`(table (import "" 0) 1 funcref)`,
+		`(memory (import "" 0) 1)`,
+		`(global (import "" 0) i32)`,
+		`(tag (import "" 0))`,
+		`(func (import ""))`,
+		`(func (import "" "" ""))`,
+		`(func (import "" "") (import "" ""))`,
+		`(table (import "" "") (import "" "") 1 funcref)`,
+		`(memory (import "" "") (import "" "") 1)`,
+		`(global (import "" "") (import "" "") i32)`,
+		`(tag (import "" "") (import "" ""))`,
+		`(func (import "" "") nop)`,
+		`(func (import "" "") (local i32))`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			if _, err := watgo.CompileWATToWASM([]byte("(module " + declaration + ")")); err == nil {
+				t.Fatal("malformed import was accepted")
+			}
+		})
+	}
+}
+
 func canonicalAddModuleBytes() []byte {
 	return []byte{
 		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
