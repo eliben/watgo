@@ -315,11 +315,12 @@ func TestDecodeEncodeRoundTrip_ActiveTable0ExprElement(t *testing.T) {
 	}
 }
 
-func TestDecodeModule_AllocationBounds(t *testing.T) {
-	// Each section declares 262144 (LEB128 80 80 10) entries or bytes without
-	// providing them. Merely checking for an error would miss allocations
-	// performed before the decoder notices the truncated input.
-	for _, tc := range []struct {
+// allocationBoundsSections contains truncated sections that declare large counts.
+func allocationBoundsSections() []struct {
+	name    string
+	section []byte
+} {
+	return []struct {
 		name    string
 		section []byte
 	}{
@@ -333,7 +334,14 @@ func TestDecodeModule_AllocationBounds(t *testing.T) {
 		{"function body size", []byte{sectionCodeID, 4, 1, 0x80, 0x80, 0x10}},
 		{"name length", []byte{sectionExportID, 4, 1, 0x80, 0x80, 0x10}},
 		{"data size", []byte{sectionDataID, 5, 1, dataSegmentFlagPassive, 0x80, 0x80, 0x10}},
-	} {
+	}
+}
+
+func TestDecodeModule_AllocationBounds(t *testing.T) {
+	// Each section declares 262144 (LEB128 80 80 10) entries or bytes without
+	// providing them. Merely checking for an error would miss allocations
+	// performed before the decoder notices the truncated input.
+	for _, tc := range allocationBoundsSections() {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := append([]byte(wasmMagic+wasmVersion), tc.section...)
 			// Keep this sequential: TotalAlloc is process-wide. The allowance
@@ -402,6 +410,31 @@ func TestDecodeModule_TruncatedF64Immediate(t *testing.T) {
 	if !errorListContains(errs, "read f64 immediate") {
 		t.Fatalf("expected f64 immediate diagnostic, got: %v", err)
 	}
+}
+
+// FuzzDecodeModule checks that arbitrary bytes can be decoded or rejected
+// without panicking. A successful decode need not be semantically valid;
+// type checking belongs to the validator.
+func FuzzDecodeModule(f *testing.F) {
+	for _, seed := range [][]byte{
+		{},
+		[]byte(wasmMagic + wasmVersion),
+		canonicalAddModuleBytes(),
+		addModuleWithParamNameSectionBytes(),
+		canonicalFloatOpsModuleBytes(),
+		truncatedF64ConstModuleBytes(),
+	} {
+		f.Add(seed)
+	}
+	for _, tc := range allocationBoundsSections() {
+		f.Add(append([]byte(wasmMagic+wasmVersion), tc.section...))
+	}
+
+	f.Fuzz(func(t *testing.T, bin []byte) {
+		// Decode errors are expected for malformed input. The fuzzing engine
+		// reports panics and saves failing inputs as regression cases.
+		_, _ = DecodeModule(bin)
+	})
 }
 
 func errorListContains(errs diag.ErrorList, needle string) bool {
