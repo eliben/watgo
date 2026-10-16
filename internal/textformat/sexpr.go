@@ -3,7 +3,6 @@ package textformat
 import (
 	"slices"
 	"strings"
-	"unicode/utf8"
 )
 
 // SExpr represents textformat source as an s-expression with tokens.
@@ -117,40 +116,16 @@ func (sx *SExpr) WithoutAnnotations() *SExpr {
 // isValidAnnotationSExpr reports whether sx is one valid annotation node that
 // should be removed before ordinary parsing.
 //
-// The parser only strips forms it can identify unambiguously from s-expression
-// structure:
+// The lexer identifies valid annotation headers:
 //   - (@name ...)
 //   - (@"name" ...)
 //
 // Malformed spellings such as "(@)", "(@ x)", or "(@ \"x\")" are not treated
-// as annotations here, because spec tests expect them to remain parse errors.
+// as annotations and remain in the tree for the parser to reject.
 func isValidAnnotationSExpr(sx *SExpr) bool {
 	if sx == nil || !sx.IsList() || len(sx.list) == 0 {
 		return false
 	}
 
-	head := sx.list[0]
-	if !head.IsTokenKind(KEYWORD) || head.loc.line != sx.loc.line || head.loc.column != sx.loc.column+1 {
-		return false
-	}
-	if strings.HasPrefix(head.tok.value, "@") && head.tok.value != "@" {
-		return true
-	}
-	if head.tok.value != "@" || len(sx.list) < 2 {
-		return false
-	}
-
-	name := sx.list[1]
-	if !name.IsTokenKind(STRING) || name.tok.value == "" {
-		return false
-	}
-	decoded, err := decodeWATStringBytes(name.tok.value)
-	if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) || strings.ContainsAny(name.tok.value, "\n\r\t") {
-		return false
-	}
-
-	// (@"name") is valid, but (@ "name") is malformed. By the time we are
-	// looking at s-expressions, the only remaining way to distinguish them is
-	// whether the string token started immediately after the '@' token.
-	return name.loc.line == head.loc.line && name.loc.column == head.loc.column+1
+	return sx.list[0].IsTokenKind(ANNOTATION_ID)
 }

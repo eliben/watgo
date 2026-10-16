@@ -145,7 +145,7 @@ func TestLexer(t *testing.T) {
 			[]token{
 				{KEYWORD, "hi", location{1, 1}}, {STRING, `name`, location{1, 4}},
 				{STRING, `str1`, location{2, 3}}, {STRING, `str2`, location{2, 11}},
-				{STRING, `str3`, location{3, 3}}, {STRING, `str4`, location{3, 9}},
+				{RESERVED, `"str3""str4"`, location{3, 3}},
 				{STRING, `escape \" still \\\" going \\`, location{4, 3}}, {KEYWORD, "id", location{4, 35}},
 			}},
 
@@ -170,6 +170,69 @@ func TestLexer(t *testing.T) {
 	}
 }
 
+func TestLexerReservedTokens(t *testing.T) {
+	for _, input := range []string{
+		`0drop`, `0$x`, `1.5nop`, `0x1p+2$x`,
+		`"a""b"`, `"a"0`, `0"a"`, `data"a"`,
+		`$x"a"`, `$"x"nop`, `$"x"$y`,
+		`x"with spaces \" and (;parens;)"y`,
+		`,`, `;`, `[]{}`, `x;y,z{0}`,
+		`Uppercase`, `@a`, `+`, `+nunu`, `+isdf`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			got := tokenizeAll(input)
+			want := []token{{RESERVED, input, location{1, 1}}}
+			if !slices.Equal(got, want) {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestLexerTokenDelimiters(t *testing.T) {
+	for _, separator := range []string{" ", "\t", "\n", "\r", "(;comment;)", ";;comment\n"} {
+		t.Run(separator, func(t *testing.T) {
+			got := tokenizeAll("0" + separator + "drop")
+			if len(got) != 2 || got[0].name != INT || got[0].value != "0" ||
+				got[1].name != KEYWORD || got[1].value != "drop" {
+				t.Errorf("got %v, want INT 0 and KEYWORD drop", got)
+			}
+		})
+	}
+	got := tokenizeAll(`0(drop)"a"`)
+	want := []token{
+		{INT, "0", location{1, 1}},
+		{LPAREN, "(", location{1, 2}},
+		{KEYWORD, "drop", location{1, 3}},
+		{RPAREN, ")", location{1, 7}},
+		{STRING, "a", location{1, 8}},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestLexerAnnotationHeaders(t *testing.T) {
+	for _, header := range []string{`@a`, `@0`, `@!$@`, `@"é"`, `@"\61"`} {
+		t.Run(header, func(t *testing.T) {
+			got := tokenizeAll("(" + header + `"a"0)`)
+			if len(got) != 4 || got[1].name != ANNOTATION_ID || got[1].value != header ||
+				got[2].name != RESERVED || got[2].value != `"a"0` {
+				t.Errorf("unexpected annotation tokens: %v", got)
+			}
+		})
+	}
+	for _, input := range []string{`( @a)`, `(@)`, `(@ "a")`, `(@"")`, `(@"\ff")`, "(@\"\n\")"} {
+		t.Run(input, func(t *testing.T) {
+			for _, tok := range tokenizeAll(input) {
+				if tok.name == ANNOTATION_ID {
+					t.Errorf("malformed annotation has valid header: %v", tok)
+				}
+			}
+		})
+	}
+}
+
 func TestLexerErrors(t *testing.T) {
 	var tests = []struct {
 		input         string
@@ -177,13 +240,9 @@ func TestLexerErrors(t *testing.T) {
 		errorValue    string
 		errorLocation location
 	}{
-		{"{", 0, "unknown token", location{1, 1}},
+		{"\x00", 0, "illegal character", location{1, 1}},
 		{`"hello`, 0, "unterminated string starting at 1:1", location{1, 6}},
-		{`+nunu`, 0, "invalid word after", location{1, 1}},
-		{`+ kk`, 0, "lonely sign", location{1, 1}},
 		{`id (;`, 1, "unterminated block comment", location{1, 5}},
-		{`hello
-tok +isdf tok`, 2, "invalid word after", location{2, 5}},
 	}
 
 	for _, tt := range tests {

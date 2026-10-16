@@ -45,6 +45,16 @@ const (
 	INT
 	FLOAT
 	STRING
+
+	// RESERVED is a complete lexeme such as 0drop or "a""b" that does not
+	// form an ordinary WAT token. Reserved tokens are invalid in normal WAT
+	// syntax but allowed in annotation payloads. The value is the raw source.
+	RESERVED
+
+	// ANNOTATION_ID marks a valid @name or @"name" header immediately after
+	// '('. It lets WithoutAnnotations identify annotation expressions.
+	// The value preserves the source spelling, including '@' and any quotes.
+	ANNOTATION_ID
 )
 
 var tokenNames = [...]string{
@@ -52,14 +62,16 @@ var tokenNames = [...]string{
 	ERROR: "ERROR",
 	EOF:   "EOF",
 
-	LPAREN:  "LPAREN",
-	RPAREN:  "RPAREN",
-	DOLLAR:  "DOLLAR",
-	ID:      "ID",
-	KEYWORD: "KEYWORD",
-	INT:     "INT",
-	FLOAT:   "FLOAT",
-	STRING:  "STRING",
+	LPAREN:        "LPAREN",
+	RPAREN:        "RPAREN",
+	DOLLAR:        "DOLLAR",
+	ID:            "ID",
+	KEYWORD:       "KEYWORD",
+	INT:           "INT",
+	FLOAT:         "FLOAT",
+	STRING:        "STRING",
+	RESERVED:      "RESERVED",
+	ANNOTATION_ID: "ANNOTATION_ID",
 }
 
 func (tn tokenName) String() string {
@@ -147,32 +159,73 @@ func (lex *lexer) nextToken() token {
 		return token{EOF, "<end of input>", rloc}
 	}
 
-	if lex.r == '$' {
-		if lex.peekNext() == '"' {
-			return lex.scanQuotedID()
-		}
-		return lex.scanId()
-	} else if isDigit(lex.r) || isSign(lex.r) {
-		return lex.scanNumber()
-	} else if isIdChar(lex.r) {
-		return lex.scanKeyword()
-	} else if lex.r == '(' {
+	if lex.r == '(' {
 		lex.next()
 		return token{LPAREN, "(", rloc}
 	} else if lex.r == ')' {
 		lex.next()
 		return token{RPAREN, ")", rloc}
-	} else if lex.r == '"' {
-		return lex.scanString()
 	}
 
-	message := fmt.Sprintf("unknown token starting with %q", lex.r)
-	if lex.r < 0x20 || lex.r >= 0x7f {
-		message = fmt.Sprintf("illegal character %q", lex.r)
+	// An annotation header follows "(@" without whitespace and has its own
+	// grammar: an idchar sequence or a quoted name, followed by payload tokens.
+	if lex.r == '@' && lex.rpos > 0 && lex.buf[lex.rpos-1] == '(' {
+		return lex.scanAnnotationID()
 	}
-	errtok := lex.errorToken(message, rloc)
-	lex.next()
-	return errtok
+
+	startpos := lex.rpos
+	var tok token
+	if lex.r == '$' {
+		if lex.peekNext() == '"' {
+			tok = lex.scanQuotedID()
+		} else {
+			tok = lex.scanId()
+		}
+	} else if isDigit(lex.r) || isSign(lex.r) {
+		tok = lex.scanNumber()
+	} else if isIdChar(lex.r) {
+		tok = lex.scanKeyword()
+	} else if lex.r == '"' {
+		tok = lex.scanString()
+	} else if isReservedPunctuation(lex.r) {
+		lex.next()
+		tok = token{RESERVED, lex.buf[startpos:lex.rpos], rloc}
+	} else {
+		message := fmt.Sprintf("unknown token starting with %q", lex.r)
+		if lex.r < 0x20 || lex.r >= 0x7f {
+			message = fmt.Sprintf("illegal character %q", lex.r)
+		}
+		lex.next()
+		return lex.errorToken(message, rloc)
+	}
+
+	// WAT uses longest-match tokenization. If a reserved token extends beyond
+	// the candidate above, consume it whole: 0drop and "a""b" are each one
+	// reserved token, not two valid tokens. Comments still delimit tokens.
+	// https://webassembly.github.io/spec/core/text/lexical.html#tokens
+	endpos := lex.rpos
+	for {
+		if lex.r == ';' && lex.peekNext() == ';' {
+			break
+		}
+		if lex.r == '"' {
+			if str := lex.scanString(); str.name == ERROR {
+				return str
+			}
+		} else if isIdChar(lex.r) || isReservedPunctuation(lex.r) {
+			lex.next()
+		} else {
+			break
+		}
+	}
+	if lex.rpos > endpos {
+		return token{RESERVED, lex.buf[startpos:lex.rpos], rloc}
+	}
+	return tok
+}
+
+func isReservedPunctuation(r rune) bool {
+	return r == ',' || r == ';' || r == '[' || r == ']' || r == '{' || r == '}'
 }
 
 func (lex *lexer) errorToken(msg string, loc location) token {
@@ -298,6 +351,39 @@ func (lex *lexer) scanQuotedID() token {
 	return token{ID, "$" + string(decoded), startloc}
 }
 
+// scanAnnotationID scans an annotation header with lex.r at '@' immediately
+// after '('. The name is an idchar sequence or a nonempty quoted UTF-8 name.
+// Only the header is consumed; adjacent payload tokens are scanned separately
+// because the header follows the annotation grammar, not the reserved-token
+// longest-match rule. Invalid headers return RESERVED (a bare '@') or ERROR,
+// so WithoutAnnotations cannot mistake them for valid annotations.
+func (lex *lexer) scanAnnotationID() token {
+	startpos := lex.rpos
+	startloc := lex.loc
+	lex.next() // consume '@'
+	if lex.r == '"' {
+		name := lex.scanString()
+		if name.name == ERROR {
+			return name
+		}
+		decoded, err := decodeWATStringBytes(name.value)
+		if err != nil || !utf8.Valid(decoded) {
+			return lex.errorToken("invalid annotation name", startloc)
+		}
+		if len(decoded) == 0 || strings.ContainsAny(name.value, "\n\r\t") {
+			return lex.errorToken("empty annotation id", startloc)
+		}
+	} else {
+		if !isIdChar(lex.r) {
+			return token{RESERVED, "@", startloc}
+		}
+		for isIdChar(lex.r) {
+			lex.next()
+		}
+	}
+	return token{ANNOTATION_ID, lex.buf[startpos:lex.rpos], startloc}
+}
+
 func (lex *lexer) scanKeyword() token {
 	startloc := lex.loc
 	startpos := lex.rpos
@@ -308,9 +394,10 @@ func (lex *lexer) scanKeyword() token {
 	word := lex.buf[startpos:lex.rpos]
 	if word == "inf" || word == "nan" || strings.HasPrefix(word, "nan:0x") {
 		return token{FLOAT, word, startloc}
-	} else {
+	} else if 'a' <= word[0] && word[0] <= 'z' {
 		return token{KEYWORD, word, startloc}
 	}
+	return token{RESERVED, word, startloc}
 }
 
 func (lex *lexer) scanString() token {
@@ -365,7 +452,7 @@ func (lex *lexer) scanNumber() token {
 			tok.loc = startloc
 			return tok
 		} else {
-			return lex.errorToken("invalid word after + or -", startloc)
+			return token{RESERVED, lex.buf[startpos:lex.rpos], startloc}
 		}
 	} else {
 		// decimal number
@@ -413,7 +500,7 @@ func (lex *lexer) scanNumber() token {
 		return token{FLOAT, lex.buf[startpos:lex.rpos], startloc}
 	}
 	if hadSign && lex.rpos-startpos == 1 {
-		return lex.errorToken("lonely sign", startloc)
+		return token{RESERVED, lex.buf[startpos:lex.rpos], startloc}
 	}
 	return token{INT, lex.buf[startpos:lex.rpos], startloc}
 }

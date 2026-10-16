@@ -34,6 +34,9 @@ func TestMalformedWATRegressions(t *testing.T) {
 		{"annotation unicode atom", "(@a é)", "illegal character"},
 		{"annotation spacing", `( @a)`, "unsupported module field"},
 		{"annotation name bytes", `(@"\ff")`, "unsupported module field"},
+		{"adjacent number", `(func br 0drop)`, "invalid operand for br"},
+		{"adjacent strings", `(data "a""b")`, "found RESERVED"},
+		{"adjacent identifier", `(func $"f"nop)`, "found RESERVED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))
@@ -49,6 +52,9 @@ func TestValidWATBoundaries(t *testing.T) {
 		`(type (func (param i32) (result i32))) (func (type 0) (param i32) (result i32) (local i32) local.get 0)`,
 		`(func block $a loop $b end $b end $a)`,
 		`(func i32.const 0 if $a else $a end $a)`,
+		`(func(nop)nop(nop))`,
+		"(func br 0;; comment\n)",
+		`(data "a" (; comment ;) "b")`,
 		`(@a x-y$z"a"-2 (0drop) , { }) (@"é")`,
 		`(type (struct (field $x i32))) (type (struct (field $x i32)))`,
 	} {
