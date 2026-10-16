@@ -3941,6 +3941,7 @@ func (l *moduleLowerer) lowerConstInstrSeq(seq *InstrSeq) (*loweredConstInstr, b
 		}
 	}
 	if len(stack) != 1 {
+		l.diags.Addf("%s: type mismatch: constant expression must produce one value, got %d", seq.Loc(), len(stack))
 		return nil, false
 	}
 	return &loweredConstInstr{Instrs: instrs, Type: stack[0]}, true

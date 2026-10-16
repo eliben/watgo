@@ -897,10 +897,6 @@ func (p *Parser) parseDataDecl(sx *SExpr) *DataDecl {
 	}
 	offsetExpr := sx.list[cursor]
 	if offsetExpr.HeadKeyword() == "offset" {
-		if len(offsetExpr.list) < 2 {
-			p.emitError(offsetExpr.loc, "data offset clause expects an instruction expression")
-			return dd
-		}
 		dd.Offset = p.parseConstExprFrom(offsetExpr, 1)
 		dd.Strings = p.parseDataStringsFrom(sx, cursor+1)
 	} else {
@@ -984,10 +980,6 @@ func (p *Parser) parseGlobalDecl(sx *SExpr) *GlobalDecl {
 	}
 	cursor++
 	if gd.ImportModule != "" {
-		return gd
-	}
-	if cursor >= len(sx.list) {
-		p.emitError(sx.loc, "global declaration missing initializer")
 		return gd
 	}
 	gd.Init = p.parseConstExprRange(sx, cursor, len(sx.list))
@@ -1344,11 +1336,7 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 	if ed.Mode != ElemModeDeclarative && cursor < len(sx.list) && sx.list[cursor].IsList() {
 		switch sx.list[cursor].HeadKeyword() {
 		case "offset":
-			if len(sx.list[cursor].list) < 2 {
-				p.emitError(sx.list[cursor].loc, "elem offset clause expects an instruction expression")
-			} else {
-				ed.Offset = p.parseConstExprFrom(sx.list[cursor], 1)
-			}
+			ed.Offset = p.parseConstExprFrom(sx.list[cursor], 1)
 			cursor++
 		case "ref", "item":
 			// Passive expr payload starts directly.
@@ -1400,12 +1388,8 @@ func (p *Parser) parseElemDecl(sx *SExpr) *ElemDecl {
 }
 
 // parseElemItemExprs parses an "(item ...)" element payload and returns exactly
-// one expression instruction when valid.
+// one expression, even when its instruction sequence is empty.
 func (p *Parser) parseElemItemExprs(item *SExpr) []Instruction {
-	if len(item.list) < 2 {
-		p.emitError(item.loc, "elem item must contain an expression")
-		return nil
-	}
 	return []Instruction{p.parseConstExprFrom(item, 1)}
 }
 
@@ -1417,11 +1401,12 @@ func (p *Parser) parseConstExprFrom(sx *SExpr, start int) Instruction {
 
 // parseConstExprRange parses a constant-expression instruction sequence from
 // sx[start:end]. A single folded expression is kept as-is; flat or multi-item
-// forms become an InstrSeq for stack-based lowering.
+// forms, including empty expressions, become an InstrSeq for stack-based lowering.
 func (p *Parser) parseConstExprRange(sx *SExpr, start, end int) Instruction {
 	if start >= end {
-		p.emitError(sx.loc, "constant expression must contain instructions")
-		return nil
+		// Preserve an empty expression as a node. A nil expression means an
+		// optional expression was absent, as with a passive segment's offset.
+		return &InstrSeq{loc: sx.loc}
 	}
 	if end-start == 1 && sx.list[start].IsList() {
 		return p.parseFoldedInstr(sx.list[start])

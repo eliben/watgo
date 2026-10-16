@@ -10,12 +10,10 @@ import (
 // The text AST preserves source syntax shape, so instructions may be either:
 //   - PlainInstr: linear token form like "local.get 0" / "i32.add"
 //   - FoldedInstr: folded S-expression form like "(i32.add (local.get 0) ...)"
-//   - InstrSeq: a small sequence wrapper for text contexts that syntactically
-//     accept more than one instruction expression, such as global initializers
-//     in invalid spec tests
+//   - InstrSeq: a sequence wrapper for constant-expression contexts such as
+//     global initializers and segment offsets, including empty sequences
 //
-// Lowering is the phase that normalizes both forms into canonical wasmir
-// instructions.
+// Lowering normalizes these forms into canonical wasmir instructions.
 type Instruction interface {
 	isInstr()
 	Loc() string
@@ -116,9 +114,9 @@ type TryTableCatchClause struct {
 	loc   location
 }
 
-// InstrSeq preserves a short source-level instruction sequence in places where
-// the grammar usually expects a single expression, but the spec tests may
-// intentionally provide multiple expressions to exercise invalid-module cases.
+// InstrSeq preserves a source-level constant-expression instruction sequence.
+// An empty sequence is distinct from an absent optional expression (nil).
+// Lowering checks that the sequence produces exactly one value.
 type InstrSeq struct {
 	Instrs []Instruction
 	loc    location

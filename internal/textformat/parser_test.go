@@ -852,6 +852,40 @@ func TestParseModule_FlatConstExprContexts(t *testing.T) {
 	}
 }
 
+func TestParseModule_EmptyConstExprs(t *testing.T) {
+	m, err := ParseModule(`
+(module
+  (import "m" "g" (global i32))
+  (global i32)
+  (memory 1)
+  (data (offset) "x")
+  (data "passive")
+  (table 1 funcref)
+  (elem (offset) func)
+  (elem funcref (item))
+  (elem declare funcref (item))
+)`)
+	if err != nil {
+		t.Fatalf("ParseModule returned error: %v", err)
+	}
+	for _, expr := range []Instruction{
+		m.Globals[1].Init, m.Data[0].Offset, m.Elems[0].Offset,
+		m.Elems[1].Exprs[0], m.Elems[2].Exprs[0],
+	} {
+		seq := mustInstrSeq(t, expr)
+		if len(seq.Instrs) != 0 || seq.Loc() == "" {
+			t.Errorf("got sequence %#v, want empty expression with source location", seq)
+		}
+	}
+	if m.Globals[0].Init != nil || m.Data[1].Offset != nil {
+		t.Fatal("absent initializers and offsets must remain nil")
+	}
+	if m.Elems[0].Mode != ElemModeActive || m.Elems[1].Mode != ElemModePassive ||
+		m.Elems[2].Mode != ElemModeDeclarative {
+		t.Fatal("empty expressions must preserve segment modes")
+	}
+}
+
 func TestParseModule_Table64Declaration(t *testing.T) {
 	wat := `
 (module

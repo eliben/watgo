@@ -583,6 +583,28 @@ func TestLowerModule_FlatConstExprContexts(t *testing.T) {
 	}
 }
 
+func TestLowerModule_EmptyConstExprs(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"global", `(module (global i32))`},
+		{"data offset", `(module (memory 1) (data (offset) "x"))`},
+		{"elem offset", `(module (table 1 funcref) (elem (offset) func))`},
+		{"elem item", `(module (elem funcref (item)))`},
+		{"declarative item", `(module (elem declare funcref (item)))`},
+		{"inline table item", `(module (table funcref (elem (item))))`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := ParseModule(tc.src)
+			if err != nil {
+				t.Fatalf("ParseModule must accept empty expressions: %v", err)
+			}
+			_, _, err = LowerModule(ast)
+			if err == nil || !strings.Contains(err.Error(), "type mismatch: constant expression must produce one value, got 0") {
+				t.Fatalf("got %v, want missing-result diagnostic from lowering", err)
+			}
+		})
+	}
+}
+
 func TestLowerModule_FlatCallIndirect(t *testing.T) {
 	wat := `
 (module
