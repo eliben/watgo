@@ -32,11 +32,11 @@ func TestMalformedWATRegressions(t *testing.T) {
 		{"invalid source bytes", "(@a \xff)", "malformed UTF-8"},
 		{"annotation control", "(@a \x00)", "illegal character"},
 		{"annotation unicode atom", "(@a é)", "illegal character"},
-		{"annotation spacing", `( @a)`, "unsupported module field"},
+		{"annotation spacing", `( @a)`, "reserved token"},
 		{"annotation name bytes", `(@"\ff")`, "unsupported module field"},
-		{"adjacent number", `(func br 0drop)`, "invalid operand for br"},
-		{"adjacent strings", `(data "a""b")`, "found RESERVED"},
-		{"adjacent identifier", `(func $"f"nop)`, "found RESERVED"},
+		{"adjacent number", `(func br 0drop)`, "reserved token"},
+		{"adjacent strings", `(data "a""b")`, "reserved token"},
+		{"adjacent identifier", `(func $"f"nop)`, "reserved token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := watgo.CompileWATToWASM([]byte("(module " + tc.body + ")"))
@@ -56,6 +56,7 @@ func TestValidWATBoundaries(t *testing.T) {
 		"(func br 0;; comment\n)",
 		`(data "a" (; comment ;) "b")`,
 		`(@a x-y$z"a"-2 (0drop) , { }) (@"é")`,
+		`(memory 0 (@a 0drop (data "a""b")))`,
 		`(type (struct (field $x i32))) (type (struct (field $x i32)))`,
 	} {
 		if _, err := watgo.CompileWATToWASM([]byte("(module " + body + ")")); err != nil {

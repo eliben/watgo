@@ -138,8 +138,23 @@ func TestParseModuleSExpr_MalformedBareAtStringIsNotStripped(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
-	if !strings.Contains(err.Error(), "unsupported module field") {
-		t.Fatalf("got error %q, want unsupported-module-field error", err.Error())
+	if !strings.Contains(err.Error(), `reserved token "@" outside annotation`) {
+		t.Fatalf("got error %q, want reserved-token error", err.Error())
+	}
+}
+
+func TestParseModuleSExpr_ReservedTokens(t *testing.T) {
+	for _, src := range []string{
+		"(module\n  (memory 0 0drop))",
+		"(module\n  (memory 0 (data 0drop)))",
+	} {
+		t.Run(src, func(t *testing.T) {
+			sx := mustParseSingleSExpr(t, src)
+			_, err := ParseModuleSExpr(sx)
+			if err == nil || !strings.Contains(err.Error(), `reserved token "0drop" outside annotation`) {
+				t.Fatalf("got error %v, want reserved-token error", err)
+			}
+		})
 	}
 }
 

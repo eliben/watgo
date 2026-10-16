@@ -112,12 +112,29 @@ func ParseModuleSExpr(sx *SExpr) (*Module, error) {
 	}
 	sx = sx.WithoutAnnotations()
 	p := &Parser{}
+	// Reserved tokens are allowed only in annotation payloads. After removing
+	// annotations, reject any that remain before parsing individual fields,
+	// including tokens in trailing syntax a field parser might not consume.
+	p.rejectReservedTokens(sx)
+	if len(p.errs) > 0 {
+		return nil, p.errs
+	}
 	m := p.parseModule(sx)
 
 	if len(p.errs) > 0 {
 		return m, p.errs
 	} else {
 		return m, nil
+	}
+}
+
+// rejectReservedTokens checks a tree whose annotations have been removed.
+func (p *Parser) rejectReservedTokens(sx *SExpr) {
+	if sx.IsTokenKind(RESERVED) {
+		p.emitError(sx.loc, "reserved token %q outside annotation", sx.tok.value)
+	}
+	for _, sub := range sx.list {
+		p.rejectReservedTokens(sub)
 	}
 }
 
