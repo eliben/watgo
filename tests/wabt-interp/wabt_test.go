@@ -696,8 +696,8 @@ func formatWABTV128(wordsText string) (string, error) {
 // wabtStdoutMatches compares reconstructed output against WABT's
 // expected stdout.
 //
-// Most lines are compared byte-for-byte. The only special case is
-// reference-valued result lines such as:
+// Most lines are compared byte-for-byte. Exceptions cover bounds-trap details,
+// SIMD NaN payloads, and reference-valued result lines such as:
 //
 //	ref_null_func() => funcref:0
 //	ref_func() => funcref:5
@@ -724,11 +724,57 @@ func wabtStdoutMatches(got, want string) bool {
 		if wabtV128LineMatches(gotLines[i], wantLines[i]) {
 			continue
 		}
+		if wabtBoundsTrapLineMatches(gotLines[i], wantLines[i]) {
+			continue
+		}
 		if !wabtRefLineMatches(gotLines[i], wantLines[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// wabtBoundsTrapLineMatches allows backend-specific bounds-trap wording and
+// address details. The full invocation label, including arguments, must match,
+// and a memory bounds trap cannot satisfy an expected table bounds trap.
+func wabtBoundsTrapLineMatches(got, want string) bool {
+	gotCall, gotMessage, gotOK := strings.Cut(got, " => error: ")
+	wantCall, wantMessage, wantOK := strings.Cut(want, " => error: ")
+	if !gotOK || !wantOK || gotCall != wantCall {
+		return false
+	}
+	kind := wabtBoundsTrapKind(gotMessage)
+	return kind != "" && kind == wabtBoundsTrapKind(wantMessage)
+}
+
+// wabtBoundsTrapKind recognizes only known memory/table bounds diagnostics.
+// Unrecognized errors remain subject to exact comparison in wabtStdoutMatches.
+func wabtBoundsTrapKind(message string) string {
+	// wasmvm adds instruction context, possibly nested through function calls.
+	for strings.HasPrefix(message, "pc ") {
+		context, cause, ok := strings.Cut(message, ": ")
+		fields := strings.Fields(context)
+		if !ok || len(fields) != 3 {
+			return ""
+		}
+		if _, err := strconv.ParseUint(fields[1], 10, 64); err != nil {
+			return ""
+		}
+		message = cause
+	}
+	switch {
+	case message == "memory access out of bounds",
+		message == "out of bounds memory access",
+		strings.HasPrefix(message, "out of bounds memory access: "):
+		return "memory"
+	case message == "table access out of bounds",
+		message == "undefined table index",
+		message == "out of bounds table access",
+		strings.HasPrefix(message, "out of bounds table access: "):
+		return "table"
+	default:
+		return ""
+	}
 }
 
 // wabtRefLineMatches compares one reference-valued output line.
