@@ -103,11 +103,14 @@ var wabtSkippedFixtures = []string{
 	// compiled module; it does not emulate wabt's tool logging.
 	"basic-logging.txt",
 
-	// basic-tracing expects wabt interpreter trace output including wabt-specific
-	// instruction PCs, stack-depth annotations, and lowered control-flow ops
-	// like br_unless/drop_keep. That is effectively an interpreter trace mode,
-	// not a small execution-harness variation.
+	// These fixtures expect WABT interpreter traces, including instruction PCs,
+	// stack depths, and lowered control-flow operations. This harness does not
+	// reproduce that trace format or the run-interp-spec commands used by the
+	// tracing-* fixtures.
 	"basic-tracing.txt",
+	"tracing-call-ref.txt",
+	"tracing-imported-index.txt",
+	"tracing-table-set.txt",
 
 	// The exception fixtures below use WABT's older structured EH syntax with
 	// try/do/catch/rethrow/delegate. watgo currently supports the newer
