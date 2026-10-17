@@ -60,6 +60,49 @@ func TestValidateModule_ValidAdd(t *testing.T) {
 	}
 }
 
+func TestValidateModule_SupertypeCount(t *testing.T) {
+	for _, kind := range []struct {
+		name string
+		typ  TypeDef
+	}{
+		{"func", TypeDef{Kind: TypeDefKindFunc, SubType: true}},
+		{"struct", TypeDef{Kind: TypeDefKindStruct, SubType: true}},
+		{"array", TypeDef{Kind: TypeDefKindArray, SubType: true, ElemField: FieldType{Type: ValueTypeI32}}},
+	} {
+		t.Run(kind.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name       string
+				supertypes []uint32
+				wantErr    bool
+			}{
+				{"none", nil, false},
+				{"one", []uint32{0}, false},
+				{"two", []uint32{0, 1}, true},
+				{"repeated", []uint32{0, 0}, true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					// Each parent is individually compatible with the child.
+					m := &Module{Types: []TypeDef{kind.typ, kind.typ, kind.typ}}
+					m.Types[2].SuperTypes = tc.supertypes
+					err := validate.ValidateModule(m, nil)
+					if !tc.wantErr {
+						if err != nil {
+							t.Fatalf("ValidateModule error: %v", err)
+						}
+						return
+					}
+					if err == nil {
+						t.Fatal("ValidateModule accepted multiple supertypes")
+					}
+					if errs := asErrorList(t, err); !errorListContains(errs, "type[2]: multiple supertypes") {
+						t.Fatalf("got errors %q, want multiple supertypes", errs.Error())
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestValidateModule_LocalIndexOutOfRange(t *testing.T) {
 	m := makeValidAddModule()
 	m.Funcs[0].Body[1].LocalIndex = 99

@@ -607,6 +607,11 @@ func ValidateModule(m *wasmir.Module, hints *valhint.ModuleHints) error {
 	// Type section validation: check recursive-reference visibility, declared
 	// subtype relationships, and all value types mentioned by type definitions.
 	for i, td := range m.Types {
+		// Subtype validation permits at most one declared supertype,
+		// for function, struct, and array types alike.
+		if len(td.SuperTypes) > 1 {
+			diags.Addf("type[%d]: multiple supertypes", i)
+		}
 		if !validateTypeDefVisibility(m, uint32(i), td) {
 			diags.Addf("type[%d]: unknown type", i)
 		}
