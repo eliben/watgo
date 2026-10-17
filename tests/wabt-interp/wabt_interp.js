@@ -109,10 +109,6 @@ function decodeArg(arg) {
   }
 }
 
-function formatArg(arg) {
-  return arg.kind + ':' + arg.text;
-}
-
 function formatHostArg(value) {
   if (typeof value === 'bigint') {
     return 'i64:' + String(BigInt.asUintN(64, value));
@@ -214,7 +210,6 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({ instance }) 
     const fn = instance.exports[entry.name];
     const args = invocation.args || [];
     const jsArgs = args.map(decodeArg);
-    const argText = args.map(formatArg).join(', ');
     try {
       let result;
       if (entry.resultKind === 'v128') {
@@ -239,7 +234,7 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({ instance }) 
       results.push({
         name: entry.name,
         resultKind: entry.resultKind,
-        argText,
+        args,
         value: result,
         error: '',
         stdoutCount: stdout.length,
@@ -248,7 +243,7 @@ WebAssembly.instantiate(fs.readFileSync(wasmPath), imports).then(({ instance }) 
       results.push({
         name: entry.name,
         resultKind: entry.resultKind,
-        argText,
+        args,
         value: '',
         error: normalizeTrapMessage(String(err && err.message ? err.message : err)),
         stdoutCount: stdout.length,

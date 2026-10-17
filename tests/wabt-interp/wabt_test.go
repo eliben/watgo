@@ -45,11 +45,11 @@ type wabtExport struct {
 }
 
 type wabtResult struct {
-	Name       string `json:"name"`
-	ResultKind string `json:"resultKind"`
-	ArgText    string `json:"argText"`
-	Value      string `json:"value"`
-	Error      string `json:"error"`
+	Name       string              `json:"name"`
+	ResultKind string              `json:"resultKind"`
+	Args       []wabtInvocationArg `json:"args"`
+	Value      string              `json:"value"`
+	Error      string              `json:"error"`
 	// StdoutCount records how many auxiliary stdout lines JS had produced before
 	// this invocation finished, so Go can interleave host-call logging with the
 	// final WABT-style result line in the original execution order.
@@ -631,13 +631,28 @@ func wabtValidateInvocations(exports []wabtExport, invocations []wabtInvocation)
 	return wabtRunResult{}, false
 }
 
-// formatWABTResult converts one JSON result record from Node into the
+// formatWABTResult converts one result record from either backend into the
 // exact line format expected by WABT's interp tests.
 func formatWABTResult(result wabtResult) (string, error) {
-	label := result.Name + "()"
-	if result.ArgText != "" {
-		label = fmt.Sprintf("%s(%s)", result.Name, result.ArgText)
+	// Both backends return the original argument literals. Format floats here
+	// with WABT's six fractional digits, rounding f32 values before printing.
+	argText := make([]string, 0, len(result.Args))
+	for _, arg := range result.Args {
+		text := arg.Text
+		if arg.Kind == "f32" || arg.Kind == "f64" {
+			bitSize := 64
+			if arg.Kind == "f32" {
+				bitSize = 32
+			}
+			value, err := strconv.ParseFloat(text, bitSize)
+			if err != nil {
+				return "", fmt.Errorf("parse %s argument for %q: %w", arg.Kind, result.Name, err)
+			}
+			text = strconv.FormatFloat(value, 'f', 6, bitSize)
+		}
+		argText = append(argText, arg.Kind+":"+text)
 	}
+	label := fmt.Sprintf("%s(%s)", result.Name, strings.Join(argText, ", "))
 	if result.Error != "" {
 		return fmt.Sprintf("%s => error: %s", label, result.Error), nil
 	}

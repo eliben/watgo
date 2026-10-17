@@ -102,7 +102,7 @@ func runWABTWasmvm(m *wasmir.Module, exports []wabtExport, imports []wabtImport,
 			return wabtRunResult{Stderr: "unknown export " + invocation.ExportName, ExitCode: 1}, nil
 		}
 
-		args, argText, err := wabtWasmvmArgs(invocation.Args)
+		args, err := wabtWasmvmArgs(invocation.Args)
 		if err != nil {
 			return wabtRunResult{}, err
 		}
@@ -110,7 +110,7 @@ func runWABTWasmvm(m *wasmir.Module, exports []wabtExport, imports []wabtImport,
 		result := wabtResult{
 			Name:        entry.Name,
 			ResultKind:  entry.ResultKind,
-			ArgText:     argText,
+			Args:        invocation.Args,
 			StdoutCount: len(stdout),
 		}
 		if callErr != nil {
@@ -255,18 +255,16 @@ func wabtWasmvmDummyImport(imported wabtImport, stdout *[]string) (*wasmvm.HostF
 }
 
 // wabtWasmvmArgs decodes one WABT invocation argument list.
-func wabtWasmvmArgs(args []wabtInvocationArg) ([]wasmvm.Value, string, error) {
+func wabtWasmvmArgs(args []wabtInvocationArg) ([]wasmvm.Value, error) {
 	values := make([]wasmvm.Value, 0, len(args))
-	argText := make([]string, 0, len(args))
 	for _, arg := range args {
 		v, err := wabtWasmvmArg(arg)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		values = append(values, v)
-		argText = append(argText, arg.Kind+":"+arg.Text)
 	}
-	return values, strings.Join(argText, ", "), nil
+	return values, nil
 }
 
 // wabtWasmvmArg decodes one WABT invocation argument.
